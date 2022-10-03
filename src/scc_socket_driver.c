@@ -1,4 +1,4 @@
-const char rcsid_scc_socket_driver_c[] = "@(#)$KmKId: scc_socket_driver.c,v 1.21 2021-08-17 00:08:26+00 kentd Exp $";
+const char rcsid_scc_socket_driver_c[] = "@(#)$KmKId: scc_socket_driver.c,v 1.22 2021-11-12 05:00:30+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -18,7 +18,7 @@ const char rcsid_scc_socket_driver_c[] = "@(#)$KmKId: scc_socket_driver.c,v 1.21
 #include "scc.h"
 #include <signal.h>
 
-extern Scc scc_stat[2];
+extern Scc g_scc[2];
 extern int g_serial_modem[];
 
 extern int h_errno;
@@ -45,7 +45,7 @@ scc_socket_init(int port)
 		g_wsastartup_called = 1;
 	}
 #endif
-	scc_ptr = &(scc_stat[port]);
+	scc_ptr = &(g_scc[port]);
 	scc_ptr->state = 1;		/* successful socket */
 	scc_ptr->sockfd = -1;		/* Indicate no socket open yet */
 	scc_ptr->accfd = -1;		/* Indicate no socket open yet */
@@ -73,7 +73,7 @@ scc_socket_maybe_open_incoming(int port, double dcycs)
 
 	inc = 0;
 
-	scc_ptr = &(scc_stat[port]);
+	scc_ptr = &(g_scc[port]);
 
 	if(scc_ptr->sockfd != (SOCKET)-1) {
 		/* it's already open, get out */
@@ -157,7 +157,7 @@ scc_socket_open_outgoing(int port, double dcycs)
 	int	ret;
 	SOCKET	sockfd;
 
-	scc_ptr = &(scc_stat[port]);
+	scc_ptr = &(g_scc[port]);
 
 	printf("scc socket close being called from socket_open_out\n");
 	scc_socket_close(port, 0, dcycs);
@@ -242,7 +242,7 @@ scc_socket_make_nonblock(int port, double dcycs)
 	int	flags;
 #endif
 
-	scc_ptr = &(scc_stat[port]);
+	scc_ptr = &(g_scc[port]);
 	sockfd = scc_ptr->sockfd;
 
 #ifdef _WIN32
@@ -277,7 +277,7 @@ scc_socket_close(int port, int full_close, double dcycs)
 	SOCKET	sockfd;
 	int	i;
 
-	scc_ptr = &(scc_stat[port]);
+	scc_ptr = &(g_scc[port]);
 
 	printf("In scc_socket_close, %d, %d, %f\n", port, full_close, dcycs);
 
@@ -331,7 +331,7 @@ scc_accept_socket(int port, double dcycs)
 	int	rdwrfd;
 	int	ret;
 
-	scc_ptr = &(scc_stat[port]);
+	scc_ptr = &(g_scc[port]);
 
 	if(scc_ptr->sockfd == (SOCKET)-1) {
 		printf("in accept_socket, call socket_open\n");
@@ -392,7 +392,7 @@ scc_socket_telnet_reqs(int port)
 	word32	mask, willmask, domask;
 	int	i, j;
 
-	scc_ptr = &(scc_stat[port]);
+	scc_ptr = &(g_scc[port]);
 	for(i = 0; i < 64; i++) {
 		j = i >> 5;
 		mask = 1 << (i & 31);
@@ -423,7 +423,7 @@ scc_socket_fill_readbuf(int port, int space_left, double dcycs)
 	int	ret;
 	int	i;
 
-	scc_ptr = &(scc_stat[port]);
+	scc_ptr = &(g_scc[port]);
 
 	scc_accept_socket(port, dcycs);
 	scc_socket_modem_do_ring(port, dcycs);
@@ -469,7 +469,7 @@ scc_socket_recvd_char(int port, int c, double dcycs)
 	int	eff_c, cpos;
 	int	reply;
 
-	scc_ptr = &(scc_stat[port]);
+	scc_ptr = &(g_scc[port]);
 
 	scc_socket_maybe_open_incoming(port, dcycs);
 
@@ -660,7 +660,7 @@ scc_socket_empty_writebuf(int port, double dcycs)
 	int	c;
 	int	i;
 
-	scc_ptr = &(scc_stat[port]);
+	scc_ptr = &(g_scc[port]);
 
 	/* See if +++ done and we should go to command mode */
 	diff_dcycs = dcycs - scc_ptr->out_char_dcycs;
@@ -784,7 +784,7 @@ scc_socket_modem_write(int port, int c, double dcycs)
 	word32	modem_mode;
 	int	do_echo, got_at, len;
 
-	scc_ptr = &(scc_stat[port]);
+	scc_ptr = &(g_scc[port]);
 
 	if(scc_ptr->sockfd == (SOCKET)-1) {
 		scc_ptr->socket_state = 0;
@@ -855,7 +855,7 @@ scc_socket_do_cmd_str(int port, double dcycs)
 	int	c;
 	int	i;
 
-	scc_ptr = &(scc_stat[port]);
+	scc_ptr = &(g_scc[port]);
 
 	str = (char *)&(scc_ptr->modem_cmd_str[0]);
 	printf("Got modem string :%s:=%02x %02x %02x\n", str, str[0], str[1],
@@ -1043,7 +1043,7 @@ scc_socket_send_modem_code(int port, int code, double dcycs)
 	char	*str;
 	word32	modem_mode;
 
-	scc_ptr = &(scc_stat[port]);
+	scc_ptr = &(g_scc[port]);
 
 	switch(code) {
 	case 0: str = "OK"; break;
@@ -1092,7 +1092,7 @@ scc_socket_modem_do_ring(int port, double dcycs)
 	double	diff_dcycs;
 	int	num_rings;
 
-	scc_ptr = &(scc_stat[port]);
+	scc_ptr = &(g_scc[port]);
 	num_rings = scc_ptr->socket_num_rings;
 	if(num_rings > 0 && scc_ptr->socket_state == 0) {
 		num_rings--;
@@ -1125,7 +1125,7 @@ scc_socket_do_answer(int port, double dcycs)
 {
 	Scc	*scc_ptr;
 
-	scc_ptr = &(scc_stat[port]);
+	scc_ptr = &(g_scc[port]);
 	scc_ptr->modem_dial_or_acc_mode = 2;
 	scc_accept_socket(port, dcycs);
 	if(scc_ptr->rdwrfd == -1) {

@@ -11,7 +11,12 @@
 /************************************************************************/
 
 #ifdef INCLUDE_RCSID_C
-const char rcsid_protos_base_h[] = "@(#)$KmKId: protos_base.h,v 1.87 2021-08-29 19:26:24+00 kentd Exp $";
+const char rcsid_protos_base_h[] = "@(#)$KmKId: protos_base.h,v 1.90 2021-11-11 20:06:57+00 kentd Exp $";
+#endif
+
+#ifdef __GNUC__
+void halt_printf(const char *fmt, ...) __attribute__ ((
+						__format__(printf, 1, 2)));
 #endif
 
 /* xdriver.c and macdriver.c and windriver.c */
@@ -128,6 +133,8 @@ void do_clock_data(void);
 /* config.c */
 void config_init_menus(Cfg_menu *menuptr);
 void config_init(void);
+int config_setup_kegs_file(char *outname, int maxlen, const char **name_ptr);
+int config_expand_path(char *out_ptr, const char *in_ptr, int maxlen);
 void cfg_exit(void);
 void cfg_toggle_config_panel(void);
 void cfg_set_config_panel(int panel);
@@ -175,6 +182,7 @@ int cfg_create_new_image_act(const char *str, int type, int size_kb);
 void cfg_create_new_image(void);
 void cfg_file_init(void);
 void cfg_free_alldirents(Cfg_listhdr *listhdrptr);
+void cfg_file_add_dirent_unique(Cfg_listhdr *listhdrptr, const char *nameptr, int is_dir, dword64 dsize, dword64 dimage_start, dword64 compr_dsize, int part_num);
 void cfg_file_add_dirent(Cfg_listhdr *listhdrptr, const char *nameptr, int is_dir, dword64 dsize, dword64 dimage_start, dword64 compr_dsize, int part_num);
 int cfg_dirent_sortfn(const void *obj1, const void *obj2);
 int cfg_str_match(const char *str1, const char *str2, int len);
@@ -461,8 +469,6 @@ void memory_ptr_init(void);
 int parse_argv(int argc, char **argv, int slashes_to_find);
 int kegs_init(int mdepth);
 void load_roms_init_memory(void);
-void kegs_expand_path(char *out_ptr, const char *in_ptr, int maxlen);
-void setup_kegs_file(char *outname, int maxlen, int ok_if_missing, int can_create_file, const char **name_ptr);
 void initialize_events(void);
 void check_for_one_event_type(int type);
 void add_event_entry(double dcycs, int type);
@@ -585,6 +591,7 @@ byte *unshk_unlzw(byte *cptr, Lzw_state *lzw_ptr, byte *ucptr, word32 uclen);
 void unshk_data(Disk *dsk, byte *cptr, word32 compr_size, byte *ucptr, word32 uncompr_size, word32 thread_format, byte *base_cptr);
 void unshk_parse_header(Disk *dsk, byte *cptr, int compr_size, byte *base_cptr);
 void unshk(Disk *dsk, const char *name_str);
+void unshk_dsk_raw_data(Disk *dsk);
 
 
 /* undeflate.c */

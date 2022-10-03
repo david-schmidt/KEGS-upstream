@@ -1,4 +1,4 @@
-const char rcsid_undeflate_c[] = "@(#)$KmKId: undeflate.c,v 1.10 2021-06-30 02:04:22+00 kentd Exp $";
+const char rcsid_undeflate_c[] = "@(#)$KmKId: undeflate.c,v 1.11 2021-09-26 03:25:17+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -1375,22 +1375,32 @@ undeflate_zipfile_make_list(int fd)
 			add_it = cfg_partition_name_check(name_ptr, name_len);
 		}
 
-		// printf("ent:%d name:%s had add_it:%d\n", ent, name_ptr,
-		//  add_it);
+		//printf("ent:%d name:%s had add_it:%d\n", ent, name_ptr,
+		//				add_it);
 
 		inc = 46 + name_len + extra_len + comment_len;
 		if(add_it) {
+			// Handle directories either explicitly listed, as
+			//  foo/, foo/bar/, foo/bar/1, foo/bar/2 ; or
+			//  implied:  foo/bar/1 and foo/bar/2 as entries
+			//  implies foo/ and foo/bar/ are directories.
+			// Add any name at the current part_len level, but
+			//  make sure it's unique (don't add lots of "foo"s).
 			name_ptr += part_len;
 			name_len -= part_len;
+			if(name_len <= 0) {
+				add_it = 0;
+			}
 			for(i = 0; i < name_len; i++) {
 				if(name_ptr[i] == '/') {
-					if((i == (name_len - 1)) && (i > 0)) {
+					// This ends this name at this level
+					if(i > 0) {
 						add_it = 2;
-						name_len--;
+						name_len = i;
 					} else {
 						add_it = 0;
-						break;
 					}
+					break;
 				}
 			}
 		}
@@ -1400,7 +1410,7 @@ undeflate_zipfile_make_list(int fd)
 		if(add_it) {
 			str = malloc(name_len + 1);
 			cfg_strncpy(str, (char *)&name_ptr[0], name_len + 1);
-			cfg_file_add_dirent(&g_cfg_partitionlist, str,
+			cfg_file_add_dirent_unique(&g_cfg_partitionlist, str,
 				add_it - 1, unc_dsize, local_dheader,
 				compr_dsize, ent);
 			free(str);

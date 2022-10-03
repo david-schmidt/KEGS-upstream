@@ -1,4 +1,4 @@
-const char rcsid_pulseaudio_driver_c[] = "@(#)$KmKId: pulseaudio_driver.c,v 1.8 2020-12-11 23:15:37+00 kentd Exp $";
+const char rcsid_pulseaudio_driver_c[] = "@(#)$KmKId: pulseaudio_driver.c,v 1.9 2021-09-26 03:27:53+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -230,7 +230,7 @@ pulse_audio_start_stream()
 	}
 
 	g_pa_buffer_attr.maxlength = -1;		// Maximum server buffer
-	g_pa_buffer_attr.tlength = 4*g_preferred_rate/20;	// 1/20th sec
+	g_pa_buffer_attr.tlength = 4*g_preferred_rate/10;	// 1/10th sec
 	//g_pa_buffer_attr.prebuf = 4*g_preferred_rate/100;	// 1/100th sec
 	g_pa_buffer_attr.prebuf = -1;
 	g_pa_buffer_attr.minreq = 4*g_preferred_rate/60;	// 1/60th sec

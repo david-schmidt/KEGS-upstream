@@ -1,4 +1,14 @@
 
+Changes in KEGS v1.14 since v1.13 (11/14/21)
+- Better support for disk images inside .zip files.
+- Linux sound fixes to make PULSE_AUDIO work a little better.
+- Better handle being run from the Finder, and go right to the Config
+	page to select a ROM file if no ROM is found.
+- Add NSHighResolutionCapable=False to speed up graphics operations on some
+	Macs
+- Fix serial port code to properly return the DCD status as a modem.
+
+
 Changes in KEGS v1.13 since v1.12 (09/23/21)
 - Better support for joysticks on Macs.  Select Native Joystick 1.
 

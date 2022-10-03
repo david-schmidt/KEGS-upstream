@@ -1,4 +1,4 @@
-const char rcsid_unshk_c[] = "@(#)$KmKId: unshk.c,v 1.12 2021-06-30 02:04:16+00 kentd Exp $";
+const char rcsid_unshk_c[] = "@(#)$KmKId: unshk.c,v 1.13 2021-09-26 03:25:46+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -467,6 +467,13 @@ unshk(Disk *dsk, const char *name_str)
 	int	i;
 
 	printf("unshk %s\n", name_str);
+	// Handle .sdk inside a .zip
+	if(dsk->raw_data) {
+		unshk_dsk_raw_data(dsk);
+		return;
+	}
+
+	// File is not opened yet, try to open it
 	fd = open(name_str, O_RDONLY | O_BINARY, 0x1b6);
 	if(fd < 0) {
 		return;
@@ -490,6 +497,7 @@ unshk(Disk *dsk, const char *name_str)
 		pos += ret;
 	}
 	close(fd);
+
 	if(pos != compr_size) {
 		compr_size = 0;		// Make header searching fail
 	}
@@ -497,3 +505,48 @@ unshk(Disk *dsk, const char *name_str)
 
 	free(cptr);
 }
+
+void
+unshk_dsk_raw_data(Disk *dsk)
+{
+	byte	*save_raw_data, *cptr;
+	dword64	save_raw_dsize;
+	int	save_fd, compr_size;
+	int	i;
+	// This code handles the case of .sdk inside a .zip (for example).
+	// Since unshk() code uses dsk->fd, dsk->raw_data, and dsk->raw_dsize
+	//  to communicate success in unshk'ing the disk, we need to copy
+	//  those, and restore them, if the unshk fails
+	save_fd = dsk->fd;
+	save_raw_data = dsk->raw_data;
+	save_raw_dsize = dsk->raw_dsize;
+	if(save_raw_dsize >= (1ULL << 30)) {
+		return;			// Too large
+	}
+
+	dsk->fd = -1;
+	dsk->raw_data = 0;
+	dsk->raw_dsize = 0;
+
+	compr_size = save_raw_dsize;
+	cptr = malloc(compr_size + 0x1000);
+	for(i = 0; i < 0x1000; i++) {
+		cptr[compr_size + i] = 0;
+	}
+	for(i = 0; i < compr_size; i++) {
+		cptr[i] = save_raw_data[i];
+	}
+
+	unshk_parse_header(dsk, cptr, compr_size, cptr);
+	free(cptr);
+
+	if(dsk->raw_data) {
+		// Success, free the old raw data
+		free(save_raw_data);
+		return;
+	}
+	dsk->fd = save_fd;
+	dsk->raw_data = save_raw_data;
+	dsk->raw_dsize = save_raw_dsize;
+}
+

@@ -1,4 +1,4 @@
-# $KmKId: makefile,v 1.41 2021-08-15 15:18:18+00 kentd Exp $
+# $KmKId: makefile,v 1.42 2021-09-26 12:31:31+00 kentd Exp $
 
 XOPTS_WIN = -Wall -fomit-frame-pointer -march=pentium
 
@@ -19,6 +19,9 @@ all: $(TARGET)
 specials:
 
 specials_clean:
+
+clean:
+	rm -f *.o kegsmac
 
 
 # Mac builds:

@@ -1,4 +1,4 @@
-const char rcsid_iwm_c[] = "@(#)$KmKId: iwm.c,v 1.160 2021-08-12 04:03:08+00 kentd Exp $";
+const char rcsid_iwm_c[] = "@(#)$KmKId: iwm.c,v 1.161 2021-09-28 03:18:31+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -2562,7 +2562,7 @@ disk_track_to_unix(Disk *dsk, byte *outbuf)
 	dunix_pos = trk->dunix_pos;
 	unix_len = trk->unix_len;
 	if(unix_len < 0x1000) {
-		halt_printf("Disk:%s trk:%d, dunix_pos:%08llx, len:%08x\n",
+		halt_printf("Disk:%s trk:%d, dunix_pos:%08llx, len:%08llx\n",
 			dsk->name_ptr, dsk->cur_qtr_track, dunix_pos, unix_len);
 		return -1;
 	}

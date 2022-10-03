@@ -1,4 +1,4 @@
-// $KmKId: AppDelegate.swift,v 1.18 2021-09-19 04:49:13+00 kentd Exp $
+// $KmKId: AppDelegate.swift,v 1.19 2021-10-07 01:01:02+00 kentd Exp $
 //	Copyright 2019-2021 by Kent Dickey
 //	This code is covered by the GNU GPL v3
 //	See the file COPYING.txt or https://www.gnu.org/licenses/
@@ -266,7 +266,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 							.milliseconds(1)) {
 			self.main_run_loop()
 		}
-		run_16ms()
+		let ret = run_16ms()
+		if(ret != 0) {
+			exit(ret);
+		}
 		mainwin_info.update()
 		debugwin_info.update()
 	}

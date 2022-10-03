@@ -2,7 +2,29 @@
 MAC OS X port of KEGS (KEGSMAC): http://kegs.sourceforge.net
 -------------------------------------------------------------
 
-This is a Mac OS X Swift port.
+This is a Mac OS X Swift port.  Most of KEGS is written in C, but the
+UI is in Swift.
+
+Downloading, and making it runnable:
+-----------------------------------
+
+Download from http://kegs.sourceforge.net/.  If you're using Safari in it's
+default mode (unpack "Safe" files after downloading), you'll end up with
+kegs.1.xx.tar in your Downloads/ directory.  (where xx will be the version).
+Mac OS X will not let you run unsigned quarantined code you find on the net
+(which is good, generally), so you need to remove quarantine.  At a Terminal
+window, cd to where you want to install KEGS (it can just be your home
+directory):
+
+cd
+cat ~/Downloads/kegs.1.xx.tar | tar xvf -
+
+If you have a compressed file like kegs.1.xx.tar.gz, do:
+
+cd
+gunzip < ~/Downloads/kegs.1.xx.tar.gz | tar xvf -
+
+You will now have a directory names kegs.1.xx and in that, KEGSMACK.app/.
 
 Usage:
 -----
@@ -14,8 +36,9 @@ ROM, ROM.01, or ROM.03) and a config.kegs in the same directory or in your
 home directory (read the README--these files are searched for in various
 places).
 
-KEGSMAC can also be run from the Finder, but if you do this, debugging
-problems is a little tougher.
+KEGSMAC can also be run from the Finder by double-clicking on the icon, or
+by doing "open KEGSMAC", but if you do this, debugging problems is a little
+tougher.
 
 To quit, either click the window close box, or select Quit from the menu.
 To go full screen, click the Maximize button in the window.  You can
@@ -26,3 +49,4 @@ Compile directions
 ------------------
 
 See README.compile.txt
+

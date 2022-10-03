@@ -1,5 +1,5 @@
 #ifdef INCLUDE_RCSID_C
-const char rcsid_iwm_h[] = "@(#)$KmKId: iwm.h,v 1.31 2021-08-22 21:04:19+00 kentd Exp $";
+const char rcsid_iwm_h[] = "@(#)$KmKId: iwm.h,v 1.32 2021-11-14 20:52:13+00 kentd Exp $";
 #endif
 
 /************************************************************************/
@@ -15,7 +15,7 @@ const char rcsid_iwm_h[] = "@(#)$KmKId: iwm.h,v 1.31 2021-08-22 21:04:19+00 kent
 /************************************************************************/
 
 #define MAX_TRACKS	(2*80)
-#define MAX_C7_DISKS	32
+#define MAX_C7_DISKS	16
 
 #define NIB_LEN_525		0x1900		/* 51072 bits per track */
 #define NIBS_FROM_ADDR_TO_DATA	20

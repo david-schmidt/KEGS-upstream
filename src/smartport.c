@@ -1,4 +1,4 @@
-const char rcsid_smartport_c[] = "@(#)$KmKId: smartport.c,v 1.47 2021-08-30 04:03:22+00 kentd Exp $";
+const char rcsid_smartport_c[] = "@(#)$KmKId: smartport.c,v 1.49 2021-11-14 21:17:20+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -142,6 +142,7 @@ do_c70d(word32 arg0)
 
 	disk_printf("cmd: %02x, cmd_list: %06x\n", cmd, cmd_list);
 	param_cnt = get_memory_c(cmd_list);
+	unit = get_memory_c((cmd_list + 1) & mask);
 
 	ext = 0;
 	if(cmd & 0x40) {
@@ -149,15 +150,30 @@ do_c70d(word32 arg0)
 	}
 
 	smartport_log(0xc70d, cmd, rts_addr, cmd_list);
-	dbg_log_info(g_cur_dcycs, (rts_addr << 16) | cmd, cmd_list, 0xc70d);
+	dbg_log_info(g_cur_dcycs, (rts_addr << 16) | (unit << 8) | cmd,
+							cmd_list, 0xc70d);
+#if 0
+	if(cmd != 0x41) {
+		printf("SMTPT: c70d %08x, %08x at %f\n",
+			(rts_addr << 16) | (unit << 8) | cmd, cmd_list,
+			g_cur_dcycs);
+	}
+#endif
+	ret = 0;
+	if((unit >= 1) && (unit <= MAX_C7_DISKS) && ext) {
+		if(g_iwm.smartport[unit-1].just_ejected) {
+			ret = 0x2e;		// DISKSW error
+		}
+		g_iwm.smartport[unit-1].just_ejected = 0;
+	}
 
 	switch(cmd & 0x3f) {
 	case 0x00:	/* Status == 0x00 and 0x40 */
 		if(param_cnt != 3) {
 			disk_printf("param_cnt %d is != 3!\n", param_cnt);
-			exit(8);
+			ret = 0x04;		// BADPCNT
+			break;
 		}
-		unit = get_memory_c((cmd_list+1) & mask);
 		status_ptr_lo = get_memory_c((cmd_list+2) & mask);
 		status_ptr_mid = get_memory_c((cmd_list+3) & mask);
 		status_ptr_hi = 0;
@@ -179,32 +195,40 @@ do_c70d(word32 arg0)
 
 		disk_printf("unit: %02x, status_ptr: %06x, code: %02x\n",
 			unit, status_ptr, status_code);
-		if(unit == 0 && status_code == 0) {
+		if((unit == 0) && (status_code == 0)) {
 			/* Smartport driver status */
 			/* see technotes/smpt/tn-smpt-002 */
-			set_memory_c(status_ptr, g_highest_smartport_unit+1, 1);
+			set_memory_c(status_ptr, MAX_C7_DISKS, 1);
 			set_memory_c(status_ptr+1, 0xff, 1);	// intrpt stat
-			set_memory16_c(status_ptr+2, 0x0002, 1); // vendor id
+			set_memory16_c(status_ptr+2, 0x004b, 1); // vendor id
 			set_memory16_c(status_ptr+4, 0x1000, 1); // version
 			set_memory16_c(status_ptr+6, 0x0000, 1);
+			//printf(" driver status, highest_unit:%02x\n",
+			//		g_highest_smartport_unit+1);
 
 			engine.xreg = 8;
 			engine.yreg = 0;
-			engine.acc &= 0xff00;
-			engine.psr &= ~1;
-			engine.kpc = (rts_addr + 3 + ext) & mask;
-			return;
-		} else if(unit > 0 && status_code == 0) {
+		} else if((unit > 0) && (status_code == 0)) {
 			/* status for unit x */
 			if((unit > MAX_C7_DISKS) ||
 					(g_iwm.smartport[unit-1].fd < 0)) {
 				stat_val = 0x80;
 				dsize = 0;
+				ret = 0;	// Not DISK_SWITCHed error
 			} else {
 				stat_val = 0xf8;
 				dsize = g_iwm.smartport[unit-1].dimage_size;
 				dsize = (dsize+511) / 512;
+				if(g_iwm.smartport[unit-1].write_prot) {
+					stat_val |= 4;		// Write prot
+				}
 			}
+#if 0
+			printf("  status unit:%02x just_ejected:%d, "
+					"stat_val:%02x\n", unit,
+					g_iwm.smartport[unit-1].just_ejected,
+					stat_val);
+#endif
 			set_memory_c(status_ptr, stat_val, 1);
 			set_memory24_c(status_ptr + 1, (word32)dsize);
 			engine.xreg = 4;
@@ -214,17 +238,13 @@ do_c70d(word32 arg0)
 				engine.xreg = 5;
 			}
 			engine.yreg = 0;
-			engine.acc &= 0xff00;
-			engine.psr &= ~1;
-			engine.kpc = (rts_addr + 3 + ext) & mask;
-
 			disk_printf("just finished unit %d, stat 0\n", unit);
-			return;
 		} else if(status_code == 3) {
 			if((unit > MAX_C7_DISKS) ||
 					(g_iwm.smartport[unit-1].fd < 0)) {
 				stat_val = 0x80;
 				dsize = 0;
+				ret = 0;	// Not a disk-switched error
 			} else {
 				stat_val = 0xf8;
 				dsize = g_iwm.smartport[unit-1].dimage_size;
@@ -250,8 +270,8 @@ do_c70d(word32 arg0)
 			set_memory_c(status_ptr + 7, 'G', 1);
 			set_memory_c(status_ptr + 8, 'S', 1);
 
-			/* hard disk supporting extended calls */
-			set_memory16_c(status_ptr + 21, 0xa002, 1);
+			// Profile hard disk supporting extended calls+disk_sw
+			set_memory16_c(status_ptr + 21, 0xc002, 1);
 			set_memory16_c(status_ptr + 23, 0x0000, 1);
 
 			if(cmd & 0x40) {
@@ -259,26 +279,30 @@ do_c70d(word32 arg0)
 			} else {
 				engine.xreg = 25;
 			}
+#if 0
+			printf("  DIB unit:%02x just_ejected:%d, "
+					"stat_val:%02x\n", unit,
+					g_iwm.smartport[unit-1].just_ejected,
+					stat_val);
+#endif
 			engine.yreg = 0;
-			engine.acc &= 0xff00;
-			engine.psr &= ~1;
-			engine.kpc = (rts_addr + 3 + ext) & 0xffff;
 
 			disk_printf("Just finished unit %d, stat 3\n", unit);
 			if(unit == 0 || unit > MAX_C7_DISKS) {
-				engine.acc |= 0x28;
-				engine.psr |= 1;
+				ret = 0x28;		// NODRIVE error
 			}
-			return;
+		} else {
+			printf("cmd: 00, unknown unit/status code %02x!\n",
+								status_code);
+			ret = 0x21;			// BADCTL
 		}
-		printf("cmd: 00, unknown unit/status code!\n");
 		break;
 	case 0x01:	/* Read Block == 0x01 and 0x41 */
 		if(param_cnt != 3) {
 			halt_printf("param_cnt %d is != 3!\n", param_cnt);
-			return;
+			ret = 0x04;		// BADPCNT
+			break;
 		}
-		unit = get_memory_c((cmd_list+1) & mask);
 		buf_ptr_lo = get_memory_c((cmd_list+2) & mask);
 		buf_ptr_hi = get_memory_c((cmd_list+3) & mask);
 
@@ -306,24 +330,18 @@ do_c70d(word32 arg0)
 
 		smartport_log(0, unit - 1, buf_ptr, block);
 
-		ret = do_read_c7(unit - 1, buf_ptr, block);
+		if(ret == 0) {
+			ret = do_read_c7(unit - 1, buf_ptr, block);
+		}
 		engine.xreg = 0;
 		engine.yreg = 2;
-		engine.acc = (engine.acc & 0xff00) | (ret & 0xff);
-		engine.psr &= ~1;
-		if(ret != 0) {
-			engine.psr |= 1;
-		}
-		engine.kpc = (rts_addr + 3 + ext) & 0xffff;
-
-		return;
 		break;
 	case 0x02:	/* Write Block == 0x02 and 0x42 */
 		if(param_cnt != 3) {
 			halt_printf("param_cnt %d is != 3!\n", param_cnt);
-			return;
+			ret = 0x04;		// BADPCNT
+			break;
 		}
-		unit = get_memory_c((cmd_list+1) & mask);
 		buf_ptr_lo = get_memory_c((cmd_list+2) & mask);
 		buf_ptr_hi = get_memory_c((cmd_list+3) & mask);
 
@@ -351,44 +369,34 @@ do_c70d(word32 arg0)
 
 		smartport_log(0, unit - 1, buf_ptr, block);
 
-		ret = do_write_c7(unit - 1, buf_ptr, block);
+		if(ret == 0) {
+			ret = do_write_c7(unit - 1, buf_ptr, block);
+		}
 		engine.xreg = 0;
 		engine.yreg = 2;
-		engine.acc = (engine.acc & 0xff00) | (ret & 0xff);
-		engine.psr &= ~1;
-		if(ret != 0) {
-			engine.psr |= 1;
-		}
-		engine.kpc = (rts_addr + 3 + ext) & 0xffff;
 
 		HALT_ON(HALT_ON_C70D_WRITES, "c70d Write done\n");
-		return;
 		break;
 	case 0x03:	/* Format == 0x03 and 0x43 */
 		if(param_cnt != 1) {
 			halt_printf("param_cnt %d is != 1!\n", param_cnt);
-			return;
+			ret = 0x04;		// BADPCNT
+			break;
 		}
-		unit = get_memory_c((cmd_list+1) & mask);
-
 		if((unit < 1) || (unit > MAX_C7_DISKS)) {
 			halt_printf("Unknown unit #: %d\n", unit);
+			ret = 0x11;		// BADUNIT
 		}
 
 		smartport_log(0, unit - 1, 0, 0);
 
-		ret = do_format_c7(unit - 1);
+		if(ret == 0) {
+			ret = do_format_c7(unit - 1);
+		}
 		engine.xreg = 0;
 		engine.yreg = 2;
-		engine.acc = (engine.acc & 0xff00) | (ret & 0xff);
-		engine.psr &= ~1;
-		if(ret != 0) {
-			engine.psr |= 1;
-		}
-		engine.kpc = (rts_addr + 3 + ext) & 0xffff;
 
 		HALT_ON(HALT_ON_C70D_WRITES, "c70d Format done\n");
-		return;
 		break;
 	case 0x04:	/* Control == 0x04 and 0x44 */
 		if(cmd == 0x44) {
@@ -396,9 +404,8 @@ do_c70d(word32 arg0)
 		}
 		if(param_cnt != 3) {
 			halt_printf("param_cnt %d is != 3!\n", param_cnt);
-			return;
+			break;
 		}
-		unit = get_memory_c((cmd_list+1) & mask);
 		ctl_ptr_lo = get_memory_c((cmd_list+2) & mask);
 		ctl_ptr_hi = get_memory_c((cmd_list+3) & mask);
 		ctl_ptr = (ctl_ptr_hi << 8) + ctl_ptr_lo;
@@ -409,7 +416,7 @@ do_c70d(word32 arg0)
 			cmd_list += 2;
 		}
 
-		ctl_code = get_memory_c((cmd_list +4) & mask);
+		ctl_code = get_memory_c((cmd_list + 4) & mask);
 
 		switch(ctl_code) {
 		case 0x00:
@@ -418,34 +425,35 @@ do_c70d(word32 arg0)
 		default:
 			halt_printf("control code: %02x unknown!\n", ctl_code);
 		}
+		// printf("CONTROL, ctl_code:%02x\n", ctl_code);
 
 		engine.xreg = 0;
 		engine.yreg = 2;
-		engine.acc &= 0xff00;
-		engine.psr &= ~1;
-		engine.kpc = (rts_addr + 3 + ext) & 0xffff;
-		return;
 		break;
 	default:	/* Unknown command! */
 		/* set acc = 1, and set carry, and set kpc */
 		engine.xreg = (rts_addr) & 0xff;
 		engine.yreg = (rts_addr >> 8) & 0xff;
-		engine.acc = (engine.acc & 0xff00) + 0x01;
-		engine.psr |= 0x01;	/* set carry */
-		engine.kpc = (rts_addr + 3 + ext) & 0xffff;
-		if(cmd != 0x4a && cmd != 0x48) {
+		ret = 0x01;		// BADCMD error
+		if((cmd != 0x4a) && (cmd != 0x48)) {
 			/* Finder does 0x4a call before formatting disk */
 			/* Many things do 0x48 call to see online drives */
 			halt_printf("Just did smtport cmd:%02x rts_addr:%04x, "
 				"cmdlst:%06x\n", cmd, rts_addr, cmd_list);
 		}
-		return;
 	}
 
-	halt_printf("Unknown smtport cmd:%02x, cmd_list:%06x, rts_addr:%06x\n",
-		cmd, cmd_list, rts_addr);
+	engine.acc = (engine.acc & 0xff00) | (ret & 0xff);
+	engine.psr &= ~1;
+	if(ret) {
+		engine.psr |= 1;
+	}
+	engine.kpc = (rts_addr + 3 + ext) & 0xffff;
+	// printf("   ret:%02x psr_c:%d\n", ret & 0xff, engine.psr & 1);
 }
 
+// $C70A is the ProDOS entry point, documented in ProDOS 8 Technical Ref
+//  Manual, section 6.3.
 void
 do_c70a(word32 arg0)
 {
@@ -481,6 +489,12 @@ do_c70a(word32 arg0)
 	dbg_log_info(g_cur_dcycs,
 		(buf << 16) | ((unit & 0xff) << 8) | (cmd & 0xff), blk, 0xc70a);
 
+#if 0
+	if(cmd != 0x1ff) {
+		printf("SMTPT: c70a %08x %08x\n",
+			(buf << 16) | ((unit & 0xff) << 8) | (cmd & 0xff), blk);
+	}
+#endif
 	engine.psr &= ~1;	/* clear carry */
 	if(g_rom_version >= 3) {
 		engine.kpc = 0xc764;
@@ -725,7 +739,7 @@ do_format_c7(int unit_num)
 	dtotal = dimage_size;
 
 	while(dsum < dtotal) {
-		max = (int)MY_MIN(0x10000, dtotal - dsum);
+		max = (int)MY_MIN(0x1000, dtotal - dsum);
 		if(dsk->dynapro_info_ptr) {
 			dynapro_write(dsk, &local_buf[0], dsum, max);
 			len = max;

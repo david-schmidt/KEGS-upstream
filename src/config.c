@@ -1,4 +1,4 @@
-const char rcsid_config_c[] = "@(#)$KmKId: config.c,v 1.97 2021-08-19 03:40:54+00 kentd Exp $";
+const char rcsid_config_c[] = "@(#)$KmKId: config.c,v 1.103 2021-11-14 20:51:49+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -112,6 +112,13 @@ int g_cfg_file_min_size = 1024;
 int g_cfg_file_max_size = 2047*1024*1024;
 
 #define MAX_PARTITION_BLK_SIZE		65536
+
+char *g_argv0_path = ".";
+
+const char *g_kegs_default_paths[] = { "", "./", "${HOME}/",
+	"${HOME}/Library/KEGS/", "${0}/../", "${0}/",
+	"${0}/Contents/Resources/", 0 };
+
 
 extern Cfg_menu g_cfg_main_menu[];
 
@@ -439,17 +446,149 @@ config_init_menus(Cfg_menu *menuptr)
 void
 config_init()
 {
-	int	can_create;
+	const char **path_ptr;
+	int	maxlen, fd;
 
 	config_init_menus(g_cfg_main_menu);
 
 	// Find the config.kegs file
 	g_config_kegs_name[0] = 0;
-	can_create = 1;
-	setup_kegs_file(&g_config_kegs_name[0], sizeof(g_config_kegs_name), 0,
-				can_create, &g_config_kegs_name_list[0]);
+	maxlen = sizeof(g_config_kegs_name);
+	fd = 0;
+	if(!config_setup_kegs_file(&g_config_kegs_name[0], maxlen,
+						&g_config_kegs_name_list[0])) {
+		// Try to create config.kegs
+		fd = -1;
+		path_ptr = &g_kegs_default_paths[0];
+		while(*path_ptr) {
+			config_expand_path(&g_config_kegs_name[0], *path_ptr,
+									maxlen);
+			cfg_strlcat(&g_config_kegs_name[0], "config.kegs",
+									maxlen);
+			printf("Trying to create %s\n", &g_config_kegs_name[0]);
+			fd = open(&g_config_kegs_name[0],
+					O_CREAT | O_TRUNC | O_WRONLY, 0x1b6);
+			close(fd);
+			if(fd >= 0) {
+				break;
+			}
+			path_ptr++;
+		}
+	}
+
+	if(fd < 0) {
+		fatal_printf("Could not create config.kegs!\n");
+		my_exit(2);
+	}
 
 	config_parse_config_kegs_file();
+}
+
+int
+config_setup_kegs_file(char *outname, int maxlen, const char **name_ptr)
+{
+	struct stat stat_buf;
+	const char **path_ptr, **cur_name_ptr;
+	mode_t	fmt;
+	int	ret, len;
+
+	outname[0] = 0;
+
+	path_ptr = &g_kegs_default_paths[0];		// Array of strings
+
+	while(*path_ptr) {
+		len = config_expand_path(outname, *path_ptr, maxlen);
+		if(len != (int)strlen(outname)) {
+			printf("config_expand_path ret %d, but strlen:%d!\n",
+						len, (int)strlen(outname));
+		}
+		cur_name_ptr = name_ptr;
+		while(*cur_name_ptr && (len < maxlen)) {
+			outname[len] = 0;
+			cfg_strlcat(outname, *cur_name_ptr, maxlen);
+			// printf("Doing stat on %s\n", outname);
+			ret = cfg_stat(outname, &stat_buf, 0);
+			if(ret == 0) {
+				fmt = stat_buf.st_mode & S_IFMT;
+				if(fmt != S_IFDIR) {
+					/* got it! */
+					return 1;
+				}
+			}
+			cur_name_ptr++;
+		}
+		path_ptr++;
+	}
+
+	return 0;
+}
+
+int
+config_expand_path(char *out_ptr, const char *in_ptr, int maxlen)
+{
+	char	name_buf[256];
+	char	*tmp_ptr;
+	int	name_len, in_char, state, pos;
+
+	out_ptr[0] = 0;
+
+	pos = 0;
+	name_len = 0;
+	state = 0;
+
+	/* See if in_ptr has ${} notation, replace with getenv or argv0 */
+	while(pos < (maxlen - 1)) {
+		in_char = *in_ptr++;
+		out_ptr[pos++] = in_char;
+		out_ptr[pos] = 0;
+		if(in_char == 0) {
+			return pos - 1;
+		}
+		if(state == 0) {
+			/* No $ seen yet, look for it */
+			if(in_char == '$') {
+				state = 1;
+			}
+		} else if(state == 1) {
+			/* See if next char is '{' (dummy }) */
+			if(in_char == '{') {		/* add dummy } */
+				state = 2;
+				name_len = 0;
+				pos -= 2;
+				out_ptr[pos] = 0;
+			} else {
+				state = 0;
+			}
+		} else if(state == 2) {
+			/* fill name_buf ... dummy '{' */
+			pos--;
+			out_ptr[pos] = 0;
+			if(in_char == '}') {
+				name_buf[name_len] = 0;
+
+				/* got token, now look it up */
+				tmp_ptr = "";
+				if(!strncmp("0", name_buf, 128)) {
+					/* Replace ${0} with g_argv0_path */
+					tmp_ptr = g_argv0_path;
+				} else {
+					tmp_ptr = getenv(name_buf);
+					if(tmp_ptr == 0) {
+						tmp_ptr = "";
+					}
+				}
+				pos = cfg_strlcat(out_ptr, tmp_ptr, maxlen);
+				state = 0;
+			} else {
+				name_buf[name_len++] = in_char;
+				if(name_len >= 250) {
+					name_len--;
+				}
+			}
+		}
+	}
+
+	return pos;
 }
 
 void
@@ -766,15 +905,15 @@ config_load_roms()
 	/* set first entry of g_kegs_rom_names[] to g_cfg_rom_path so that */
 	/*  it becomes the first place searched. */
 	g_kegs_rom_names[0] = g_cfg_rom_path;
-	setup_kegs_file(&g_cfg_tmp_path[0], CFG_PATH_MAX, -1, 0,
+	ret = config_setup_kegs_file(&g_cfg_tmp_path[0], CFG_PATH_MAX,
 							&g_kegs_rom_names[0]);
-	printf("Found ROM at path: %s\n", g_cfg_tmp_path);
-
-	if(g_cfg_tmp_path[0] == 0) {
+	if(ret == 0) {
 		// Just get out, let config interface select ROM
 		g_config_control_panel = 1;
+		printf("No ROM, set g_config_control_panel=1\n");
 		return;
 	}
+	printf("Found ROM at path: %s\n", g_cfg_tmp_path);
 	fd = open(&g_cfg_tmp_path[0], O_RDONLY | O_BINARY);
 	if(fd < 0) {
 		fatal_printf("Open ROM file %s failed:%d, errno:%d\n",
@@ -854,10 +993,10 @@ config_load_roms()
 			continue;
 		}
 
-		setup_kegs_file(&g_cfg_tmp_path[0], CFG_PATH_MAX, 1, 0,
+		ret = config_setup_kegs_file(&g_cfg_tmp_path[0], CFG_PATH_MAX,
 								names_ptr);
 
-		if(g_cfg_tmp_path[0] != 0) {
+		if(ret != 0) {
 			fd = open(&(g_cfg_tmp_path[0]), O_RDONLY | O_BINARY);
 			if(fd < 0) {
 				fatal_printf("Open card ROM file %s failed: %d "
@@ -991,6 +1130,7 @@ config_parse_config_kegs_file()
 
 	/* In any case, copy the directory path to g_cfg_cwd_str */
 	(void)getcwd(&g_cfg_cwd_str[0], CFG_PATH_MAX);
+	printf("CWD is now: %s\n", &g_cfg_cwd_str[0]);
 
 	fconf = fopen(g_config_kegs_name, "r");
 	if(fconf == 0) {
@@ -1161,7 +1301,7 @@ config_write_config_kegs_file()
 
 	fconf = fopen(g_config_kegs_name, "w+");
 	if(fconf == 0) {
-		halt_printf("cannot open %s!  Stopping!\n");
+		halt_printf("cannot open %s!  Stopping!\n", g_config_kegs_name);
 		return;
 	}
 
@@ -1261,7 +1401,10 @@ insert_disk(int slot, int drive, const char *name, int ejected,
 		dynamic_size);
 #endif
 
-	dsk->just_ejected = 0;
+	// DO NOT change dsk->just_ejected.  If a disk was just ejected, then
+	//  leave it alone.  Otherwise, if we are a newly inserted disk,
+	//  it should already be 0, so leave it alone
+	//dsk->just_ejected = 1;
 
 	if(dsk->fd >= 0) {
 		iwm_eject_disk(dsk);
@@ -2691,6 +2834,39 @@ cfg_free_alldirents(Cfg_listhdr *listhdrptr)
 
 	listhdrptr->topent = 0;
 	listhdrptr->curent = 0;
+}
+
+void
+cfg_file_add_dirent_unique(Cfg_listhdr *listhdrptr, const char *nameptr,
+	int is_dir, dword64 dsize, dword64 dimage_start, dword64 compr_dsize,
+	int part_num)
+{
+	Cfg_dirent *direntptr;
+	int	num, namelen, this_len;
+	int	i;
+
+	// Loop through all entries, make sure name is unique
+	num = listhdrptr->last;
+	namelen = (int)strlen(nameptr);
+	for(i = 0; i < num; i++) {
+		direntptr = &(listhdrptr->direntptr[i]);
+		this_len = (int)strlen(direntptr->name);
+		if(cfg_str_match(direntptr->name, nameptr, namelen) == 0) {
+			// It's a match...check is_dir
+			if(is_dir) {
+				if((namelen == (this_len - 1)) &&
+					(direntptr->name[namelen] == '/')) {
+					return;		// It's a match
+				}
+			} else {
+				if(namelen == this_len) {
+					return;
+				}
+			}
+		}
+	}
+	cfg_file_add_dirent(listhdrptr, nameptr, is_dir, dsize, dimage_start,
+						compr_dsize, part_num);
 }
 
 void

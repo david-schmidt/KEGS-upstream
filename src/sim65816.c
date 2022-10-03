@@ -1,4 +1,4 @@
-const char rcsid_sim65816_c[] = "@(#)$KmKId: sim65816.c,v 1.427 2021-08-23 03:21:22+00 kentd Exp $";
+const char rcsid_sim65816_c[] = "@(#)$KmKId: sim65816.c,v 1.432 2021-11-11 22:45:55+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -20,15 +20,7 @@ const char rcsid_sim65816_c[] = "@(#)$KmKId: sim65816.c,v 1.427 2021-08-23 03:21
 
 double g_dtime_sleep = 0;
 double g_dtime_in_sleep = 0;
-
-#define ARGV0_PATH_LEN		256
-char g_argv0_path[ARGV0_PATH_LEN+1] = "./";
-
-const char *g_kegs_default_paths[] = { "", "./", "${HOME}/",
-	"${HOME}/Library/KEGS/",
-	"${0}/Contents/Resources/", "/usr/local/lib/",
-	"/usr/local/kegs/", "/usr/local/lib/kegs/", "/usr/share/kegs/",
-	"/var/lib/", "/usr/lib/kegs/", "${0}/", 0 };
+extern char *g_argv0_path;
 
 #define MAX_EVENTS	64
 
@@ -96,7 +88,7 @@ int	g_serial_out_masking = 0;
 int	g_serial_modem[2] = { 0, 1 };
 
 int	g_config_iwm_vbl_count = 0;
-const char g_kegs_version_str[] = "1.13";
+const char g_kegs_version_str[] = "1.14";
 
 #define START_DCYCS	(0.0)
 
@@ -294,9 +286,7 @@ get_memory_io(word32 loc, double *cyc_ptr)
 	/* Else it's an illegal addr...skip if memory sizing */
 	if(loc >= g_mem_size_total) {
 		if((loc & 0xfffe) == 0) {
-#if 0
-			printf("get_io assuming mem sizing, not halting\n");
-#endif
+			//printf("get_io assuming mem sizing, not halting\n");
 			return 0;
 		}
 	}
@@ -346,9 +336,7 @@ set_memory_io(word32 loc, int val, double *cyc_ptr)
 	/* Else it's an illegal addr */
 	if(loc >= g_mem_size_total) {
 		if((loc & 0xfffe) == 0) {
-#if 0
-			printf("set_io assuming mem sizing, not halting\n");
-#endif
+			//printf("set_io assuming mem sizing, not halting\n");
 			return;
 		}
 	}
@@ -379,28 +367,6 @@ set_memory_io(word32 loc, int val, double *cyc_ptr)
 
 	return;
 }
-
-
-#if 0
-void
-check_breakpoints_c(word32 loc)
-{
-	int	index;
-	int	count;
-	int	i;
-
-	index = (loc & (MAX_BP_INDEX-1));
-	count = breakpoints[index].count;
-	if(count) {
-		for(i = 0; i < count; i++) {
-			if(loc == breakpoints[index].addrs[i]) {
-				halt_printf("Write hit breakpoint %d!\n", i);
-			}
-		}
-	}
-}
-#endif
-
 
 void
 show_regs_act(Engine_reg *eptr)
@@ -591,6 +557,14 @@ parse_argv(int argc, char **argv, int slashes_to_find)
 	int	skip_amt, tmp1, len;
 	int	i;
 
+#if 0
+	// If launched from Finder, no stdout, so send it to /tmp/out1
+	fflush(stdout);
+	setvbuf(stdout, 0, _IONBF, 0);
+	close(1);
+	(void)open("/tmp/out1", O_WRONLY | O_CREAT | O_TRUNC, 0x1b6);
+#endif
+
 	printf("Starting KEGS v%s\n", &g_kegs_version_str[0]);
 
 	// parse arguments
@@ -609,20 +583,21 @@ parse_argv(int argc, char **argv, int slashes_to_find)
 		return 1;
 	}
 
-	str = argv[0];
+	str = kegs_malloc_str(argv[0]);
 	len = (int)strlen(str);
-	len = MY_MIN(ARGV0_PATH_LEN, len);
 	for(i = len; i > 0; i--) {
 		if(str[i] == '/') {
 			if(--slashes_to_find <= 0) {
-				strncpy(&(g_argv0_path[0]), str, i);
-				g_argv0_path[i] = 0;
+				str[i] = 0;
+				g_argv0_path = str;
 				break;
 			}
 		}
 	}
+	printf("g_argv0_path: %s\n", g_argv0_path);
 
 	for(i = 1; i < argc; i++) {
+		printf("argv[%d] = %s\n", i, argv[i]);
 		if(!strcmp("-badrd", argv[i])) {
 			printf("Halting on bad reads\n");
 			g_halt_on_bad_read = 2;
@@ -736,6 +711,8 @@ parse_argv(int argc, char **argv, int slashes_to_find)
 int
 kegs_init(int mdepth)
 {
+	g_config_control_panel = 0;
+
 	check_engine_asm_defines();
 	fixed_memory_ptrs_init();
 
@@ -769,9 +746,9 @@ kegs_init(int mdepth)
 
 	do_reset();
 
-	g_config_control_panel = 0;
 	g_stepping = 0;
 	clear_halt();
+	cfg_set_config_panel(g_config_control_panel);
 
 	return 0;
 }
@@ -795,143 +772,6 @@ load_roms_init_memory()
 	/*  through $e1/1688 which ROM 03 left pointing to fc/0199 */
 	/* So set e1/15fe = 0 */
 	set_memory16_c(0xe115fe, 0, 1);
-}
-
-void
-kegs_expand_path(char *out_ptr, const char *in_ptr, int maxlen)
-{
-	char	name_buf[256];
-	char	*tmp_ptr;
-	int	name_len, in_char, state;
-
-	out_ptr[0] = 0;
-
-	name_len = 0;
-	state = 0;
-
-	/* See if in_ptr has ${} notation, replace with getenv or argv0 */
-	while(maxlen > 0) {
-		in_char = *in_ptr++;
-		*out_ptr++ = in_char;
-		maxlen--;
-		if(state == 0) {
-			/* No $ seen yet, look for it */
-			if(in_char == '$') {
-				state = 1;
-			}
-		} else if(state == 1) {
-			/* See if next char is '{' (dummy }) */
-			if(in_char == '{') {		/* add dummy } */
-				state = 2;
-				name_len = 0;
-				out_ptr -= 2;
-			} else {
-				state = 0;
-			}
-		} else if(state == 2) {
-			/* fill name_buf ... dummy '{' */
-			out_ptr--;
-			if(in_char == '}') {
-				name_buf[name_len] = 0;
-
-				/* got token, now look it up */
-				tmp_ptr = "";
-				if(!strncmp("0", name_buf, 128)) {
-					/* Replace ${0} with g_argv0_path */
-					tmp_ptr = &(g_argv0_path[0]);
-				} else {
-					tmp_ptr = getenv(name_buf);
-					if(tmp_ptr == 0) {
-						tmp_ptr = "";
-					}
-				}
-				strncpy(out_ptr, tmp_ptr, maxlen);
-				out_ptr += strlen(tmp_ptr);
-				maxlen -= strlen(tmp_ptr);
-				state = 0;
-			} else {
-				name_buf[name_len++] = in_char;
-			}
-		}
-		if(in_char == 0) {
-			/* make sure its null terminated */
-			*out_ptr++ = 0;
-			break;
-		}
-	}
-}
-
-void
-setup_kegs_file(char *outname, int maxlen, int ok_if_missing,
-		int can_create_file, const char **name_ptr)
-{
-	char	local_path[256];
-	struct stat stat_buf;
-	const char **path_ptr;
-	const char **cur_name_ptr, **save_path_ptr;
-	int	ret, fd;
-
-	outname[0] = 0;
-
-	path_ptr = &g_kegs_default_paths[0];
-
-	save_path_ptr = path_ptr;
-	while(*path_ptr) {
-		kegs_expand_path(&(local_path[0]), *path_ptr, 250);
-		cur_name_ptr = name_ptr;
-		while(*cur_name_ptr) {
-			strcpy(outname, &(local_path[0]));
-			strncat(outname, *cur_name_ptr, 255-strlen(outname));
-			if(!ok_if_missing) {
-				printf("Trying '%s'\n", outname);
-			}
-			ret = stat(outname, &stat_buf);
-			if(ret == 0) {
-				/* got it! */
-				return;
-			}
-			cur_name_ptr++;
-		}
-		path_ptr++;
-	}
-
-	outname[0] = 0;
-	if(ok_if_missing > 0) {
-		return;
-	}
-
-	/* couldn't find it, print out all the attempts */
-	path_ptr = save_path_ptr;
-	fatal_printf("Could not find required file \"%s\" in any of these "
-						"directories:\n", *name_ptr);
-	while(*path_ptr) {
-		fatal_printf("  %s\n", *path_ptr++);
-	}
-
-	if(can_create_file) {
-		// Ask user if it's OK to create the file
-		//x_dialog_create_kegs_conf(*name_ptr);
-		fd = open(name_ptr[0], O_CREAT | O_TRUNC | O_WRONLY, 0x1b6);
-		close(fd);
-		can_create_file = 0;
-
-		// But clear out the fatal_printfs first
-		clear_fatal_logs();
-		setup_kegs_file(outname, maxlen, ok_if_missing,
-						can_create_file, name_ptr);
-		// It's one-level of recursion--it cannot loop since we
-		//  clear can_create_file.
-		// If it returns, then there was succes and we should get out
-		return;
-	} else if(ok_if_missing) {
-		/* Just show an alert and return if ok_if_missing < 0 */
-		//x_show_alert(0, 0);
-		return;
-	}
-
-	system("pwd");
-
-	my_exit(2);
 }
 
 Event g_event_list[MAX_EVENTS];
@@ -1089,10 +929,8 @@ add_event_doc(double dcycs, int osc)
 {
 	if(dcycs < g_cur_dcycs) {
 		dcycs = g_cur_dcycs;
-#if 0
-		halt_printf("add_event_doc: dcycs: %f, cur_dcycs: %f\n",
-			dcycs, g_cur_dcycs);
-#endif
+		//halt_printf("add_event_doc: dcycs: %f, cur_dcycs: %f\n",
+		//	dcycs, g_cur_dcycs);
 	}
 
 	add_event_entry(dcycs, EV_DOC_INT + (osc << 8));
