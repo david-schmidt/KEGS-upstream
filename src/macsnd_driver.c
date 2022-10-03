@@ -1,8 +1,8 @@
-const char rcsid_macsnd_driver_c[] = "@(#)$KmKId: macsnd_driver.c,v 1.17 2021-08-17 00:08:26+00 kentd Exp $";
+const char rcsid_macsnd_driver_c[] = "@(#)$KmKId: macsnd_driver.c,v 1.19 2022-02-04 19:22:46+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -25,6 +25,15 @@ const char rcsid_macsnd_driver_c[] = "@(#)$KmKId: macsnd_driver.c,v 1.17 2021-08
 #include <AudioToolbox/AudioToolbox.h>
 #include <CoreAudio/CoreAudio.h>
 #include <unistd.h>
+
+// Mac OS X 12.0 deprecates kAudioObjectPropertyElementMaster.  So now we
+//  need to use kAudioObjectPropertyElementMain, and set it to ...Master if it
+//  isn't already set.  This is beyond dumb
+#if defined(__MAC_OS_X_VERSION_MAX_ALLOWED)
+# if __MAC_OS_X_VERSION_MAX_ALLOWED < 120000
+#  define kAudioObjectPropertyElementMain kAudioObjectPropertyElementMaster
+# endif
+#endif
 
 #define MACSND_REBUF_SIZE	(64*1024)
 
@@ -175,7 +184,7 @@ macsnd_init()
 
 	g_aopa.mSelector = kAudioHardwarePropertyDefaultOutputDevice;
 	g_aopa.mScope = kAudioObjectPropertyScopeGlobal;
-	g_aopa.mElement = kAudioObjectPropertyElementMaster;
+	g_aopa.mElement = kAudioObjectPropertyElementMain;
 
 	size = 4;
 	result = AudioObjectGetPropertyData(kAudioObjectSystemObject, &g_aopa,

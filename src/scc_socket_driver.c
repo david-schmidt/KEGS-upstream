@@ -1,8 +1,8 @@
-const char rcsid_scc_socket_driver_c[] = "@(#)$KmKId: scc_socket_driver.c,v 1.22 2021-11-12 05:00:30+00 kentd Exp $";
+const char rcsid_scc_socket_driver_c[] = "@(#)$KmKId: scc_socket_driver.c,v 1.23 2022-02-10 00:55:25+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -21,7 +21,15 @@ const char rcsid_scc_socket_driver_c[] = "@(#)$KmKId: scc_socket_driver.c,v 1.22
 extern Scc g_scc[2];
 extern int g_serial_modem[];
 
+#ifdef _WIN32
+#include <winsock2.h>
+typedef int socklen_t;
+#endif
+
+#ifndef _WIN32
 extern int h_errno;
+#endif
+
 int g_wsastartup_called = 0;
 
 /* Usage: scc_socket_init() called to init socket mode */
@@ -35,7 +43,7 @@ scc_socket_init(int port)
 {
 	Scc	*scc_ptr;
 
-#ifdef _WIN32
+#if defined(_WIN32) && defined(SCC_SOCKETS)
 	WSADATA	wsadata;
 	int	ret;
 
@@ -64,6 +72,7 @@ scc_socket_init(int port)
 void
 scc_socket_maybe_open_incoming(int port, double dcycs)
 {
+#ifdef SCC_SOCKETS
 	Scc	*scc_ptr;
 	struct sockaddr_in sa_in;
 	int	on;
@@ -144,12 +153,13 @@ scc_socket_maybe_open_incoming(int port, double dcycs)
 	scc_ptr->state = 1;		/* successful socket */
 
 	scc_socket_make_nonblock(port, dcycs);
-
+#endif
 }
 
 void
 scc_socket_open_outgoing(int port, double dcycs)
 {
+#ifdef SCC_SOCKETS
 	Scc	*scc_ptr;
 	struct sockaddr_in sa_in;
 	struct hostent *hostentptr;
@@ -228,30 +238,32 @@ scc_socket_open_outgoing(int port, double dcycs)
 
 	scc_socket_make_nonblock(port, dcycs);
 	scc_ptr->rdwrfd = scc_ptr->sockfd;
+#endif
 }
 
 void
 scc_socket_make_nonblock(int port, double dcycs)
 {
+#ifdef SCC_SOCKETS
 	Scc	*scc_ptr;
 	SOCKET	sockfd;
 	int	ret;
-#ifdef _WIN32
+# ifdef _WIN32
 	u_long	flags;
-#else
+# else
 	int	flags;
-#endif
+# endif
 
 	scc_ptr = &(g_scc[port]);
 	sockfd = scc_ptr->sockfd;
 
-#ifdef _WIN32
+# ifdef _WIN32
 	flags = 1;
 	ret = ioctlsocket(sockfd, FIONBIO, &flags);
 	if(ret != 0) {
 		printf("ioctlsocket ret: %d\n", ret);
 	}
-#else
+# else
 	flags = fcntl(sockfd, F_GETFL, 0);
 	if(flags == -1) {
 		printf("fcntl GETFL ret: %d, errno: %d\n", flags, errno);
@@ -266,12 +278,14 @@ scc_socket_make_nonblock(int port, double dcycs)
 		scc_ptr->socket_state = -1;
 		return;
 	}
+# endif
 #endif
 }
 
 void
 scc_socket_close(int port, int full_close, double dcycs)
 {
+#ifdef SCC_SOCKETS
 	Scc	*scc_ptr;
 	int	rdwrfd;
 	SOCKET	sockfd;
@@ -319,6 +333,7 @@ scc_socket_close(int port, int full_close, double dcycs)
 	} else {
 		scc_ptr->modem_dial_or_acc_mode = 2;	/* always accept */
 	}
+#endif
 }
 
 void
@@ -1144,3 +1159,4 @@ scc_socket_do_answer(int port, double dcycs)
 		scc_ptr->socket_num_rings = 0;
 	}
 }
+

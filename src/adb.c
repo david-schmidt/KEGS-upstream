@@ -1,4 +1,4 @@
-const char rcsid_adb_c[] = "@(#)$KmKId: adb.c,v 1.105 2022-01-22 16:30:14+00 kentd Exp $";
+const char rcsid_adb_c[] = "@(#)$KmKId: adb.c,v 1.106 2022-02-09 05:34:42+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -115,6 +115,11 @@ int	g_adb_mouse_coord = 0;
 #define MAX_KBD_PASTE_BUF	32768
 
 int	g_adb_mainwin_has_focus = 1;
+#if defined(__linux__) || defined(_WIN32)
+int	g_adb_swap_command_option = 1;		// Default to swap on Linux/Win
+#else
+int	g_adb_swap_command_option = 0;
+#endif
 int	g_key_down = 0;
 int	g_hard_key_down = 0;
 int	g_a2code_down = 0;
@@ -1962,8 +1967,15 @@ adb_physical_key_update(Kimage *kimage_ptr, int a2code, word32 unicode_c,
 	}
 
 	/* Remap 0x7b-0x7e to 0x3b-0x3e (arrow keys on new mac keyboards) */
-	if(a2code >= 0x7b && a2code <= 0x7e) {
+	if((a2code >= 0x7b) && (a2code <= 0x7e)) {
 		a2code = a2code - 0x40;
+	}
+	if(g_adb_swap_command_option) {
+		if(a2code == 0x37) {		// Command?
+			a2code = 0x3a;		//  -> Option
+		} else if(a2code == 0x3a) {	// Option?
+			a2code = 0x37;		//  -> Command
+		}
 	}
 
 	/* Now check for special keys (function keys, etc) */

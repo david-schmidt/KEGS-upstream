@@ -1,8 +1,8 @@
-const char rcsid_voc_c[] = "@(#)$KmKId: voc.c,v 1.5 2021-12-20 18:34:58+00 kentd Exp $";
+const char rcsid_voc_c[] = "@(#)$KmKId: voc.c,v 1.6 2022-02-02 15:23:32+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -189,7 +189,7 @@ voc_update_interlace(double dcycs)
 		// Interlace mode has changed
 		g_cur_a2_stat &= (~ALL_STAT_VOC_INTERLACE);
 		g_cur_a2_stat |= new_stat;
-		printf("Change VOC interlace mode: %d\n", new_stat);
+		printf("Change VOC interlace mode: %08x\n", new_stat);
 		change_display_mode(dcycs);
 	}
 }

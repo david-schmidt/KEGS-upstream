@@ -1,8 +1,8 @@
-const char rcsid_joystick_driver_c[] = "@(#)$KmKId: joystick_driver.c,v 1.18 2021-09-19 04:50:12+00 kentd Exp $";
+const char rcsid_joystick_driver_c[] = "@(#)$KmKId: joystick_driver.c,v 1.19 2022-02-10 00:56:56+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -13,7 +13,6 @@ const char rcsid_joystick_driver_c[] = "@(#)$KmKId: joystick_driver.c,v 1.18 202
 /************************************************************************/
 
 #include "defc.h"
-#include <sys/time.h>
 
 #ifdef __linux__
 # include <linux/joystick.h>
@@ -136,6 +135,9 @@ joystick_update_buttons()
 
 #ifdef _WIN32
 # define JOYSTICK_DEFINED
+#undef JOYSTICK_DEFINED
+	// HACK: remove
+#if 0
 void
 joystick_init()
 {
@@ -235,6 +237,7 @@ joystick_update_buttons()
 		}
 	}
 }
+#endif
 #endif
 
 #ifdef MAC

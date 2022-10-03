@@ -1,4 +1,4 @@
-// $KmKId: AppDelegate.swift,v 1.23 2022-01-15 15:34:35+00 kentd Exp $
+// $KmKId: AppDelegate.swift,v 1.24 2022-01-30 20:39:31+00 kentd Exp $
 //	Copyright 2019-2022 by Kent Dickey
 //	This code is covered by the GNU GPL v3
 //	See the file COPYING.txt or https://www.gnu.org/licenses/
@@ -213,9 +213,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 				action: #selector(AppDelegate.do_about(_:)),
 				keyEquivalent: "")
 			kegs.addItem(NSMenuItem.separator())
-			kegs.addItem(withTitle: "Quit \(appname)",
+			let quit_item = NSMenuItem(title: "Quit \(appname)",
 				action: #selector(NSApplication.terminate(_:)),
-				keyEquivalent: "Q")
+				keyEquivalent: "q")
+			quit_item.keyEquivalentModifierMask = [.option,
+								.command ]
+			kegs.addItem(quit_item)
 			let kegs_item = NSMenuItem()
 			kegs_item.title = appname
 			kegs_item.submenu = kegs
@@ -247,10 +250,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
 	func show_menu(_ menu: NSMenu, depth: Int) {
 		if(depth >= -10) {
-			return		// HACK: remove to see debug output!
+			//return	// HACK: remove to see debug output!
 		}
 		print("menu at depth \(depth): \(menu.title)")
-		if(depth > 5) {		// Prevent infinit recursion
+		if(depth > 5) {		// Prevent infinite recursion
 			return
 		}
 		for menuit in menu.items {

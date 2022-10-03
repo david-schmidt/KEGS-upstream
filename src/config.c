@@ -1,4 +1,4 @@
-const char rcsid_config_c[] = "@(#)$KmKId: config.c,v 1.114 2022-01-23 18:37:56+00 kentd Exp $";
+const char rcsid_config_c[] = "@(#)$KmKId: config.c,v 1.118 2022-02-11 22:58:01+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -18,7 +18,12 @@ const char rcsid_config_c[] = "@(#)$KmKId: config.c,v 1.114 2022-01-23 18:37:56+
 #include "defc.h"
 #include <stdarg.h>
 #include "config.h"
-#include <dirent.h>
+
+#ifdef _WIN32
+# include "win_dirent.h"
+#else
+# include <dirent.h>
+#endif
 
 extern int Verbose;
 extern word32 g_vbl_count;
@@ -35,6 +40,7 @@ extern double g_cur_dcycs;
 extern int g_rom_version;
 
 extern word32 g_adb_repeat_vbl;
+extern int g_adb_swap_command_option;
 
 extern int g_limit_speed;
 extern int g_force_depth;
@@ -273,6 +279,18 @@ Cfg_menu g_cfg_serial_menu[] = {
 { 0, 0, 0, 0, 0 },
 };
 
+Cfg_menu g_cfg_video_menu[] = {
+{ "Force X-windows display depth", KNMP(g_force_depth), CFGTYPE_INT },
+{ "Enable VOC,0,Disabled,1,Enabled", KNMP(g_voc_enable), CFGTYPE_INT },
+{ "3200 Color Enable,0,Auto (Full if fast enough),1,Full (Update every line),"
+	"8,Off (Update video every 8 lines)",
+		KNMP(g_video_line_update_interval), CFGTYPE_INT },
+{ "Dump text screen to file", (void *)cfg_text_screen_dump, 0, 0, CFGTYPE_FUNC},
+{ "", 0, 0, 0, 0 },
+{ "Back to Main Config", g_cfg_main_menu, 0, 0, CFGTYPE_MENU },
+{ 0, 0, 0, 0, 0 },
+};
+
 Cfg_menu g_cfg_main_menu[] = {
 { "KEGS Configuration", g_cfg_main_menu, 0, 0, CFGTYPE_MENU },
 { "Disk Configuration", g_cfg_disk_menu, 0, 0, CFGTYPE_MENU },
@@ -280,7 +298,7 @@ Cfg_menu g_cfg_main_menu[] = {
 { "ROM File Selection", g_cfg_rom_menu, 0, 0, CFGTYPE_MENU },
 { "Character ROM Selection", g_cfg_charrom_menu, 0, 0, CFGTYPE_MENU },
 { "Serial Port Configuration", g_cfg_serial_menu, 0, 0, CFGTYPE_MENU },
-{ "Force X-windows display depth", KNMP(g_force_depth), CFGTYPE_INT },
+{ "Video Setting", g_cfg_video_menu, 0, 0, CFGTYPE_MENU },
 { "Auto-update config.kegs,0,Manual,1,Immediately",
 		KNMP(g_config_kegs_auto_update), CFGTYPE_INT },
 { "Speed,0,Unlimited,1,1.0MHz,2,2.8MHz,3,8.0MHz (Zip)",
@@ -289,16 +307,13 @@ Cfg_menu g_cfg_main_menu[] = {
 	"0x400000,4MB,0x600000,6MB,0x800000,8MB,0xa00000,10MB,0xc00000,12MB,"
 	"0xe00000,14MB", KNMP(g_mem_size_exp), CFGTYPE_INT },
 { "Show Status lines,0,Disabled,1,Enabled", KNMP(g_status_enable), CFGTYPE_INT},
-{ "Enable VOC,0,Disabled,1,Enabled", KNMP(g_voc_enable), CFGTYPE_INT },
-{ "3200 Color Enable,0,Auto (Full if fast enough),1,Full (Update every line),"
-	"8,Off (Update video every 8 lines)",
-		KNMP(g_video_line_update_interval), CFGTYPE_INT },
 { "Code Red Halts,0,Do not stop on bad accesses,1,Enter debugger on bad "
 		"accesses", KNMP(g_user_halt_bad), CFGTYPE_INT },
 { "Enable Text Page 2 Shadow,0,Disabled on ROM 01 (matches real hardware),"
 	"1,Enabled on ROM 01 and 03",
 		KNMP(g_user_page2_shadow), CFGTYPE_INT },
-{ "Dump text screen to file", (void *)cfg_text_screen_dump, 0, 0, CFGTYPE_FUNC},
+{ "Swap Command/Option keys,0,Disabled,1,Swapped",
+				KNMP(g_adb_swap_command_option), CFGTYPE_INT },
 { "", 0, 0, 0, 0 },
 { "Save changes to config.kegs", (void *)config_write_config_kegs_file, 0, 0,
 		CFGTYPE_FUNC },
@@ -686,6 +701,7 @@ cfg_set_config_panel(int panel)
 		g_menu_inc = 1;
 		g_menu_redraw_needed = 1;
 		g_cfg_slotdrive = 0;
+		g_cfg_newdisk_select = 0;
 		g_cfg_select_partition = -1;
 	} else {
 		// Leave config panel, go back to A2 emulation
@@ -2070,11 +2086,15 @@ cfg_insert_disk_dynapro(int slot, int drive, const char *name)
 {
 	int	dynapro_blocks;
 
-	dynapro_blocks = 140;
+	dynapro_blocks = 280;
 	if(slot == 5) {
-		dynapro_blocks = 800;
+		dynapro_blocks = 1600;
 	} else if(slot == 7) {
 		dynapro_blocks = 65535;
+	}
+	if(g_cfg_newdisk_select && (g_cfg_newdisk_type == 3) &&
+							g_cfg_newdisk_blocks) {
+		dynapro_blocks = g_cfg_newdisk_blocks;
 	}
 	insert_disk(slot, drive, name, 0, 0, -1, dynapro_blocks);
 }
@@ -2165,6 +2185,10 @@ cfg_set_le32(byte *bptr, word32 val)
 void
 config_file_to_pipe(Disk *dsk, const char *cmd_ptr, const char *name_ptr)
 {
+#ifdef _WIN32
+	printf("Cannot do pipe from cmd %s to %s\n", cmd_ptr, name_ptr);
+	return;
+#else
 	int	output_pipe[2];
 	byte	*bptr2;
 	char	*bufptr;
@@ -2241,6 +2265,7 @@ config_file_to_pipe(Disk *dsk, const char *cmd_ptr, const char *name_ptr)
 		dsk->raw_dsize = pos;
 	}
 	free(bufptr);
+#endif
 }
 
 void
@@ -3044,6 +3069,29 @@ cfg_str_match(const char *str1, const char *str2, int len)
 }
 
 int
+cfgcasecmp(const char *str1, const char *str2)
+{
+	const byte *bptr1, *bptr2;
+	int	c, c2;
+
+	/* basically, work like strcasecmp */
+
+	bptr1 = (const byte *)str1;
+	bptr2 = (const byte *)str2;
+	while(1) {
+		c = *bptr1++;
+		c2 = *bptr2++;
+		c = tolower(c);
+		c2 = tolower(c2);
+		if((c == 0) || (c2 == 0) || (c != c2)) {
+			return c - c2;
+		}
+	}
+
+	return 0;
+}
+
+int
 cfg_strlcat(char *dstptr, const char *srcptr, int dstsize)
 {
 	char	*ptr;
@@ -3234,16 +3282,16 @@ cfg_file_readdir(const char *pathptr)
 		len = (int)strlen(g_cfg_tmp_path);
 		is_dir = 0;
 		is_gz = 0;
-		if((len > 3) && !strcasecmp(&g_cfg_tmp_path[len - 3], ".gz")) {
+		if((len > 3) && !cfgcasecmp(&g_cfg_tmp_path[len - 3], ".gz")) {
 			is_gz = 1;
 		}
-		if((len > 4) && !strcasecmp(&g_cfg_tmp_path[len - 4], ".bz2")) {
+		if((len > 4) && !cfgcasecmp(&g_cfg_tmp_path[len - 4], ".bz2")) {
 			is_gz = 1;
 		}
-		if((len > 4) && !strcasecmp(&g_cfg_tmp_path[len - 4], ".zip")) {
+		if((len > 4) && !cfgcasecmp(&g_cfg_tmp_path[len - 4], ".zip")) {
 			is_gz = 1;
 		}
-		if((len > 4) && !strcasecmp(&g_cfg_tmp_path[len - 4], ".woz")) {
+		if((len > 4) && !cfgcasecmp(&g_cfg_tmp_path[len - 4], ".woz")) {
 			is_gz = 1;
 		}
 		if(ret != 0) {
@@ -3274,6 +3322,8 @@ cfg_file_readdir(const char *pathptr)
 		cfg_file_add_dirent(&g_cfg_dirlist, direntptr->d_name, is_dir,
 					(dword64)stat_buf.st_size, 0, 0, -1);
 	}
+
+	closedir(dirptr);
 
 	/* then sort the results (Mac's HFS+ is sorted, but other FS won't be)*/
 	qsort(&(g_cfg_dirlist.direntptr[0]), g_cfg_dirlist.last,
@@ -3530,6 +3580,7 @@ cfg_partition_selected()
 			&(g_cfg_file_path[0]), 0, part_str2, part_num, 0);
 	free(part_str2);
 	g_cfg_slotdrive = 0;
+	g_cfg_newdisk_select = 0;
 	g_cfg_select_partition = -1;
 }
 
@@ -3610,6 +3661,8 @@ cfg_file_selected()
 		cfg_insert_disk_dynapro((g_cfg_slotdrive >> 8) & 0xf,
 				g_cfg_slotdrive & 0xff, &g_cfg_file_path[0]);
 		g_cfg_slotdrive = 0;			// End file selection
+		g_cfg_newdisk_select = 0;
+		g_menuptr = &g_cfg_disk_menu[0];
 	} else if((g_cfg_newdisk_select == 1) && (g_cfg_newdisk_type == 3) &&
 			g_cfg_file_pathfield && (fmt == S_IFDIR)) {
 		// Special handling for Dynamic ProDOS directories.  User hit
@@ -3640,10 +3693,12 @@ cfg_file_selected()
 				g_cfg_slotdrive & 0xff, &g_cfg_file_path[0]);
 		if(ret > 0) {
 			g_cfg_slotdrive = 0;
+			g_cfg_newdisk_select = 0;
 		}
 	} else {
 		cfg_file_update_ptr(&g_cfg_file_path[0], 1);
 		g_cfg_slotdrive = 0;
+		g_cfg_newdisk_select = 0;
 	}
 }
 

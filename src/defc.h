@@ -1,10 +1,10 @@
 #ifdef INCLUDE_RCSID_C
-const char rcsid_defc_h[] = "@(#)$KmKId: defc.h,v 1.126 2021-07-14 00:14:12+00 kentd Exp $";
+const char rcsid_defc_h[] = "@(#)$KmKId: defc.h,v 1.128 2022-02-10 00:47:43+00 kentd Exp $";
 #endif
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -229,9 +229,9 @@ STRUCT(Lzw_state) {
 };
 
 #ifdef __LP64__
-# define PTR2WORD(a)	((word32)(unsigned long)(a))
+# define PTR2WORD(a)	((word32)(unsigned long long)(a))
 #else
-# define PTR2WORD(a)	((word32)(unsigned long)(a))
+# define PTR2WORD(a)	((word32)(unsigned long long)(a))
 #endif
 
 

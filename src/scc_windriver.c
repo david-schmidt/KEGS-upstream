@@ -1,8 +1,8 @@
-const char rcsid_scc_windriver_c[] = "@(#)$KmKId: scc_windriver.c,v 1.6 2020-06-17 02:25:34+00 kentd Exp $";
+const char rcsid_scc_windriver_c[] = "@(#)$KmKId: scc_windriver.c,v 1.7 2022-02-10 00:44:04+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2020 by Kent Dickey		*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -17,7 +17,7 @@ const char rcsid_scc_windriver_c[] = "@(#)$KmKId: scc_windriver.c,v 1.6 2020-06-
 #include "defc.h"
 #include "scc.h"
 
-extern Scc scc_stat[2];
+extern Scc g_scc[2];
 extern word32 g_c025_val;
 
 #ifdef _WIN32
@@ -31,7 +31,7 @@ scc_serial_win_init(int port)
 	int	state;
 	int	ret;
 
-	scc_ptr = &(scc_stat[port]);
+	scc_ptr = &(g_scc[port]);
 
 	scc_ptr->state = 0;		/* mark as failed */
 
@@ -78,7 +78,7 @@ scc_serial_win_change_params(int port)
 	Scc	*scc_ptr;
 	int	ret;
 
-	scc_ptr = &(scc_stat[port]);
+	scc_ptr = &(g_scc[port]);
 
 	host_handle = scc_ptr->host_handle;
 	dcbptr = scc_ptr->host_handle2;
@@ -162,7 +162,7 @@ scc_serial_win_fill_readbuf(int port, int space_left, double dcycs)
 	int	i;
 	int	ret;
 
-	scc_ptr = &(scc_stat[port]);
+	scc_ptr = &(g_scc[port]);
 
 	host_handle = scc_ptr->host_handle;
 	if(host_handle == 0) {
@@ -170,7 +170,7 @@ scc_serial_win_fill_readbuf(int port, int space_left, double dcycs)
 	}
 
 	/* Try reading some bytes */
-	space_left = MIN(256, space_left);
+	space_left = MY_MIN(256, space_left);
 	ret = ReadFile(host_handle, tmp_buf, space_left, &bytes_read, NULL);
 
 	if(ret == 0) {
@@ -197,7 +197,7 @@ scc_serial_win_empty_writebuf(int port)
 	int	ret;
 	int	len;
 
-	scc_ptr = &(scc_stat[port]);
+	scc_ptr = &(g_scc[port]);
 
 	//printf("win_empty_writebuf, host_handle: %d\n", scc_ptr->host_handle);
 	host_handle = scc_ptr->host_handle;

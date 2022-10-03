@@ -1,8 +1,8 @@
-const char rcsid_moremem_c[] = "@(#)$KmKId: moremem.c,v 1.275 2021-12-19 22:44:39+00 kentd Exp $";
+const char rcsid_moremem_c[] = "@(#)$KmKId: moremem.c,v 1.277 2022-02-09 02:55:23+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -60,6 +60,8 @@ int	g_c041_val = 0;		/* C041_EN_25SEC_INTS, C041_EN_MOVE_INTS */
 int	g_c046_val = 0;
 int	g_c05x_annuncs = 0;
 int	g_c068_statereg = 0;
+word32	g_c06d_val = 0;
+word32	g_c06f_val = 0;
 int	g_c08x_wrdefram = 0;
 int	g_zipgs_unlock = 0;
 int	g_zipgs_reg_c059 = 0x5f;
@@ -1186,6 +1188,9 @@ io_read(word32 loc, double *cyc_ptr)
 			return g_c02b_val;
 		case 0x2c: /* 0xc02c */
 			/* printf("reading c02c, returning 0\n"); */
+			if(g_c06d_val == 0x40) {	// Test mode $40
+				return read_video_data(dcycs);
+			}
 			return 0;
 		case 0x2d: /* 0xc02d */
 			tmp = g_c02d_int_crom;
@@ -2027,15 +2032,28 @@ io_write(word32 loc, int val, double *cyc_ptr)
 		case 0x69: /* 0xc069 */
 			/* just ignore, someone writing c068 with m=0 */
 			return;
+		case 0x6a: /* 0xc06a */
+		case 0x6b: /* 0xc06b */
+			UNIMPL_WRITE;
 		case 0x6c: /* 0xc06c */
 			g_c06c_latched_cyc = (word32)((dword64)dcycs);
 			return;
-		case 0x6a: /* 0xc06a */
-		case 0x6b: /* 0xc06b */
 		case 0x6d: /* 0xc06d */
+			// Affect what reads to $C02C can see, only $40 now
+			if((g_c06f_val & 0x100) == 0) {		// Locked
+				val = 0;
+			}
+			g_c06d_val = val;			// Test mode
+			return;
 		case 0x6e: /* 0xc06e */
+			g_c06f_val = 0;
+			return;
 		case 0x6f: /* 0xc06f */
-			UNIMPL_WRITE;
+			if((g_c06f_val == 0xda) && (val == 0x61)) {
+				val |= 0x100;	// Unlock
+			}
+			g_c06f_val = val;
+			return;
 
 		/* 0xc070 - 0xc07f */
 		case 0x70: /* 0xc070 = Trigger paddles */

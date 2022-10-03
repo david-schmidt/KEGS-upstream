@@ -11,7 +11,7 @@
 /************************************************************************/
 
 #ifdef INCLUDE_RCSID_C
-const char rcsid_protos_base_h[] = "@(#)$KmKId: protos_base.h,v 1.101 2022-01-23 18:38:50+00 kentd Exp $";
+const char rcsid_protos_base_h[] = "@(#)$KmKId: protos_base.h,v 1.103 2022-02-10 00:39:38+00 kentd Exp $";
 #endif
 
 #ifdef __GNUC__
@@ -196,6 +196,7 @@ void cfg_file_add_dirent_unique(Cfg_listhdr *listhdrptr, const char *nameptr, in
 void cfg_file_add_dirent(Cfg_listhdr *listhdrptr, const char *nameptr, int is_dir, dword64 dsize, dword64 dimage_start, dword64 compr_dsize, int part_num);
 int cfg_dirent_sortfn(const void *obj1, const void *obj2);
 int cfg_str_match(const char *str1, const char *str2, int len);
+int cfgcasecmp(const char *str1, const char *str2);
 int cfg_strlcat(char *dstptr, const char *srcptr, int dstsize);
 char *cfg_strncpy(char *dstptr, const char *srcptr, int dstsize);
 const char *cfg_str_basename(const char *str);
@@ -780,6 +781,7 @@ void video_update_color_raw(int bank, int col_num, int a2_color);
 void video_update_status_line(int line, const char *string);
 void video_draw_a2_string(int line, const byte *bptr);
 void video_show_debug_info(void);
+word32 read_video_data(double dcycs);
 word32 float_bus(double dcycs);
 
 

@@ -1,8 +1,8 @@
-const char rcsid_dynapro_c[] = "@(#)$KmKId: dynapro.c,v 1.38 2021-12-20 04:56:04+00 kentd Exp $";
+const char rcsid_dynapro_c[] = "@(#)$KmKId: dynapro.c,v 1.41 2022-02-11 22:58:01+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2021 by Kent Dickey			*/
+/*			Copyright 2021-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -17,7 +17,11 @@ const char rcsid_dynapro_c[] = "@(#)$KmKId: dynapro.c,v 1.38 2021-12-20 04:56:04
 //  forked files are storage_type $5 from Technote tn-pdos-025.
 
 #include "defc.h"
-#include <dirent.h>
+#ifdef _WIN32
+# include "win_dirent.h"
+#else
+# include <dirent.h>
+#endif
 #include <time.h>
 
 #define DYNAPRO_PATH_MAX		2048
@@ -274,7 +278,7 @@ byte *
 dynapro_malloc_file(char *path_ptr, dword64 *dsize_ptr, int extra_size)
 {
 	byte	*bptr;
-	ssize_t	lret;
+	long long lret;
 	dword64	dsize, dpos;
 	int	fd;
 	int	i;
@@ -1400,7 +1404,7 @@ dynapro_create_prodos_name(Dynapro_file *newfileptr, Dynapro_file *matchptr,
 		//			(char *)&(thisptr->prodos_name[1]));
 		len = strlen(&g_dynapro_path_buf[0]);
 		if((len == (thisptr->prodos_name[0] & 0xf)) &&
-				(strcasecmp(&g_dynapro_path_buf[0],
+				(cfgcasecmp(&g_dynapro_path_buf[0],
 				(char *)&(thisptr->prodos_name[1])) == 0)) {
 			printf(" that was a match\n");
 			dot_pos = 0;
@@ -1642,6 +1646,7 @@ dynapro_create_dir(Disk *dsk, char *unix_path, Dynapro_file *parent_ptr,
 		fileptr = dynapro_new_unix_file(&(g_dynapro_path_buf[0]),
 			head_ptr, head_ptr->next_ptr, storage_type);
 		if(fileptr == 0) {
+			closedir(opendirptr);
 			return 0;
 		}
 		prev_ptr->next_ptr = fileptr;
@@ -1652,6 +1657,7 @@ dynapro_create_dir(Disk *dsk, char *unix_path, Dynapro_file *parent_ptr,
 							&stat_buf.st_mtime);
 		if(fileptr->key_block == 0) {
 			printf("Allocating directory block failed\n");
+			closedir(opendirptr);
 			return 0;
 		}
 		fileptr->blocks_used = 1;
@@ -1659,23 +1665,27 @@ dynapro_create_dir(Disk *dsk, char *unix_path, Dynapro_file *parent_ptr,
 		dir_byte = dynapro_add_file_entry(dsk, fileptr, head_ptr,
 							dir_byte, 0x27);
 		if(dir_byte == 0) {
+			closedir(opendirptr);
 			return 0;
 		}
 		if(fmt == S_IFDIR) {
 			val = dynapro_create_dir(dsk, fileptr->unix_path,
 				fileptr, (fileptr->key_block << 9) + 4);
 			if(val == 0) {
+				closedir(opendirptr);
 				return 0;
 			}
 		} else {
 			val = dynapro_file_from_unix(dsk, fileptr);
 			if(val == 0) {
+				closedir(opendirptr);
 				return 0;
 			}
 		}
 		prev_ptr = fileptr;
 	}
 
+	closedir(opendirptr);
 	return dir_byte;
 }
 

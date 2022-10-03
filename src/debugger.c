@@ -1,8 +1,8 @@
-const char rcsid_debugger_c[] = "@(#)$KmKId: debugger.c,v 1.42 2021-12-19 20:45:11+00 kentd Exp $";
+const char rcsid_debugger_c[] = "@(#)$KmKId: debugger.c,v 1.44 2022-02-10 00:47:43+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -973,10 +973,10 @@ debug_logpc_out_data(FILE *pcfile, Data_log *log_data_ptr, double start_dcycs)
 	word32	wstat, addr, size, val;
 
 	addr = log_data_ptr->addr;
-	lstat = (unsigned long)(log_data_ptr->stat);
+	lstat = (dword64)(log_data_ptr->stat);
 	wstat = lstat & 0xff;
 	addr64 = lstat - wstat + (addr & 0xff);
-	offset64 = addr64 - (unsigned long)&(g_memory_ptr[0]);
+	offset64 = addr64 - (dword64)&(g_memory_ptr[0]);
 	str = "IO";
 	shadow_str = "";
 	if((wstat & BANK_SHADOW) || (wstat & BANK_SHADOW2)) {
@@ -988,7 +988,7 @@ debug_logpc_out_data(FILE *pcfile, Data_log *log_data_ptr, double start_dcycs)
 			log_data_ptr->addr, log_data_ptr->val, size >> 16,
 			size & 0xffff, log_data_ptr->dcycs - start_dcycs);
 	} else {
-		offset64slow = addr64 - (unsigned long)&(g_slow_memory_ptr[0]);
+		offset64slow = addr64 - (dword64)&(g_slow_memory_ptr[0]);
 		if(offset64 < g_mem_size_total) {
 			str = "mem";
 		} else if(offset64slow < 0x20000) {

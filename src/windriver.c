@@ -1,17 +1,19 @@
+const char rcsid_windriver_c[] = "@(#)$KmKId: windriver.c,v 1.15 2022-02-12 01:32:03+00 kentd Exp $";
+
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002 by Kent Dickey			*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
-/*		This code is covered by the GNU GPL			*/
+/*	This code is covered by the GNU GPL v3				*/
+/*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
+/*	This program is provided with no warranty			*/
 /*									*/
 /*	The KEGS web page is kegs.sourceforge.net			*/
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
 
-const char rcsid_windriver_c[] = "@(#)$KmKId: windriver.c,v 1.12 2007-08-22 18:39:24-04 kentd Exp $";
-
-/* Based on code from Chea Chee Keong from KEGS32, which is available at */
-/*  http://www.geocities.com/akilgard/kegs32 */
+// Based on code from Chea Chee Keong from KEGS32, which was available at
+//  http://www.geocities.com/akilgard/kegs32 (geocities is gone now)
 
 #define WIN32_LEAN_AND_MEAN	/* Tell windows we want less header gunk */
 #define STRICT			/* Tell Windows we want compile type checks */
@@ -23,18 +25,16 @@ const char rcsid_windriver_c[] = "@(#)$KmKId: windriver.c,v 1.12 2007-08-22 18:3
 #include <commctrl.h>
 
 #include "defc.h"
+#include "win_dirent.h"
 #include "protos_windriver.h"
 
 extern int Verbose;
 
 extern int g_warp_pointer;
-extern int g_screen_depth;
 extern int g_force_depth;
-int g_screen_mdepth = 0;
 
 extern int g_quit_sim_now;
 
-int	g_use_shmem = 1;
 int	g_has_focus = 0;
 int	g_auto_repeat_on = -1;
 
@@ -42,7 +42,6 @@ extern Kimage g_mainwin_kimage;
 
 HDC	g_main_dc;
 HDC	g_main_cdc;
-int	g_main_height = 0;
 
 int	g_win_capslock_down = 0;
 
@@ -60,8 +59,6 @@ extern int g_cur_a2_stat;
 
 extern int g_a2vid_palette;
 
-extern int g_installed_full_superhires_colormap;
-
 extern int g_screen_redraw_skip_amt;
 
 extern word32 g_a2_screen_buffer_changed;
@@ -69,6 +66,9 @@ extern word32 g_a2_screen_buffer_changed;
 HWND	g_hwnd_main;
 BITMAPINFO *g_bmapinfo_ptr = 0;
 volatile BITMAPINFOHEADER *g_bmaphdr_ptr = 0;
+HBITMAP g_mainwin_dev_handle = 0;
+byte	*g_mainwin_data_ptr = 0;
+int	g_mainwin_pixels_per_line = 0;
 
 int g_num_a2_keycodes = 0;
 
@@ -190,6 +190,7 @@ int g_a2_key_to_wsym[][3] = {
 	{ -1, -1, -1 }
 };
 
+#if 0
 int
 win_nonblock_read_stdin(int fd, char *bufptr, int len)
 {
@@ -206,6 +207,7 @@ win_nonblock_read_stdin(int fd, char *bufptr, int len)
 	}
 	return ret;
 }
+#endif
 
 void
 x_dialog_create_kegs_conf(const char *str)
@@ -222,7 +224,10 @@ x_show_alert(int is_fatal, const char *str)
 int
 win_update_mouse(int x, int y, int button_states, int buttons_valid)
 {
+	Kimage	*kimage_ptr;
 	int	buttons_changed;
+
+	kimage_ptr = &g_mainwin_kimage;		// HACK
 
 	buttons_changed = ((g_win_button_states & buttons_valid) !=
 								button_states);
@@ -231,10 +236,11 @@ win_update_mouse(int x, int y, int button_states, int buttons_valid)
 	if(g_warp_pointer && (x == A2_WINDOW_WIDTH/2) &&
 			(y == A2_WINDOW_HEIGHT/2) && (!buttons_changed) ) {
 		/* tell adb routs to recenter but ignore this motion */
-		update_mouse(x, y, 0, -1);
+		adb_update_mouse(kimage_ptr, x, y, 0, -1);
 		return 0;
 	}
-	return update_mouse(x, y, button_states, buttons_valid & 7);
+	return adb_update_mouse(kimage_ptr, x, y, button_states,
+							buttons_valid & 7);
 }
 
 void
@@ -270,11 +276,12 @@ win_event_mouse(WPARAM wParam, LPARAM lParam)
 void
 win_event_key(HWND hwnd, UINT raw_vk, BOOL down, int repeat, UINT flags)
 {
+	Kimage	*kimage_ptr;
 	word32	vk;
-	int	a2code;
-	int	is_up;
-	int	capslock_down;
+	int	a2code, is_up, capslock_down;
 	int	i;
+
+	kimage_ptr = &(g_mainwin_kimage);		// HACK!
 
 	if((flags & 0x4000) && down) {
 		/* auto-repeating, just ignore it */
@@ -300,7 +307,8 @@ win_event_key(HWND hwnd, UINT raw_vk, BOOL down, int repeat, UINT flags)
 		capslock_down = GetKeyState(VK_CAPITAL) & 0x01;
 		if(capslock_down != g_win_capslock_down) {
 			g_win_capslock_down = capslock_down;
-			adb_physical_key_update(0x39, !capslock_down);
+			adb_physical_key_update(kimage_ptr, 0x39, 0,
+				!capslock_down, 0, 0, capslock_down);
 		}
 
 		return;		// Do no more processing!
@@ -314,7 +322,8 @@ win_event_key(HWND hwnd, UINT raw_vk, BOOL down, int repeat, UINT flags)
 		if((vk == g_a2_key_to_wsym[i][1]) ||
 					(vk == g_a2_key_to_wsym[i][2])) {
 			vid_printf("Found vk:%04x = %02x\n", vk, a2code);
-			adb_physical_key_update(a2code, is_up);
+			adb_physical_key_update(kimage_ptr, a2code, 0, is_up,
+				0, 0, 0);		// HACK!
 			return;
 		}
 	}
@@ -391,58 +400,42 @@ win_event_handler(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam)
 int
 main(int argc, char **argv)
 {
-	WNDCLASS wndclass;
-	RECT	rect;
-	int	height;
+	int	ret, mdepth;
 
-	InitCommonControls();
-
-	wndclass.style = 0;
-	wndclass.lpfnWndProc = (WNDPROC)win_event_handler;
-	wndclass.cbClsExtra = 0;
-	wndclass.cbWndExtra = 0;
-	wndclass.hInstance = GetModuleHandle(NULL);
-	wndclass.hIcon = LoadIcon((HINSTANCE)NULL, IDI_APPLICATION);
-	wndclass.hCursor = LoadCursor((HINSTANCE) NULL, IDC_ARROW);
-	wndclass.hbrBackground = GetStockObject(WHITE_BRUSH);
-	wndclass.lpszMenuName = NULL;
-	wndclass.lpszClassName = "kegswin";
-
-	// Register the window
-	if(!RegisterClass(&wndclass)) {
-		printf("Registering window failed\n");
+	ret = parse_argv(argc, argv, 1);
+	if(ret) {
+		printf("parse_argv ret: %d, stopping\n", ret);
 		exit(1);
 	}
 
-	height = X_A2_WINDOW_HEIGHT + (MAX_STATUS_LINES * 16) + 32;
-	g_main_height = height;
+	mdepth = 32;
 
-	g_hwnd_main = CreateWindow("kegswin", "KEGSWIN - Apple //gs Emulator",
-		WS_TILED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-		CW_USEDEFAULT, CW_USEDEFAULT,
-		X_A2_WINDOW_WIDTH, height,
-		NULL, NULL, GetModuleHandle(NULL), NULL);
+	video_set_blue_mask(0x0000ff);
+	video_set_green_mask(0x00ff00);
+	video_set_red_mask(0xff0000);
+	ret = kegs_init(mdepth);
+	printf("kegs_init done\n");
+	if(ret) {
+		printf("kegs_init ret: %d, stopping\n", ret);
+		exit(1);
+	}
 
-	printf("g_hwnd_main = %p, height = %d\n", g_hwnd_main, height);
-	GetWindowRect(g_hwnd_main, &rect);
-	printf("...rect is: %ld, %ld, %ld, %ld\n", rect.left, rect.top,
-		rect.right, rect.bottom);
+	win_video_init(mdepth);
 
-	g_main_dc = GetDC(g_hwnd_main);
-
-	SetTextColor(g_main_dc, 0);
-	SetBkColor(g_main_dc, 0xffffff);
-
-	g_main_cdc = CreateCompatibleDC(g_main_dc);
-
-	g_screen_depth = 24;
-	g_screen_mdepth = 32;
-
-
-	// Call kegsmain
-	return kegsmain(argc, argv);
+	printf("Entering main loop!\n");
+	fflush(stdout);
+	while(1) {
+		ret = run_16ms();
+		if(ret != 0) {
+			printf("run_16ms returned: %d\n", ret);
+			break;
+		}
+		x_update_display();
+		check_input_events();
+	}
+	xdriver_end();
+	exit(0);
 }
-
 
 void
 check_input_events()
@@ -462,25 +455,118 @@ check_input_events()
 	return;
 }
 
-
 void
-x_update_color(int col_num, int red, int green, int blue, word32 rgb)
+win_video_init(int mdepth)
 {
-}
+	Kimage	*kimage_ptr;
+	WNDCLASS wndclass;
+	RECT	rect, win_rect;
+	int	height, width, ret, a2code, extra_size, win_width, win_height;
+	int	w_flags;
+	int	i;
 
-void
-x_update_physical_colormap()
-{
-}
+	video_set_palette();
 
-void
-show_xcolor_array()
-{
-	int i;
-
-	for(i = 0; i < 256; i++) {
-		printf("%02x: %08x\n", i, g_palette_8to1624[i]);
+	g_num_a2_keycodes = 0;
+	for(i = 0; i < 0x7f; i++) {
+		a2code = g_a2_key_to_wsym[i][0];
+		if(a2code < 0) {
+			g_num_a2_keycodes = i;
+			break;
+		}
 	}
+	wndclass.style = 0;
+	wndclass.lpfnWndProc = (WNDPROC)win_event_handler;
+	wndclass.cbClsExtra = 0;
+	wndclass.cbWndExtra = 0;
+	wndclass.hInstance = GetModuleHandle(NULL);
+	wndclass.hIcon = LoadIcon((HINSTANCE)NULL, IDI_APPLICATION);
+	wndclass.hCursor = LoadCursor((HINSTANCE) NULL, IDC_ARROW);
+	wndclass.hbrBackground = GetStockObject(WHITE_BRUSH);
+	wndclass.lpszMenuName = NULL;
+	wndclass.lpszClassName = "kegswin";
+
+	// Register the window
+	if(!RegisterClass(&wndclass)) {
+		printf("Registering window failed\n");
+		exit(1);
+	}
+
+	kimage_ptr = &g_mainwin_kimage;
+
+	height = video_get_a2_height(kimage_ptr);
+	width = video_get_a2_width(kimage_ptr);
+
+	printf("Got height: %d, width:%d\n", height, width);
+
+	// We must call CreateWindow with a width,height that accounts for
+	//  the title bar and any other stuff.  Use AdjustWindowRect() to
+	//  calculate this info for us
+	w_flags = WS_TILED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+	rect.top = 0;
+	rect.left = 0;
+	rect.right = width;
+	rect.bottom = height;
+	(void)AdjustWindowRect(&rect, w_flags, 0);
+	win_width = rect.right - rect.left;
+	win_height = rect.bottom - rect.top;
+	g_hwnd_main = CreateWindow("kegswin", "KEGSWIN - Apple //gs Emulator",
+		w_flags, CW_USEDEFAULT, CW_USEDEFAULT,
+		win_width, win_height,
+		NULL, NULL, GetModuleHandle(NULL), NULL);
+
+	printf("g_hwnd_main = %p, height = %d\n", g_hwnd_main, height);
+	GetWindowRect(g_hwnd_main, &rect);
+	printf("...rect is: %ld, %ld, %ld, %ld\n", rect.left, rect.top,
+		rect.right, rect.bottom);
+
+	g_main_dc = GetDC(g_hwnd_main);
+
+	SetTextColor(g_main_dc, 0);
+	SetBkColor(g_main_dc, 0xffffff);
+
+	g_main_cdc = CreateCompatibleDC(g_main_dc);
+	printf("g_main_cdc: %p, g_main_dc:%p\n", g_main_cdc, g_main_dc);
+
+
+	printf("Getting height, kimage_ptr:%p\n", kimage_ptr);
+	fflush(stdout);
+
+	g_mainwin_data_ptr = 0;
+
+	extra_size = sizeof(RGBQUAD);
+	g_bmapinfo_ptr = (BITMAPINFO *)GlobalAlloc(GPTR,
+			sizeof(BITMAPINFOHEADER) + extra_size);
+
+	g_bmaphdr_ptr = (BITMAPINFOHEADER *)g_bmapinfo_ptr;
+	g_bmaphdr_ptr->biSize = sizeof(BITMAPINFOHEADER);
+	g_bmaphdr_ptr->biWidth = width;
+	g_bmaphdr_ptr->biHeight = -height;
+	g_bmaphdr_ptr->biPlanes = 1;
+	g_bmaphdr_ptr->biBitCount = mdepth;
+	g_bmaphdr_ptr->biCompression = BI_RGB;
+	g_bmaphdr_ptr->biClrUsed = 0;
+
+	// HACK: video.get.kimages() was here!!
+
+	ShowWindow(g_hwnd_main, SW_SHOWDEFAULT);
+	UpdateWindow(g_hwnd_main);
+
+	/* Use g_bmapinfo_ptr, adjusting width, height */
+	printf("g_bmaphdr_ptr:%p\n", g_bmaphdr_ptr);
+
+	g_bmaphdr_ptr->biWidth = width;
+	g_bmaphdr_ptr->biHeight = -height;
+	printf("About to call CreateDIBSection, main_dc:%p\n", g_main_dc);
+	fflush(stdout);
+	g_mainwin_dev_handle = CreateDIBSection(g_main_dc,
+				g_bmapinfo_ptr, DIB_RGB_COLORS,
+				(VOID **)&(g_mainwin_data_ptr), NULL, 0);
+
+	g_mainwin_pixels_per_line = width;
+	printf("kim: %p, dev:%p data: %p\n", kimage_ptr,
+			g_mainwin_dev_handle, g_mainwin_data_ptr);
+	fflush(stdout);
 }
 
 
@@ -490,172 +576,32 @@ xdriver_end()
 	printf("xdriver_end\n");
 }
 
-
 void
-x_get_kimage(Kimage *kimage_ptr)
+x_update_display()
 {
-	byte	*ptr;
-	int	width;
-	int	height;
-	int	depth, mdepth;
-	int	size;
-
-	width = kimage_ptr->width_req;
-	height = kimage_ptr->height;
-	depth = kimage_ptr->depth;
-	mdepth = kimage_ptr->mdepth;
-
-	size = 0;
-	if(depth == g_screen_depth) {
-		/* Use g_bmapinfo_ptr, adjusting width, height */
-		g_bmaphdr_ptr->biWidth = width;
-		g_bmaphdr_ptr->biHeight = -height;
-		kimage_ptr->dev_handle = CreateDIBSection(g_main_dc,
-				g_bmapinfo_ptr, DIB_RGB_COLORS,
-				(VOID **)&(kimage_ptr->data_ptr), NULL, 0);
-	} else {
-		/* allocate buffers for video.c to draw into */
-
-		size = (width*height*mdepth) >> 3;
-		ptr = (byte *)malloc(size);
-
-		if(ptr == 0) {
-			printf("malloc for data failed, mdepth: %d\n", mdepth);
-			exit(2);
-		}
-
-		kimage_ptr->data_ptr = ptr;
-
-		kimage_ptr->dev_handle = (void *)-1;
-
-	}
-	printf("kim: %p, dev:%p data: %p, size: %08x\n", kimage_ptr,
-		kimage_ptr->dev_handle, kimage_ptr->data_ptr, size);
-
-	return;
-}
-
-
-void
-dev_video_init()
-{
-	int	extra_size;
-	int	lores_col;
-	int	a2code;
-	int	i;
-
-	printf("Preparing graphics system\n");
-
-	g_num_a2_keycodes = 0;
-	for(i = 0; i < 0x7f; i++) {
-		a2code = g_a2_key_to_wsym[i][0];
-		if(a2code < 0) {
-			g_num_a2_keycodes = i;
-		}
-	}
-
-	g_screen_depth = 24;
-	g_screen_mdepth = 32;
-
-	extra_size = sizeof(RGBQUAD);
-	if(g_screen_depth == 8) {
-		extra_size = 256 * sizeof(RGBQUAD);
-	}
-	g_bmapinfo_ptr = (BITMAPINFO *)GlobalAlloc(GPTR,
-			sizeof(BITMAPINFOHEADER) + extra_size);
-
-	g_bmaphdr_ptr = (BITMAPINFOHEADER *)g_bmapinfo_ptr;
-	g_bmaphdr_ptr->biSize = sizeof(BITMAPINFOHEADER);
-	g_bmaphdr_ptr->biWidth = A2_WINDOW_WIDTH;
-	g_bmaphdr_ptr->biHeight = -A2_WINDOW_HEIGHT;
-	g_bmaphdr_ptr->biPlanes = 1;
-	g_bmaphdr_ptr->biBitCount = g_screen_mdepth;
-	g_bmaphdr_ptr->biCompression = BI_RGB;
-	g_bmaphdr_ptr->biClrUsed = 0;
-
-	video_get_kimages();
-
-	if(g_screen_depth != 8) {
-		//	Allocate g_mainwin_kimage
-		video_get_kimage(&g_mainwin_kimage, 0, g_screen_depth,
-						g_screen_mdepth);
-	}
-
-	for(i = 0; i < 256; i++) {
-		lores_col = g_lores_colors[i & 0xf];
-		video_update_color_raw(i, lores_col);
-		g_a2palette_8to1624[i] = g_palette_8to1624[i];
-	}
-
-	g_installed_full_superhires_colormap = 1;
-
-	ShowWindow(g_hwnd_main, SW_SHOWDEFAULT);
-	UpdateWindow(g_hwnd_main);
-
-	printf("Done with dev_video_init\n");
-	fflush(stdout);
-
-}
-
-void
-x_redraw_status_lines()
-{
-	COLORREF oldtextcolor, oldbkcolor;
-	char	*buf;
-	int	line;
-	int	len;
-	int	height;
-	int	margin;
-
-	height = 16;
-	margin = 0;
-
-	oldtextcolor = SetTextColor(g_main_dc, 0);
-	oldbkcolor = SetBkColor(g_main_dc, 0xffffff);
-	for(line = 0; line < MAX_STATUS_LINES; line++) {
-		buf = g_status_ptrs[line];
-		if(buf != 0) {
-			len = strlen(buf);
-			TextOut(g_main_dc, 10, X_A2_WINDOW_HEIGHT +
-				height*line + margin, buf, len);
-		}
-	}
-	SetTextColor(g_main_dc, oldtextcolor);
-	SetBkColor(g_main_dc, oldbkcolor);
-}
-
-
-void
-x_push_kimage(Kimage *kimage_ptr, int destx, int desty, int srcx, int srcy,
-	int width, int height)
-{
+	Change_rect rect;
 	void	*bitm_old;
 	POINT	point;
+	int	valid;
+	int	i;
 
-	point.x = 0;
-	point.y = 0;
-	ClientToScreen(g_hwnd_main, &point);
-	bitm_old = SelectObject(g_main_cdc, kimage_ptr->dev_handle);
+	for(i = 0; i < MAX_CHANGE_RECTS; i++) {
+		valid = video_out_data(g_mainwin_data_ptr, &g_mainwin_kimage,
+			g_mainwin_pixels_per_line, &rect, i);
+		if(!valid) {
+			break;
+		}
 
-	BitBlt(g_main_dc, destx, desty, width, height,
-		g_main_cdc, srcx, srcy, SRCCOPY);
+		point.x = 0;
+		point.y = 0;
+		ClientToScreen(g_hwnd_main, &point);
+		bitm_old = SelectObject(g_main_cdc, g_mainwin_dev_handle);
 
-	SelectObject(g_main_cdc, bitm_old);
-}
+		BitBlt(g_main_dc, rect.x, rect.y, rect.width, rect.height,
+			g_main_cdc, rect.x, rect.y, SRCCOPY);
 
-void
-x_push_done()
-{
-}
-
-void
-x_auto_repeat_on(int must)
-{
-}
-
-void
-x_auto_repeat_off(int must)
-{
+		SelectObject(g_main_cdc, bitm_old);
+	}
 }
 
 void
@@ -668,8 +614,119 @@ x_hide_pointer(int do_hide)
 	}
 }
 
-void
-x_full_screen(int do_full)
+int
+opendir_int(DIR *dirp, const char *in_filename)
 {
-	return;
+	HANDLE	handle1;
+	BOOL	ret;
+	wchar_t	*wcstr;
+	char	*filename;
+	size_t	ret_val;
+	int	buflen, len;
+	int	i;
+
+	printf("opendir on %s\n", in_filename);
+	len = strlen(in_filename);
+	buflen = len + 8;
+	if(buflen >= sizeof(dirp->dirent.d_name)) {
+		printf("buflen %d >= d_name %d\n", buflen,
+					(int)sizeof(dirp->dirent.d_name));
+		return 1;
+	}
+	filename = &dirp->dirent.d_name[0];
+	memcpy(filename, in_filename, len + 1);
+	while(len && (filename[len-1] == '/')) {
+		filename[len - 1] = 0;
+		len--;
+	}
+	cfg_strlcat(filename, "/*.*", buflen);
+	for(i = 0; i < len; i++) {
+		if(filename[i] == '/') {
+			filename[i] = '\\';
+		}
+	}
+	len = strlen(filename);
+	wcstr = malloc(buflen * 2);
+	(void)mbstowcs_s(&ret_val, wcstr, buflen, filename, _TRUNCATE);
+	handle1 = FindFirstFileW(wcstr, dirp->find_data_ptr);
+	dirp->win_handle = handle1;
+	free(wcstr);
+	if(handle1) {
+		dirp->find_data_valid = 1;
+		return 0;
+	}
+	return 1;
 }
+
+DIR *
+opendir(const char *in_filename)
+{
+	DIR	*dirp;
+	int	ret;
+
+	dirp = calloc(1, sizeof(DIR));
+	if(!dirp) {
+		return 0;
+	}
+	dirp->find_data_valid = 1;
+	dirp->find_data_ptr = calloc(1, sizeof(WIN32_FIND_DATAW));
+	ret = 1;
+	if(dirp->find_data_ptr) {
+		ret = opendir_int(dirp, in_filename);
+	}
+	if(ret) {		// Bad
+		free(dirp->find_data_ptr);		// free(0) is OK
+		free(dirp);
+		return 0;
+	}
+	return dirp;
+}
+
+struct dirent *
+readdir(DIR *dirp)
+{
+	WIN32_FIND_DATAW *find_data_ptr;
+	HANDLE	handle1;
+	size_t	ret_val;
+	BOOL	ret;
+
+	handle1 = dirp->win_handle;
+	find_data_ptr = dirp->find_data_ptr;
+	if(!handle1 || !find_data_ptr) {
+		return 0;
+	}
+	ret = 1;
+	if(!dirp->find_data_valid) {
+		if(handle1) {
+			find_data_ptr->cFileName[MAX_PATH-1] = 0;
+			ret = FindNextFileW(handle1, find_data_ptr);
+		}
+	}
+	dirp->find_data_valid = 0;
+	if(!ret) {
+		return 0;
+	}
+	(void)wcstombs_s(&ret_val, &(dirp->dirent.d_name[0]),
+				(int)sizeof(dirp->dirent.d_name),
+				&(find_data_ptr->cFileName[0]), _TRUNCATE);
+	printf("Returning file %s\n", &(dirp->dirent.d_name[0]));
+
+	return &(dirp->dirent);;
+}
+
+int
+closedir(DIR *dirp)
+{
+	FindClose(dirp->win_handle);
+	free(dirp->find_data_ptr);
+	free(dirp);
+
+	return 0;
+}
+
+int
+lstat(const char *path, struct stat *bufptr)
+{
+	return stat(path, bufptr);
+}
+

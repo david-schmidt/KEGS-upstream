@@ -1,6 +1,8 @@
+const char rcsid_win32snd_driver_c[] = "@(#)$KmKId: win32snd_driver.c,v 1.8 2022-02-11 22:47:53+00 kentd Exp $";
+
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2019 by Kent Dickey		*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -10,8 +12,6 @@
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
 
-const char rcsid_win32snd_driver_c[] = "@(#)$KmKId: win32snd_driver.c,v 1.6 2019-12-16 01:57:54+00 kentd Exp $";
-
 #include "defc.h"
 #include "sound.h"
 
@@ -19,7 +19,7 @@ const char rcsid_win32snd_driver_c[] = "@(#)$KmKId: win32snd_driver.c,v 1.6 2019
 # include <windows.h>
 # include <mmsystem.h>
 #endif
-#include <unistd.h>
+// #include <unistd.h>
 
 extern int Verbose;
 
@@ -45,9 +45,7 @@ void
 win32snd_init(word32 *shmaddr)
 {
 	printf("win32snd_init\n");
-	child_sound_loop(-1, -1, shmaddr);
-
-	return;
+	child_sound_init_win32();
 }
 
 void
@@ -57,11 +55,12 @@ win32snd_shutdown()
 
 }
 
+
 #ifndef __CYGWIN__
 
 void CALLBACK
-handle_wav_snd(HWAVEOUT hwo, UINT uMsg, DWORD dwInstance, DWORD dwParam1,
-		DWORD dwParam2)
+handle_wav_snd(HWAVEOUT hwo, UINT uMsg, DWORD_PTR dwInstance,
+					DWORD_PTR dwParam1, DWORD_PTR dwParam2)
 {
 	LPWAVEHDR	lpwavehdr;
 
@@ -95,6 +94,7 @@ child_sound_init_win32()
 	WAVEFORMATEX wavefmt;
 	WAVEOUTCAPS caps;
 	byte	*bptr;
+	UINT	wave_id;
 	int	bits_per_sample, channels, block_align;
 	int	blen;
 	int	res;
@@ -107,7 +107,7 @@ child_sound_init_win32()
 	channels = 2;
 	wavefmt.wBitsPerSample = bits_per_sample;
 	wavefmt.nChannels = channels;
-	wavefmt.nSamplesPerSec = g_audio_rate;
+	wavefmt.nSamplesPerSec = g_preferred_rate;
 	block_align = channels * (bits_per_sample / 8);
 	wavefmt.nBlockAlign = block_align;
 	wavefmt.nAvgBytesPerSec = block_align * g_audio_rate;
@@ -116,13 +116,15 @@ child_sound_init_win32()
 				WAVE_FORMAT_QUERY);
 
 	if(res != MMSYSERR_NOERROR) {
-		printf("Cannot open audio device\n");
+		printf("Cannot open audio device, res:%d, g_audio_rate:%d\n",
+						res, g_preferred_rate);
 		g_audio_enable = 0;
 		return;
 	}
 
 	res = waveOutOpen(&g_wave_handle, WAVE_MAPPER, &wavefmt,
-		(DWORD)handle_wav_snd, 0, CALLBACK_FUNCTION | WAVE_ALLOWSYNC);
+		(DWORD_PTR)handle_wav_snd, 0,
+		CALLBACK_FUNCTION | WAVE_ALLOWSYNC);
 
 	if(res != MMSYSERR_NOERROR) {
 		printf("Cannot register audio\n");
@@ -152,7 +154,8 @@ child_sound_init_win32()
 		check_wave_error(res, "waveOutPrepareHeader");
 	}
 
-	res = waveOutGetDevCaps((UINT)g_wave_handle, &caps, sizeof(caps));
+	res = waveOutGetID(g_wave_handle, &wave_id);
+	res = waveOutGetDevCaps(wave_id, &caps, sizeof(caps));
 	check_wave_error(res, "waveOutGetDevCaps");
 	printf("Using %s\n", caps.szPname);
 	printf(" Bits per Sample = %d.  Channels = %d\n",
@@ -160,7 +163,7 @@ child_sound_init_win32()
 	printf(" Sampling rate = %d, avg_bytes_per_sec = %d\n",
 		(int)wavefmt.nSamplesPerSec, (int)wavefmt.nAvgBytesPerSec);
 
-	set_audio_rate(g_audio_rate);
+	sound_set_audio_rate(g_audio_rate);
 
 }
 

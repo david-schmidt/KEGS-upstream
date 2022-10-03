@@ -1,4 +1,4 @@
-const char rcsid_video_c[] = "@(#)$KmKId: video.c,v 1.187 2022-01-16 04:51:20+00 kentd Exp $";
+const char rcsid_video_c[] = "@(#)$KmKId: video.c,v 1.188 2022-02-09 02:52:19+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -2625,6 +2625,26 @@ video_show_debug_info()
 	tmp1 = get_lines_since_vbl(g_cur_dcycs);
 	printf("lines since vbl: %06x\n", tmp1);
 	printf("Last line updated: %d\n", g_vid_update_last_line);
+}
+
+word32
+read_video_data(double dcycs)
+{
+	word32	val, val2;
+	int	lines_since_vbl, line;
+
+	// Return Charrom data at $C02C for SuperConvert 4 TDM mode
+	val = float_bus(dcycs);
+	lines_since_vbl = get_lines_since_vbl(dcycs);	// Sigh, get it again
+	line = lines_since_vbl >> 8;
+	if(line < 192) {
+		// Always do the character ROM
+		val2 = g_a2font_bits[val & 0xff][line & 7];
+		dbg_log_info(dcycs, val,
+			(lines_since_vbl << 8) | (val2 & 0xff), 0xc02c);
+		val = ~val2;		// Invert it, maybe
+	}
+	return val & 0xff;
 }
 
 word32

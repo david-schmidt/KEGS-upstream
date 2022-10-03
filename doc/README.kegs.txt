@@ -71,9 +71,6 @@ Included files:
 	KEGSMAC			- the Mac OS X executable
 	kegswin.exe		- the Windows executable
 	config.kegs		- disk image configuration info
-	to_pro			- Hard-to-use ProDOS volume creator
-	partls			- Lists partitions on Apple-partitioned hard
-				   drives or CD-ROMs
 	src/			- All the source code, with a Makefile
 
 You need to provide:
@@ -463,68 +460,37 @@ compatibility), change the boot device (so you can boot s6d1 directly),
 and change Slot 4 to Your Card to enable Mockingboard.
 
 
-How to use "to_pro":
--------------------
+Moving data into and out of KEGS
+--------------------------------
 
-This lame utility serves two purposes:  It "formats" large disk images,
-and lets you move files from Unix into the simulator.  It does this
-by taking the files you provide, and putting them onto Unix file called
-"POOF1" that is an image in ProDOS format.
+Use the Dynapro image support to mount a folder on your host machine as
+a ProDOS volume for ProDOS 8 or GS/OS.  Then use GS/OS (or any other program)
+to move files to emulated volumes, or just keep using Dynapro.  See
+README.dynapro.txt for more details.
 
-So, if you have a wolfdemo.bxy file from an FTP site, you can get it
-into the emulator by:
+The old utility "to_pro" is now obsolete and removed.
 
-to_pro -800 wolfdemo.bxy
+Using the VOC
+-------------
 
-which creates an 800K Unix file called "POOF1".  POOF1 is now an
-image that can be loaded into KEGS, and when you catalog it, it will
-have wolfdemo.bxy on it.
+KEGS has limited support for the Apple Video Overlay Card (VOC).  The VOC
+supports a special 640x400 interlaced SHR video mode which is what KEGS also
+supports.  To turn on this mode, you need to do:
 
-To create a 4MB image:
+Enable VOC (Press F4, select "Enable VOC = Enabled")
+c029:c1		# Turn on SHR
+c0b1:39		# Set bits [5:4]=11 to enable Interlaced mode
+c0b5:80		# Set bit 7 to enable Interlace mode
 
-to_pro -4096 wolfdemo.bxy
+And then KEGS will show 640x400 (or 320x400) SHR screen, where even lines
+(0,2,4,etc) come from bank $e1 like normal SHR mode, and odd lines come from
+bank $e0 (from $2000-$9fff, using it's own palettes, etc.).  The real VOC
+shows interlaced data--it draws one frame of data from bank $e1, then the
+next from of data from bank $e0, shifted down one line, etc., where each
+from takes 16msec, for an effective display of 30fps.  KEGS just draws both
+bank $e1 and bank $e1 changes every frame at 60fps.  This can be fixed if
+anyone uses this mode and wants better accuracy.
 
-which puts wolfdemo.bxy on a much larger image.
-
-I don't know what happens if the file, wolfdemo.bxy, is bigger than
-the image...it probably crashes.
-
-Even if you want to format a "blank" image, you have to put something in it.
-Like:
-
-echo "This is a lame utility" > foo
-to_pro -16384 foo
-
-...creates a 16MB POOF1 with the file foo on it.  Just delete foo
-from within KEGS.
-
-See?  I told you it was a lame utility!
-
-to_pro can handle up to 51 files at a time--for example:
-
-to_pro -32000 *.shk
-
-...would put all *.shk files in the current Unix directory into a 31.25MB
-image called POOF1.
-
-To_pro tries to truncate Unix filenames to the 15 character ProDOS
-limit, and converts all punctuation to dots.  I've tested it enough
-that it has worked for my purposes.
-
-The algorithm to_pro uses to create a disk volume is possibly suspect.
-I recommend reformatting any images again inside KEGS (using GS/OS, for
-instance) just to make sure the directory structure is good.  To_pro
-is intended to put files into images quickly and easily, and then to
-copy the files off of those images onto images formatted from within
-KEGS by an Apple IIgs OS.
-
-Since ProDOS cannot handle > 32MB images, make sure you run to_pro with
-arguments under 32767.  I personally haven't tried a partition bigger
-than 30000K (about 2.5MB short of the maximum).  Well, you can use bigger
-images if you format them HFS, but I don't trust the GS/OS HFS driver.
-
-To_pro automatically sets the ProDOS filetype of files ending in ".shk"
-to $E0.
 
 Details on config.kegs and disk images
 --------------------------------------
