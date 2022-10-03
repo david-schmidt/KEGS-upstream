@@ -1,14 +1,16 @@
+const char rcsid_scc_c[] = "@(#)$KmKId: scc.c,v 1.50 2020-12-11 21:07:12+00 kentd Exp $";
+
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002 by Kent Dickey			*/
+/*			Copyright 2002-2020 by Kent Dickey		*/
 /*									*/
-/*		This code is covered by the GNU GPL			*/
+/*	This code is covered by the GNU GPL v3				*/
+/*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
+/*	This program is provided with no warranty			*/
 /*									*/
 /*	The KEGS web page is kegs.sourceforge.net			*/
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
-
-const char rcsid_scc_c[] = "@(#)$KmKId: scc.c,v 1.44 2004-12-03 17:33:40-05 kentd Exp $";
 
 #include "defc.h"
 
@@ -19,8 +21,8 @@ extern int g_raw_serial;
 extern int g_serial_out_masking;
 extern int g_irq_pending;
 
-/* my scc port 0 == channel A = slot 1 = c039/c03b */
-/*        port 1 == channel B = slot 2 = c038/c03a */
+/* scc	port 0 == channel A = slot 1 = c039/c03b */
+/*	port 1 == channel B = slot 2 = c038/c03a */
 
 #include "scc.h"
 #define SCC_R14_DPLL_SOURCE_BRG		0x100
@@ -72,6 +74,7 @@ scc_init()
 		scc_ptr->modem_plus_mode = 0;
 		scc_ptr->modem_s0_val = 0;
 		scc_ptr->modem_cmd_len = 0;
+		scc_ptr->modem_out_portnum = 23;
 		scc_ptr->modem_cmd_str[0] = 0;
 		for(j = 0; j < 2; j++) {
 			scc_ptr->telnet_local_mode[j] = 0;
@@ -175,19 +178,10 @@ void
 scc_regen_clocks(int port)
 {
 	Scc	*scc_ptr;
-	double	br_dcycs, tx_dcycs, rx_dcycs;
-	double	rx_char_size, tx_char_size;
+	double	br_dcycs, tx_dcycs, rx_dcycs, rx_char_size, tx_char_size;
 	double	clock_mult;
-	word32	reg4;
-	word32	reg14;
-	word32	reg11;
-	word32	br_const;
-	word32	baud;
-	word32	max_diff;
-	word32	diff;
-	int	state;
-	int	baud_entries;
-	int	pos;
+	word32	reg4, reg11, reg14, br_const, max_diff, diff;
+	int	baud, state, baud_entries, pos;
 	int	i;
 
 	/*	Always do baud rate generator */
@@ -597,7 +591,6 @@ scc_read_reg(int port, double dcycs)
 			}
 			if(wr9 & 0x10) {
 				/* wr9 status high */
-				
 			}
 #endif
 		}
@@ -831,7 +824,6 @@ scc_write_reg(int port, word32 val, double dcycs)
 		case 0x2:
 		case 0x3:
 			break;
-		
 		case 0x4:	/* DPLL source is BR gen */
 			val |= SCC_R14_DPLL_SOURCE_BRG;
 			break;
@@ -1109,14 +1101,14 @@ scc_add_to_readbufv(int port, double dcycs, const char *fmt, ...)
 {
 	va_list	ap;
 	char	*bufptr;
-	int	ret, len, c;
+	int	len, c;
 	int	i;
 
 	va_start(ap, fmt);
 	bufptr = malloc(4096);
 	bufptr[0] = 0;
-	ret = vsnprintf(bufptr, 4090, fmt, ap);
-	len = strlen(bufptr);
+	vsnprintf(bufptr, 4090, fmt, ap);
+	len = (int)strlen(bufptr);
 	for(i = 0; i < len; i++) {
 		c = bufptr[i];
 		if(c == 0x0a) {

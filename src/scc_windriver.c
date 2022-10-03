@@ -1,14 +1,16 @@
+const char rcsid_scc_windriver_c[] = "@(#)$KmKId: scc_windriver.c,v 1.6 2020-06-17 02:25:34+00 kentd Exp $";
+
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002 by Kent Dickey			*/
+/*			Copyright 2002-2020 by Kent Dickey		*/
 /*									*/
-/*		This code is covered by the GNU GPL			*/
+/*	This code is covered by the GNU GPL v3				*/
+/*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
+/*	This program is provided with no warranty			*/
 /*									*/
 /*	The KEGS web page is kegs.sourceforge.net			*/
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
-
-const char rcsid_scc_windriver_c[] = "@(#)$KmKId: scc_windriver.c,v 1.4 2004-11-19 02:00:46-05 kentd Exp $";
 
 /* This file contains the Win32 COM1/COM2 calls */
 
@@ -180,7 +182,6 @@ scc_serial_win_fill_readbuf(int port, int space_left, double dcycs)
 			scc_add_to_readbuf(port, tmp_buf[i], dcycs);
 		}
 	}
-	
 }
 
 void

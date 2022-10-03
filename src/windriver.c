@@ -8,7 +8,7 @@
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
 
-const char rcsid_windriver_c[] = "@(#)$KmKId: windriver.c,v 1.11 2004-11-24 16:43:46-05 kentd Exp $";
+const char rcsid_windriver_c[] = "@(#)$KmKId: windriver.c,v 1.12 2007-08-22 18:39:24-04 kentd Exp $";
 
 /* Based on code from Chea Chee Keong from KEGS32, which is available at */
 /*  http://www.geocities.com/akilgard/kegs32 */
@@ -215,6 +215,7 @@ x_dialog_create_kegs_conf(const char *str)
 int
 x_show_alert(int is_fatal, const char *str)
 {
+	fprintf(stderr, "Alert! (Fatal: %d):  %s\n", is_fatal, str);
 	return 0;
 }
 

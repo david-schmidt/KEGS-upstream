@@ -1,16 +1,18 @@
+#ifdef INCLUDE_RCSID_C
+const char rcsid_scc_h[] = "@(#)$KmKId: scc.h,v 1.20 2020-06-17 02:24:32+00 kentd Exp $";
+#endif
+
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002 by Kent Dickey			*/
+/*			Copyright 2002-2020 by Kent Dickey		*/
 /*									*/
-/*		This code is covered by the GNU GPL			*/
+/*	This code is covered by the GNU GPL v3				*/
+/*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
+/*	This program is provided with no warranty			*/
 /*									*/
 /*	The KEGS web page is kegs.sourceforge.net			*/
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
-
-#ifdef INCLUDE_RCSID_C
-const char rcsid_scc_h[] = "@(#)$KmKId: scc.h,v 1.17 2004-12-03 14:03:12-05 kentd Exp $";
-#endif
 
 #include <ctype.h>
 
@@ -22,7 +24,10 @@ const char rcsid_scc_h[] = "@(#)$KmKId: scc.h,v 1.17 2004-12-03 14:03:12-05 kent
 # include <netdb.h>
 #endif
 
-#if defined(HPUX) || defined(__linux__) || defined(SOLARIS) || defined(MAC) || defined(__MACH__) || defined(_WIN32)
+#if defined(HPUX) || defined(__linux__) || defined(SOLARIS)
+# define SCC_SOCKETS
+#endif
+#if defined(MAC) || defined(__MACH__) || defined(_WIN32)
 # define SCC_SOCKETS
 #endif
 
@@ -97,6 +102,7 @@ STRUCT(Scc) {
 	word32	telnet_remote_mode[2];
 	word32	telnet_reqwill_mode[2];
 	word32	telnet_reqdo_mode[2];
+	word32	modem_out_portnum;
 	int	modem_cmd_len;
 	byte	modem_cmd_str[SCC_MODEM_MAX_CMD_STR + 5];
 };

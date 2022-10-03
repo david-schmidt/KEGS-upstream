@@ -1,14 +1,16 @@
+const char rcsid_disas_h[] = "@(#)$KmKId: disas.h,v 1.12 2020-06-17 02:25:23+00 kentd Exp $";
+
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002 by Kent Dickey			*/
+/*			Copyright 2002-2020 by Kent Dickey		*/
 /*									*/
-/*		This code is covered by the GNU GPL			*/
+/*	This code is covered by the GNU GPL v3				*/
+/*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
+/*	This program is provided with no warranty			*/
 /*									*/
 /*	The KEGS web page is kegs.sourceforge.net			*/
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
-
-const char rcsid_disas_h[] = "@(#)$KmKId: disas.h,v 1.10 2002-11-19 03:10:38-05 kadickey Exp $";
 
 enum {
 	ABS = 1,
@@ -207,4 +209,4 @@ const word32 disas_types[256] = {
 	ABSXIND+0x200, ABSX+0x200,		/* fc-fd */
 	ABSX+0x200, LONGX+0x300,		/* fe-ff */
 };
-	
+

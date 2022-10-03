@@ -1,16 +1,18 @@
+#ifdef INCLUDE_RCSID_C
+const char rcsdif_defcomm_h[] = "@(#)$KmKId: defcomm.h,v 1.100 2020-12-13 17:42:09+00 kentd Exp $";
+#endif
+
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002 by Kent Dickey			*/
+/*			Copyright 2002-2019 by Kent Dickey		*/
 /*									*/
-/*		This code is covered by the GNU GPL			*/
+/*	This code is covered by the GNU GPL v3				*/
+/*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
+/*	This program is provided with no warranty			*/
 /*									*/
 /*	The KEGS web page is kegs.sourceforge.net			*/
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
-
-#ifdef INCLUDE_RCSID_C
-const char rcsdif_defcomm_h[] = "@(#)$KmKId: defcomm.h,v 1.94 2004-10-13 21:53:44-04 kentd Exp $";
-#endif
 
 #if 0
 # define CHECK_BREAKPOINTS
@@ -29,9 +31,6 @@ const char rcsdif_defcomm_h[] = "@(#)$KmKId: defcomm.h,v 1.94 2004-10-13 21:53:4
 #define JOYSTICK_KEYPAD		3
 #define JOYSTICK_WIN32_1	4
 #define JOYSTICK_WIN32_2	5
-
-
-#define HALT_EVENT	0x10
 
 #define MAX_BREAK_POINTS	0x20
 
@@ -89,16 +88,13 @@ const char rcsdif_defcomm_h[] = "@(#)$KmKId: defcomm.h,v 1.94 2004-10-13 21:53:4
 #define RET_BREAK	0x1
 #define RET_COP		0x2
 #define RET_WDM		0x3
-#define RET_MVP		0x4
-#define RET_MVN		0x5
-#define RET_WAI		0x6
-#define RET_STP		0x7
-#define RET_ADD_DEC_8	0x8
-#define RET_ADD_DEC_16	0x9
-#define RET_C700	0xa
-#define RET_C70A	0xb
-#define RET_C70D	0xc
-#define RET_IRQ		0xd
+#define RET_WAI		0x4
+#define RET_STP		0x5
+#define RET_PSR		0x6
+#define RET_IRQ		0x7
+#define RET_C700	0x8
+#define RET_C70A	0x9
+#define RET_C70D	0xa
 
 
 #define MODE_BORDER		0
@@ -117,13 +113,12 @@ const char rcsdif_defcomm_h[] = "@(#)$KmKId: defcomm.h,v 1.94 2004-10-13 21:53:4
 #define BIT_ALL_STAT_SUPER_HIRES	7	/* special, c029 */
 #define BIT_ALL_STAT_HIRES		8
 #define BIT_ALL_STAT_ANNUNC3		9
-#define BIT_ALL_STAT_BG_COLOR		10	/* 4 bits */
-#define BIT_ALL_STAT_TEXT_COLOR		14	/* 4 bits */
+#define BIT_ALL_STAT_ALTCHARSET		10
+#define BIT_ALL_STAT_FLASH_STATE	11
+#define BIT_ALL_STAT_BG_COLOR		12	/* 4 bits */
+#define BIT_ALL_STAT_TEXT_COLOR		16	/* 4 bits */
 						/* Text must be just above */
 						/* bg to match c022 reg */
-#define BIT_ALL_STAT_ALTCHARSET		18
-#define BIT_ALL_STAT_FLASH_STATE	19
-#define BIT_ALL_STAT_A2VID_PALETTE	20	/* 4 bits */
 
 #define ALL_STAT_SUPER_HIRES		(1 << (BIT_ALL_STAT_SUPER_HIRES))
 #define ALL_STAT_TEXT			(1 << (BIT_ALL_STAT_TEXT))
@@ -139,7 +134,6 @@ const char rcsdif_defcomm_h[] = "@(#)$KmKId: defcomm.h,v 1.94 2004-10-13 21:53:4
 #define ALL_STAT_BG_COLOR		(0xf << (BIT_ALL_STAT_BG_COLOR))
 #define ALL_STAT_ALTCHARSET		(1 << (BIT_ALL_STAT_ALTCHARSET))
 #define ALL_STAT_FLASH_STATE		(1 << (BIT_ALL_STAT_FLASH_STATE))
-#define ALL_STAT_A2VID_PALETTE		(0xf << (BIT_ALL_STAT_A2VID_PALETTE))
 
 #define BORDER_WIDTH		32
 

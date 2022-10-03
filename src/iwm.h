@@ -1,16 +1,18 @@
+#ifdef INCLUDE_RCSID_C
+const char rcsid_iwm_h[] = "@(#)$KmKId: iwm.h,v 1.18 2021-01-16 03:59:18+00 kentd Exp $";
+#endif
+
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002 by Kent Dickey			*/
+/*			Copyright 2002-2020 by Kent Dickey		*/
 /*									*/
-/*		This code is covered by the GNU GPL			*/
+/*	This code is covered by the GNU GPL v3				*/
+/*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
+/*	This program is provided with no warranty			*/
 /*									*/
 /*	The KEGS web page is kegs.sourceforge.net			*/
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
-
-#ifdef INCLUDE_RCSID_C
-const char rcsid_iwm_h[] = "@(#)$KmKId: iwm.h,v 1.14 2004-10-20 17:29:38-04 kentd Exp $";
-#endif
 
 #define MAX_TRACKS	(2*80)
 #define MAX_C7_DISKS	32
@@ -25,7 +27,6 @@ const char rcsid_iwm_h[] = "@(#)$KmKId: iwm.h,v 1.14 2004-10-20 17:29:38-04 kent
 typedef struct _Disk Disk;
 
 STRUCT(Trk) {
-	Disk	*dsk;
 	byte	*nib_area;
 	int	track_dirty;
 	int	overflow_size;
@@ -36,11 +37,12 @@ STRUCT(Trk) {
 
 struct _Disk {
 	double	dcycs_last_read;
+	byte	*raw_data;
 	char	*name_ptr;
 	char	*partition_name;
 	int	partition_num;
 	int	fd;
-	int	force_size;
+	int	raw_size;
 	int	image_start;
 	int	image_size;
 	int	smartport;

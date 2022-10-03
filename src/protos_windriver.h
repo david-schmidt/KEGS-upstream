@@ -1,14 +1,16 @@
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002 by Kent Dickey			*/
+/*			Copyright 2002-2019 by Kent Dickey		*/
 /*									*/
-/*		This code is covered by the GNU GPL			*/
+/*	This code is covered by the GNU GPL v3				*/
+/*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
+/*	This program is provided with no warranty			*/
 /*									*/
 /*	The KEGS web page is kegs.sourceforge.net			*/
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
 
-// $KmKId: protos_windriver.h,v 1.4 2004-03-23 17:27:26-05 kentd Exp $
+// $KmKId: protos_windriver.h,v 1.5 2019-12-16 02:02:53+00 kentd Exp $
 
 /* END_HDR */
 

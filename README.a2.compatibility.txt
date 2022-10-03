@@ -1,24 +1,12 @@
-# $Id: README.a2.compatibility,v 1.2 2004/10/18 18:17:21 kentd Exp $
+# $Id: README.a2.compatibility.txt,v 1.5 2020/12/11 05:12:17 kentd Exp $
 
-Flobynoid: Must disable Fast Disk Emul (hit F7 to toggle it off) since
-	game's loader relies on the sector order on the disk (reads 8
-	sectors from the start without checking headers, assumes every other
-	physical sector is skipped due to decode delays).
-
-Bard's Tale II GS: Doesn't recognize any save disk as a ProDOS disk.
+Bard's Tale II GS: Problem: Doesn't recognize any save disk as a ProDOS disk.
 	It's detecting a "ProDOS" disk by checking for a string on block
 	0 at offset 0x15e.  GSOS on system 6 has moved the string to 0x162,
 	so disks inited under GSOS will be detected as "Not a PRODOS disk".
 	Just make a copy of the Bard's Tale disk image to another file and
 	then mount that new image and remove all the files using the Finder.
 	Then rename the volume and you have a working save disk.
-
-Robotron 2084:
-Robot Battle:
-	These cracks use a "Fastloader" which is buggy.
-	It tries to JMP $F3D4 and expects to hit an RTS soon.
-	But on a IIgs it will access some illegal memory causing a code
-	yellow.  You can just ignore the code yellow.
 
 Beyond Castle Wolfenstein:  Make sure your disk is writeable (not compressed!)
 
@@ -33,9 +21,10 @@ Burgertime:  This is a bad crack.  Loader starts the game by writing
 	the game.  But on a IIgs, the ROM sets the $0036/$0037 vectors
 	back to the default, and so we crash into the monitor instead.
 	Here's a memory fix and a disk-image fix: From the crack screen,
-	press Shift-F6 (or middle mouse button) and in the KEGS debugger
-	window enter: "1d0a:ea 6c 36 0" and then "g".  You can make
-	this fix to the disk image using a sector editor and change
+	press F7 to open the KEGS debugger.
+	In the KEGS debugger window enter: "1d0a:ea 6c 36 0".  Then just
+	continue the game from the crack screen by pressing a key.  You can
+	make this fix to the disk image using a sector editor and change
 	Track $1E sector $09 offset $0A from "60 78 A9 03" to "EA 6C 36 00"
 	and write it back.
 
@@ -43,10 +32,6 @@ Caverns of Callisto: Requires old C600 ROM in slot 6 (Slot 6==Your Card).
 
 Championship Loderunner: Requires disk to be writeable or else it starts
 	the level and then jumps immediately back to the title page.
-
-Jeopardy: Disk must be writeable or else it displays "DISK ERROR" and
-	then crashes into the monitor.
-
 
 Drol: Needs slot 6 set to "Your Card" from the IIgs control panel
 	(Ctrl-Cmd-ESC, then choose "Slots").
@@ -59,18 +44,17 @@ Drol: Needs slot 6 set to "Your Card" from the IIgs control panel
 	I didn't create those cheats, I got it from textfiles.com.
 	My cheats are for the monsters to never kill you--just run right
 	through them.
-	While playing Drol, press Shift-F6 (or middle mouse button) to
-	enter the KEGS debugger, and then:
+	While playing Drol, press F7 to open the KEGS debugger, and then in
+	the debugger window type:
 	0/f28:18 18			# Monsters' missiles won't kill you
 	0/e05:90 0c			# Monsters won't kill you
-	Continue emulation by type "g" and then enter.
 	Other things, like the bird, axes, swords still kill you.
 	To easily solve the third screen, move your man to the far right
 	side on the top level, so that you are directly above the woman
 	on the bottom row.  Fly into the air "A" and then get to the KEGS
 	debugger, and type:
 	0/c:4
-	and then continue with "g".   Now press "Z" and you will go all
+	and then continue playing by pressing "Z" and you will go all
 	the way down and land on the woman and end the level.  It's
 	useful to have made the two above patches so that touching monsters
 	won't kill you.
@@ -83,23 +67,13 @@ Drol: Needs slot 6 set to "Your Card" from the IIgs control panel
 	In the game, your death is indicated by setting location $001E to
 	$FF.  Setting breakpoints there can let you find other cheats.
 
-Moon Patrol: Crashes into the monitor after completing checkpoint E.
-	To fix the Moon Patrol/Dung beetles version, from within KEGS:
-		BLOAD MOON PATROL
-		CALL -151
-		1E15:EA
-		919G
-	and it will work fine.
-	If you have the booting version that just has Moon Patrol on it,
-	then from any point after the crack screen is shown, enter the
-	KEGS debugger (Shift-F6 or middle moust button) and then enter:
-		0/1e15:ea
-		g
-	and then it will play fine.
-	The bug is that the code executes an instruction with opcode $02,
-	which is a NOP on 6502, but is a COP instruction to 65816.  The
-	COP instruction acts like BRK and will crash.  The patch just
-	makes it a real NOP.
+Flobynoid: Must disable Fast Disk Emul (hit F7 to toggle it off) since
+	game's loader relies on the sector order on the disk (reads 8
+	sectors from the start without checking headers, assumes every other
+	physical sector is skipped due to decode delays).
+
+Jeopardy: Disk must be writeable or else it displays "DISK ERROR" and
+	then crashes into the monitor.
 
 Microbe: Crashes upon booting.
 	Code at $599E tries to pull a return address off of a location
@@ -121,3 +95,39 @@ Microbe: Crashes upon booting.
 	the $599E version on Track $05, Sector $06, Byte $9E.
 	I found the $6F1D version on the image at Track $0C, Sector $00,
 	at byte $1D.
+
+Moon Patrol: Crashes into the monitor after completing checkpoint E.
+	To fix the Moon Patrol/Dung beetles version, from within KEGS:
+		BLOAD MOON PATROL
+		CALL -151
+		1E15:EA
+		919G
+	and it will work fine.
+	If you have the booting version that just has Moon Patrol on it,
+	then from any point after the crack screen is shown, open the
+	KEGS debugger with F7 and in that window enter:
+		0/1e15:ea
+	and then it will play fine.
+	The bug is that the code executes an instruction with opcode $02,
+	which is a NOP on 6502, but is a COP instruction to 65816.  The
+	COP instruction acts like BRK and will crash.  The patch just
+	makes it a real NOP.
+
+Robotron 2084:
+Robot Battle:
+	These cracks use a "Fastloader" which is buggy.
+	It tries to JMP $F3D4 and expects to hit an RTS soon.
+	But on a IIgs it will access some illegal memory causing a code
+	yellow.  You can just ignore the code yellow.
+
+Ultima IV: Play fine, but Mockingboard won't work.  There is apparently
+	a patch in U4MBonGSv22.SHK, but I haven't tried it.
+
+Ultima V:  Plays fine, but doesn't work with the Mockingboard enabled.
+	This is an Ultima V bug: it's running code with ALTZP=1 which
+	takes an interrupt.  it expects to run on the ALTZP stack.  But on
+	a IIgs, the ROM will clear ALTZP and restores a safe stack in
+	main memory, which Ultima V is not expecting.  So it will hang/crash.
+	There is apparently a patch in U5MBonGSv11.SHK which can fix this,
+	but I haven't tried it.
+

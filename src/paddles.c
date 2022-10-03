@@ -1,14 +1,16 @@
+const char rcsid_paddles_c[] = "@(#)$KmKId: paddles.c,v 1.16 2020-06-16 22:26:26+00 kentd Exp $";
+
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002 by Kent Dickey			*/
+/*			Copyright 2002-2020 by Kent Dickey		*/
 /*									*/
-/*		This code is covered by the GNU GPL			*/
+/*	This code is covered by the GNU GPL v3				*/
+/*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
+/*	This program is provided with no warranty			*/
 /*									*/
 /*	The KEGS web page is kegs.sourceforge.net			*/
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
-
-const char rcsid_paddles_c[] = "@(#)$KmKId: paddles.c,v 1.14 2004-10-19 14:52:36-04 kentd Exp $";
 
 #include "defc.h"
 

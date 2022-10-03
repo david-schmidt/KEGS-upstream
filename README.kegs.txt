@@ -42,6 +42,9 @@ Emulated battery RAM remembers control panel settings.
 Limited SCC (serial port) emulation to enable PR#1/2 IN#1/2 and Virtual
 	Modem enables standard Apple terminal programs to telnet to any
 	internet address (or receive connections from another telnet).
+Mockingboard A support.  Set slot 4 to "Your card" in the IIgs control panel.
+	Note that the mouse doesn't work in GS/OS on ROM01 if slot 4 is
+	set to "Your card".
 
 KEGS by default emulates a 8MB Apple IIgs, but you can change this from
 the Configuration Panel.
@@ -58,7 +61,6 @@ Included files:
 	README.kegs.txt		- you're here
 	README.compile.txt	- Describes how to build KEGS
 	README.linux.rpm.txt	- Describes how to install KEGS's RPM for Linux
-	README.win32.txt	- Win32 special directions
 	README.mac.txt		- Mac OS X special directions
 	README.a2.compatibility.txt - List of programs which need tweaking
 	src/INTERNALS.overview	- description of how KEGS code works
@@ -216,12 +218,11 @@ F3:	Alias of ESC for OS/2 compatibility.
 F4:	Configuration Panel
 F6:	Toggle through the 4 speeds: Unlimited, 1MHz, 2.8MHz, 8.0MHz
 Shift-F6: Enter KEGS debugger
-F7:	Toggle fast_disk_emul on/off
+F7:	Toggle debugger window
+Shift-F7: Toggle fast_disk_emul on/off
 F8:	Toggle pointer hiding on/off.
 F9:	Invert the sense of the joystick.
 Shift-F9: Swap x and y joystick/paddle axes.
-F10:	Attempt to change the a2vid_palette (only useful on 256-color displays)
-F11:	Full screen mode (only on Mac OS X).
 F12:	Alias of Pause/Break which is treated as Reset
 
 F2, Alt_R, Meta_r, Menu, Print, Mode_switch, Option:   Option key
@@ -297,15 +298,19 @@ Also note that the Unix olvwm X window manager interprets ctrl-F12 and will
 not pass it on to KEGS--you'll need to use Break for reset in that case.
 
 Full Screen mode (MAC OS X ONLY):
-----------------
+--------------------------------
 
 KEGS can run in full screen mode--which is especially useful when letting
 small kids use KEGS (but it is not really a lock, so do not let a 2 year
 old bang on the keyboard while running KEGS).
 
-Full Screen mode is toggled with F11 (or Ctrl-F11, since Expose on a Mac
-is intercepting F11).  If KEGS stops in the debugger for any reason,
-full screen mode is toggled off automatically.
+Full Screen mode is toggled by clicking the green maximize button in the
+title bar.  To exit full screen mode, move the mouse to the top of the screen,
+and the title bar will reappear, and you can click the green maximize button
+to shrink the window down.
+
+All versions of KEGS allow the window to be resized, so you can make the
+window take up nearly the full screen without being "full screen" mode.
 
 
 Joystick Emulation (Mouse, Keypad, or real native joystick):
@@ -582,7 +587,7 @@ mode (F7).  KEGS may not be able to keep up with some programs running
 at 2.8MHz due to video and sound overheads on lower-end machines.  If
 that happens, it effectively runs slower by extending the emulated
 "second", like in the 1MHz mode.  You can tell this is happening
-when Eff MHz in the status area falls below 2.5MHz.  If KEGS is running
+when Eff MHz in the status area falls below 2.8MHz.  If KEGS is running
 faster than 2.8MHz, it takes small pauses to slow down, just like in
 1MHz.  Many Apple IIgs demos must be run at 2.8MHz.  The built-in
 selftests (cmd-option-ctrl-Reset) must run at 2.8MHz.  Many Apple IIgs
@@ -607,9 +612,7 @@ needed speed, it extends the emulated second.  If it extends the second
 to 1.4 real seconds, that means KEGS only produces 1.0 second of sound
 data every 1.4 seconds--the sound breaks up!
 
-In all cases, 1MHz to KEGS is 1.024MHz.  And 2.8MHz to KEGS is 2.56MHz
-(trying to approximate the slowdown causes by memory refresh on a real
-Apple IIgs).  It's just easier to say 1MHz and 2.8MHz.
+In all cases, 1MHz to KEGS is 1.022MHz.  It's just easier to say 1MHz.
 
 
 KEGS SAMPLE_DISK:
@@ -775,8 +778,7 @@ speaker using $C030) and fairly accurate Ensoniq sound.
 When KEGS determines that no sound has been produced for more than
 5 seconds, it turns off the sound calculation routines for a small
 speedup.  It describes that it has done this by saying "Pausing sound"
-in the debug window.  However, when sound restarts, it sometimes
-"breaks-up" a little.  I will work on fixes for this.
+in the debug window.
 
 If your display is not using shared memory, audio defaults to off unless
 you override it with "-audio 1".

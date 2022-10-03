@@ -1,16 +1,18 @@
+#ifdef INCLUDE_RCSID_C
+const char rcsid_defc_h[] = "@(#)$KmKId: defc.h,v 1.121 2021-01-06 01:38:27+00 kentd Exp $";
+#endif
+
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002 by Kent Dickey			*/
+/*			Copyright 2002-2021 by Kent Dickey		*/
 /*									*/
-/*		This code is covered by the GNU GPL			*/
+/*	This code is covered by the GNU GPL v3				*/
+/*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
+/*	This program is provided with no warranty			*/
 /*									*/
 /*	The KEGS web page is kegs.sourceforge.net			*/
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
-
-#ifdef INCLUDE_RCSID_C
-const char rcsid_defc_h[] = "@(#)$KmKId: defc.h,v 1.100 2004-11-09 02:02:07-05 kentd Exp $";
-#endif
 
 #include "defcomm.h"
 
@@ -25,8 +27,6 @@ typedef unsigned __int64 word64;
 typedef unsigned long long word64;
 #endif
 
-void U_STACK_TRACE();
-
 /* 28MHz crystal, plus every 65th 1MHz cycle is stretched 140ns */
 #define CYCS_28_MHZ		(28636360)
 #define DCYCS_28_MHZ		(1.0*CYCS_28_MHZ)
@@ -34,27 +34,16 @@ void U_STACK_TRACE();
 #define DCYCS_1_MHZ		((DCYCS_28_MHZ/28.0)*(65.0*7/(65.0*7+1.0)))
 #define CYCS_1_MHZ		((int)DCYCS_1_MHZ)
 
-/* #define DCYCS_IN_16MS_RAW	(DCYCS_1_MHZ / 60.0) */
 #define DCYCS_IN_16MS_RAW	(262.0 * 65.0)
 /* Use precisely 17030 instead of forcing 60 Hz since this is the number of */
 /*  1MHz cycles per screen */
 #define DCYCS_IN_16MS		((double)((int)DCYCS_IN_16MS_RAW))
 #define DRECIP_DCYCS_IN_16MS	(1.0 / (DCYCS_IN_16MS))
+#define VBL_RATE		(DCYCS_1_MHZ / DCYCS_IN_16MS_RAW)
+// VBL rate is about 59.9227 frames/sec
 
-#ifdef KEGS_LITTLE_ENDIAN
-# define BIGEND(a)    ((((a) >> 24) & 0xff) +			\
-			(((a) >> 8) & 0xff00) + 		\
-			(((a) << 8) & 0xff0000) + 		\
-			(((a) << 24) & 0xff000000))
-# define GET_BE_WORD16(a)	((((a) >> 8) & 0xff) + (((a) << 8) & 0xff00))
-# define GET_BE_WORD32(a)	(BIGEND(a))
-#else
-# define BIGEND(a)	(a)
-# define GET_BE_WORD16(a)	(a)
-# define GET_BE_WORD32(a)	(a)
-#endif
-
-#define MAXNUM_HEX_PER_LINE     32
+#define MAXNUM_HEX_PER_LINE	32
+#define MAX_SCALE_SIZE		5100
 
 #ifdef __NeXT__
 # include <libc.h>
@@ -74,6 +63,7 @@ void U_STACK_TRACE();
 #include <string.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <ctype.h>
 #ifdef HPUX
 # include <machine/inline.h>		/* for GET_ITIMER */
 #endif
@@ -87,6 +77,8 @@ void U_STACK_TRACE();
 # define O_BINARY	0
 #endif
 
+#define MAX_CHANGE_RECTS	20
+
 STRUCT(Pc_log) {
 	double	dcycs;
 	word32	dbank_kpc;
@@ -99,6 +91,7 @@ STRUCT(Pc_log) {
 
 STRUCT(Data_log) {
 	double	dcycs;
+	byte	*stat;
 	word32	addr;
 	word32	val;
 	word32	size;
@@ -133,16 +126,37 @@ STRUCT(Engine_reg) {
 	Fplus	*fplus_ptr;
 };
 
-STRUCT(Kimage) {
-	void	*dev_handle;
-	void	*dev_handle2;
-	byte	*data_ptr;
-	int	width_req;
-	int	width_act;
+STRUCT(Break_point) {
+	word32	start_addr;
+	word32	end_addr;
+};
+
+STRUCT(Change_rect) {
+	int	x;
+	int	y;
+	int	width;
 	int	height;
-	int	depth;
-	int	mdepth;
-	int	aux_info;
+};
+
+
+STRUCT(Kimage) {
+	word32	*wptr;
+	int	a2_width_full;
+	int	a2_height_full;
+	int	a2_width;
+	int	a2_height;
+	int	x_width;
+	int	x_height;
+	int	x_refresh_needed;
+	int	active;
+	word32	scale_width_to_a2;
+	word32	scale_width_a2_to_x;
+	word32	scale_height_to_a2;
+	word32	scale_height_a2_to_x;
+	int	num_change_rects;
+	Change_rect change_rect[MAX_CHANGE_RECTS];
+	word32	scale_width[MAX_SCALE_SIZE + 1];
+	word32	scale_height[MAX_SCALE_SIZE + 1];
 };
 
 typedef byte *Pg_info;
@@ -178,6 +192,15 @@ STRUCT(Cfg_listhdr) {
 	int	num_to_show;
 };
 
+typedef void (Dbg_fn)(const char *str);
+
+STRUCT(Dbg_longcmd) {
+	const char *str;
+	Dbg_fn	*fnptr;
+	Dbg_longcmd *subptr;
+	const char *help_str;
+};
+
 STRUCT(Emustate_intlist) {
 	const char *str;
 	int	*iptr;
@@ -193,10 +216,16 @@ STRUCT(Emustate_word32list) {
 	word32	*wptr;
 };
 
+STRUCT(Lzw_state) {
+	word32	table[4096 + 2];
+	word32	entry;
+	int	bits;
+};
+
 #ifdef __LP64__
-# define PTR2WORD(a)	((unsigned long)(a))
+# define PTR2WORD(a)	((word32)(unsigned long)(a))
 #else
-# define PTR2WORD(a)	((unsigned int)(a))
+# define PTR2WORD(a)	((word32)(unsigned long)(a))
 #endif
 
 
@@ -207,7 +236,7 @@ STRUCT(Emustate_word32list) {
 #define RDROM	(g_c068_statereg & 0x08)
 #define LCBANK2	(g_c068_statereg & 0x04)
 #define ROMB	(g_c068_statereg & 0x02)
-#define INTCX	(g_c068_statereg & 0x01)
+// #define INTCX	(g_c068_statereg & 0x01)
 
 #define C041_EN_25SEC_INTS	0x10
 #define C041_EN_VBL_INTS	0x08
@@ -231,15 +260,16 @@ STRUCT(Emustate_word32list) {
 #define IRQ_PENDING_ADB_DATA		0x02000
 #define IRQ_PENDING_ADB_MOUSE		0x04000
 #define IRQ_PENDING_DOC			0x08000
+#define IRQ_PENDING_MOCKINGBOARD	0x10000
 
 
-#define EXTRU(val, pos, len) 				\
-	( ( (len) >= (pos) + 1) ? ((val) >> (31-(pos))) : \
-	  (((val) >> (31-(pos)) ) & ( (1<<(len) ) - 1) ) )
+#define EXTRU(val, pos, len)					\
+	( ( (len) >= (pos) + 1) ? ((val) >> (31-(pos))) :	\
+		(((val) >> (31-(pos)) ) & ( (1<<(len) ) - 1) ) )
 
-#define DEP1(val, pos, old_val)				\
-	(((old_val) & ~(1 << (31 - (pos))) ) |		\
-	 ( ((val) & 1) << (31 - (pos))) )
+#define DEP1(val, pos, old_val)					\
+		(((old_val) & ~(1 << (31 - (pos))) ) |		\
+			( ((val) & 1) << (31 - (pos))) )
 
 #define set_halt(val) \
 	if(val) { set_halt_act(val); }
@@ -302,12 +332,8 @@ STRUCT(Emustate_word32list) {
 	}
 
 
-#ifndef MIN
-# define MIN(a,b)	(((a) < (b)) ? (a) : (b))
-#endif
-#ifndef MAX
-# define MAX(a,b)	(((a) < (b)) ? (b) : (a))
-#endif
+#define MY_MIN(a,b)	(((a) < (b)) ? (a) : (b))
+#define MY_MAX(a,b)	(((a) > (b)) ? (a) : (b))
 
 #define GET_ITIMER(dest)	dest = get_itimer();
 

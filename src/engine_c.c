@@ -1,20 +1,21 @@
+const char rcsid_engine_c_c[] = "@(#)$KmKId: engine_c.c,v 1.76 2021-01-06 01:38:49+00 kentd Exp $";
+
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002 by Kent Dickey			*/
+/*			Copyright 2002-2021 by Kent Dickey		*/
 /*									*/
-/*		This code is covered by the GNU GPL			*/
+/*	This code is covered by the GNU GPL v3				*/
+/*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
+/*	This program is provided with no warranty			*/
 /*									*/
 /*	The KEGS web page is kegs.sourceforge.net			*/
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
 
-const char rcsid_engine_c_c[] = "@(#)$KmKId: engine_c.c,v 1.57 2004-12-03 23:51:01-05 kentd Exp $";
-
 #include "defc.h"
 #include "protos_engine_c.h"
 
 #if 0
-# define LOG_PC
 /* define FCYCS_PTR_FCYCLES_ROUND_SLOW to get accurate 1MHz write to slow mem*/
 /*  this might help joystick emulation in some Apple //gs games like */
 /*  Madness */
@@ -25,18 +26,20 @@ const char rcsid_engine_c_c[] = "@(#)$KmKId: engine_c.c,v 1.57 2004-12-03 23:51:
 # define FCYCS_PTR_FCYCLES_ROUND_SLOW
 #endif
 
-extern int halt_sim;
+extern int g_halt_sim;
+extern int g_engine_recalc_event;
 extern int g_code_red;
 extern int g_ignore_halts;
 extern int g_user_halt_bad;
-extern double g_fcycles_stop;
+extern double g_fcycles_end;
+extern int g_fcycles_end_for_event;
 extern double g_last_vbl_dcycs;
 extern double g_cur_dcycs;
 extern int g_wait_pending;
 extern int g_irq_pending;
-extern int g_testing;
 extern int g_num_brk;
 extern int g_num_cop;
+extern int g_emul_6502_ind_page_cross_bug;
 extern byte *g_slow_memory_ptr;
 extern byte *g_memory_ptr;
 extern byte *g_rom_fc_ff_ptr;
@@ -44,8 +47,11 @@ extern byte *g_rom_cards_ptr;
 extern byte *g_dummy_memory1_ptr;
 
 extern int g_num_breakpoints;
-extern word32 g_breakpts[];
+extern Break_point g_break_pts[];
 
+extern Kimage g_debugwin_kimage;
+
+extern word32 g_log_pc_enable;
 extern Pc_log *g_log_pc_ptr;
 extern Pc_log *g_log_pc_start_ptr;
 extern Pc_log *g_log_pc_end_ptr;
@@ -63,7 +69,7 @@ int bogus[] = {
 #include "op_routs.h"
 };
 
-#define FINISH(arg1, arg2)	g_ret1 = arg1; g_ret2 = arg2; goto finish;
+#define FINISH(arg1, arg2)	g_ret1 = arg1 | ((arg2) << 8); g_fcycles_end=0;
 #define INC_KPC_1	kpc = (kpc & 0xff0000) + ((kpc + 1) & 0xffff);
 #define INC_KPC_2	kpc = (kpc & 0xff0000) + ((kpc + 2) & 0xffff);
 #define INC_KPC_3	kpc = (kpc & 0xff0000) + ((kpc + 3) & 0xffff);
@@ -77,41 +83,9 @@ int bogus[] = {
 #define CYCLES_MINUS_1	fcycles -= fplus_1;
 #define CYCLES_MINUS_2	fcycles -= fplus_2;
 
-#define CYCLES_FINISH	fcycles = g_fcycles_stop + fplus_1;
+#define CYCLES_FINISH	fcycles = g_fcycles_end + fplus_1;
 
 #define FCYCLES_ROUND	fcycles = (int)(fcycles + fplus_x_m1);
-
-#ifdef LOG_PC
-# define LOG_PC_MACRO()							\
-		tmp_pc_ptr = g_log_pc_ptr++;				\
-		tmp_pc_ptr->dbank_kpc = (dbank << 24) + kpc;		\
-		tmp_pc_ptr->instr = (opcode << 24) + arg_ptr[1] +	\
-			(arg_ptr[2] << 8) + (arg_ptr[3] << 16);		\
-		tmp_pc_ptr->psr_acc = ((psr & ~(0x82)) << 16) + acc +	\
-			(neg << 23) + ((!zero) << 17);			\
-		tmp_pc_ptr->xreg_yreg = (xreg << 16) + yreg;		\
-		tmp_pc_ptr->stack_direct = (stack << 16) + direct;	\
-		tmp_pc_ptr->dcycs = fcycles + g_last_vbl_dcycs - fplus_2; \
-		if(g_log_pc_ptr >= g_log_pc_end_ptr) {			\
-			/*halt2_printf("log_pc oflow %f\n", tmp_pc_ptr->dcycs);*/ \
-			g_log_pc_ptr = g_log_pc_start_ptr;		\
-		}
-
-# define LOG_DATA_MACRO(in_addr, in_val, in_size)			\
-		g_log_data_ptr->dcycs = fcycles + g_last_vbl_dcycs;	\
-		g_log_data_ptr->addr = in_addr;				\
-		g_log_data_ptr->val = in_val;				\
-		g_log_data_ptr->size = in_size;				\
-		g_log_data_ptr++;					\
-		if(g_log_data_ptr >= g_log_data_end_ptr) {		\
-			g_log_data_ptr = g_log_data_start_ptr;		\
-		}
-
-#else
-# define LOG_PC_MACRO()
-# define LOG_DATA_MACRO(addr, val, size)
-/* Just do nothing */
-#endif
 
 
 #define	GET_1BYTE_ARG	arg = arg_ptr[1];
@@ -124,17 +98,15 @@ int bogus[] = {
 		psr |= 0x30;					\
 		stack = 0x100 + (stack & 0xff);			\
 	}							\
-	if((old_psr ^ psr) & 0x10) {				\
-		if(psr & 0x10) {				\
-			xreg = xreg & 0xff;			\
-			yreg = yreg & 0xff;			\
-		}						\
+	if((~old_psr & psr) & 0x10) {				\
+		xreg = xreg & 0xff;				\
+		yreg = yreg & 0xff;				\
 	}							\
-	if(((psr & 0x4) == 0) && g_irq_pending) {		\
+	if(((psr & 4) == 0) && g_irq_pending) {			\
 		FINISH(RET_IRQ, 0);				\
 	}							\
 	if((old_psr ^ psr) & 0x20) {				\
-		goto recalc_accsize;				\
+		FINISH(RET_PSR, 0);				\
 	}
 
 extern Page_info page_info_rd_wr[];
@@ -294,9 +266,9 @@ extern word32 slow_mem_changed[];
 	}
 
 #define SET_MEMORY8(addr, val)						\
-	LOG_DATA_MACRO(addr, val, 8);					\
-	CYCLES_PLUS_1;							\
 	stat = GET_PAGE_INFO_WR(((addr) >> 8) & 0xffff);		\
+	LOG_DATA_MACRO(addr, val, 8, stat);				\
+	CYCLES_PLUS_1;							\
 	wstat = PTR2WORD(stat) & 0xff;					\
 	ptr = stat - wstat + ((addr) & 0xff);				\
 	if(wstat) {							\
@@ -310,8 +282,8 @@ extern word32 slow_mem_changed[];
 
 
 #define SET_MEMORY16(addr, val, in_bank)				\
-	LOG_DATA_MACRO(addr, val, 16);					\
 	stat = GET_PAGE_INFO_WR(((addr) >> 8) & 0xffff);		\
+	LOG_DATA_MACRO(addr, val, 16, stat);				\
 	wstat = PTR2WORD(stat) & 0xff;					\
 	ptr = stat - wstat + ((addr) & 0xff);				\
 	if((wstat) || (((addr) & 0xff) == 0xff)) {			\
@@ -326,13 +298,13 @@ extern word32 slow_mem_changed[];
 	}
 
 #define SET_MEMORY24(addr, val, in_bank)				\
-	LOG_DATA_MACRO(addr, val, 24);					\
 	stat = GET_PAGE_INFO_WR(((addr) >> 8) & 0xffff);		\
+	LOG_DATA_MACRO(addr, val, 24, stat);				\
 	wstat = PTR2WORD(stat) & 0xff;					\
 	ptr = stat - wstat + ((addr) & 0xff);				\
 	if((wstat) || (((addr) & 0xfe) == 0xfe)) {			\
 		fcycles_tmp1 = fcycles;					\
-		set_memory24_pieces_stub((addr), (val), 		\
+		set_memory24_pieces_stub((addr), (val),			\
 			&fcycles_tmp1, fplus_ptr, in_bank);		\
 		fcycles = fcycles_tmp1;					\
 	} else {							\
@@ -350,7 +322,8 @@ check_breakpoints(word32 addr)
 
 	count = g_num_breakpoints;
 	for(i = 0; i < count; i++) {
-		if((g_breakpts[i] & 0xffffff) == addr) {
+		if((addr >= (g_break_pts[i].start_addr & 0xffffff)) &&
+			(addr <= (g_break_pts[i].end_addr & 0xffffff))) {
 			halt2_printf("Hit breakpoint at %06x\n", addr);
 		}
 	}
@@ -384,15 +357,12 @@ get_memory16_pieces_stub(word32 addr, byte *stat, double *fcycs_ptr,
 		Fplus	*fplus_ptr, int in_bank)
 {
 	byte	*ptr;
-	double	fcycles, fcycles_tmp1;
-	double	fplus_1;
-	double	fplus_x_m1;
-	word32	addrp1;
-	word32	wstat;
-	word32	addr_latch;
-	word32	ret;
-	word32	tmp1;
+	double	fcycles, fcycles_tmp1, fplus_1, fplus_x_m1;
+	word32	addrp1, wstat, ret, tmp1, addr_latch;
 
+	addr_latch = 0;
+	if(addr_latch != 0) {	// "Use" addr_latch to avoid warning
+	}
 	fcycles = *fcycs_ptr;
 	fplus_1 = fplus_ptr->plus_1;
 	fplus_x_m1 = fplus_ptr->plus_x_minus_1;
@@ -411,16 +381,12 @@ get_memory24_pieces_stub(word32 addr, byte *stat, double *fcycs_ptr,
 		Fplus *fplus_ptr, int in_bank)
 {
 	byte	*ptr;
-	double	fcycles, fcycles_tmp1;
-	double	fplus_1;
-	double	fplus_x_m1;
-	word32	addrp1, addrp2;
-	word32	wstat;
-	word32	addr_latch;
-	word32	ret;
-	word32	tmp1;
-	word32	tmp2;
+	double	fcycles, fcycles_tmp1, fplus_1, fplus_x_m1;
+	word32	addrp1, addrp2, wstat, addr_latch, ret, tmp1, tmp2;
 
+	addr_latch = 0;
+	if(addr_latch != 0) {	// "Use" addr_latch to avoid warning
+	}
 	fcycles = *fcycs_ptr;
 	fplus_1 = fplus_ptr->plus_1;
 	fplus_x_m1 = fplus_ptr->plus_x_minus_1;
@@ -486,6 +452,10 @@ set_memory8_io_stub(word32 addr, word32 val, byte *stat, double *fcycs_ptr,
 	}
 }
 
+#define LOG_PC_MACRO()
+#define LOG_PC_MACRO2()
+#define LOG_DATA_MACRO(addr, val, size, in_stat)
+
 void
 set_memory16_pieces_stub(word32 addr, word32 val, double *fcycs_ptr,
 		double fplus_1, double fplus_x_m1, int in_bank)
@@ -541,18 +511,16 @@ set_memory24_pieces_stub(word32 addr, word32 val, double *fcycs_ptr,
 word32
 get_memory_c(word32 addr, int cycs)
 {
-	byte	*stat;
-	byte	*ptr;
-	double	fcycles, fcycles_tmp1;
-	double	fplus_1;
-	double	fplus_x_m1;
-	word32	addr_latch;
-	word32	wstat;
-	word32	ret;
+	byte	*stat, *ptr;
+	double	fcycles, fcycles_tmp1, fplus_1, fplus_x_m1;
+	word32	addr_latch, wstat, ret;
 
 	fcycles = 0;
 	fplus_1 = 0;
 	fplus_x_m1 = 0;
+	addr_latch = 0;
+	if(addr_latch != 0) {	// "Use" addr_latch to avoid warning
+	}
 	GET_MEMORY8(addr, ret);
 	return ret;
 }
@@ -719,8 +687,7 @@ do_adc_sbc16(word32 in1, word32 in2, word32 psr, int sub)
 	return (psr << 16) + (sum & 0xffff);
 }
 
-int	g_ret1;
-int	g_ret2;
+int	g_ret1 = 0;
 
 
 void
@@ -772,26 +739,54 @@ get_itimer()
 	asm volatile ("mftb %0" : "=r"(ret));
 	return ret;
 # else
-	return 0;
+#  if defined(__x86_64__)
+	register word32 ret, hi;
+	//ret = __rdtsc();
+	asm volatile ("rdtsc" : "=a" (ret), "=d" (hi));
+	return ret;
+#  else
+#	if defined(__aarch64__)		/* 64-bit ARM architecture */
+		register word64 ret;
+		asm volatile("mrs %0,CNTVCT_EL0" : "=r"(ret));
+		return ret;
+#	else
+		return 0;
+#	endif
+#  endif
 # endif
 #endif
 }
 
 void
+engine_recalc_events()
+{
+	g_fcycles_end = (double)0.0;		// End inner loop
+	g_fcycles_end_for_event = 1;
+	g_engine_recalc_event++;
+}
+
+void
 set_halt_act(int val)
 {
-	if(val == 1 && g_ignore_halts && !g_user_halt_bad) {
+	if((val == 1) && g_ignore_halts && !g_user_halt_bad) {
 		g_code_red++;
 	} else {
-		halt_sim |= val;
-		g_fcycles_stop = (double)0.0;
+		if(g_halt_sim == 0) {
+			debugger_update_list_kpc();
+		}
+		g_halt_sim |= val;
+		if(g_halt_sim) {
+			video_set_active(&g_debugwin_kimage, 1);
+		}
+		g_fcycles_end = (double)0.0;
+		g_fcycles_end_for_event = 1;
 	}
 }
 
 void
 clr_halt_act()
 {
-	halt_sim = 0;
+	g_halt_sim = 0;
 }
 
 word32
@@ -799,14 +794,8 @@ get_remaining_operands(word32 addr, word32 opcode, word32 psr, Fplus *fplus_ptr)
 {
 	byte	*stat;
 	byte	*ptr;
-	double	fcycles, fcycles_tmp1;
-	double	fplus_1, fplus_2, fplus_3;
-	double	fplus_x_m1;
-	word32	addr_latch;
-	word32	wstat;
-	word32	save_addr;
-	word32	arg;
-	word32	addrp1;
+	double	fcycles, fcycles_tmp1, fplus_1, fplus_2, fplus_3, fplus_x_m1;
+	word32	addr_latch, wstat, save_addr, arg, addrp1;
 	int	size;
 
 	fcycles = 0;
@@ -814,6 +803,9 @@ get_remaining_operands(word32 addr, word32 opcode, word32 psr, Fplus *fplus_ptr)
 	fplus_2 = 0;
 	fplus_3 = 0;
 	fplus_x_m1 = 0;
+	addr_latch = 0;
+	if(addr_latch != 0) {	// "Use" addr_latch to avoid warning
+	}
 
 	size = size_tab[opcode];
 
@@ -890,137 +882,91 @@ get_remaining_operands(word32 addr, word32 opcode, word32 psr, Fplus *fplus_ptr)
 		arg_ptr[3] = arg >> 16;					\
 	}
 
+
+#define ACC8
+#define ENGINE_TYPE enter_engine_acc8
+#include "engine.h"
+// The above creates enter_engine_acc8
+
+#undef ACC8
+#undef ENGINE_TYPE
+#define ENGINE_TYPE enter_engine_acc16
+#include "engine.h"
+// The above creates enter_engine_acc16
+
+#undef LOG_PC_MACRO
+#undef LOG_PC_MACRO2
+#undef LOG_DATA_MACRO
+
+#define LOG_PC_MACRO()							\
+		tmp_pc_ptr = g_log_pc_ptr;				\
+		tmp_pc_ptr->dbank_kpc = (dbank << 24) + kpc;		\
+		tmp_pc_ptr->instr = (opcode << 24) + arg_ptr[1] +	\
+			(arg_ptr[2] << 8) + (arg_ptr[3] << 16);		\
+		tmp_pc_ptr->dcycs = fcycles + g_last_vbl_dcycs - fplus_2;
+
+#define LOG_PC_MACRO2()						\
+		tmp_pc_ptr->psr_acc = ((psr & ~(0x82)) << 16) + acc +	\
+			(neg << 23) + ((!zero) << 17);			\
+		tmp_pc_ptr->xreg_yreg = (xreg << 16) + yreg;		\
+		tmp_pc_ptr->stack_direct = (stack << 16) + direct;	\
+		tmp_pc_ptr++;						\
+		if(tmp_pc_ptr >= g_log_pc_end_ptr) {			\
+			tmp_pc_ptr = g_log_pc_start_ptr;		\
+		}							\
+		g_log_pc_ptr = tmp_pc_ptr;
+
+#define LOG_DATA_MACRO(in_addr, in_val, in_size, in_stat)		\
+		g_log_data_ptr->dcycs = fcycles + g_last_vbl_dcycs;	\
+		g_log_data_ptr->stat = in_stat;				\
+		g_log_data_ptr->addr = in_addr;				\
+		g_log_data_ptr->val = in_val;				\
+		g_log_data_ptr->size = in_size;				\
+		g_log_data_ptr++;					\
+		if(g_log_data_ptr >= g_log_data_end_ptr) {		\
+			g_log_data_ptr = g_log_data_start_ptr;		\
+		}
+
+#undef ACC8
+#undef ENGINE_TYPE
+#define ACC8
+#define ENGINE_TYPE enter_engine_acc8_log
+#include "engine.h"
+// The above creates enter_engine_acc8_log
+
+#undef ACC8
+#undef ENGINE_TYPE
+#define ENGINE_TYPE enter_engine_acc16_log
+#include "engine.h"
+// The above creates enter_engine_acc16_log
+
+
 int
 enter_engine(Engine_reg *engine_ptr)
 {
-	register byte	*ptr;
-	byte	*arg_ptr;
-	Pc_log	*tmp_pc_ptr;
-	byte	*stat;
-	word32	wstat;
-	word32	arg;
-	register word32	kpc;
-	register word32	acc;
-	register word32	xreg;
-	register word32	yreg;
-	word32	stack;
-	word32	dbank;
-	register word32	direct;
-	register word32	psr;
-	register word32	zero;
-	register word32	neg;
-	word32	getmem_tmp;
-	word32	save_addr;
-	word32	pull_tmp;
-	word32	tmp_bytes;
-	double	fcycles;
-	Fplus	*fplus_ptr;
-	double	fplus_1;
-	double	fplus_2;
-	double	fplus_3;
-	double	fplus_x_m1;
-	double	fcycles_tmp1;
+	double	fcycles_end_save;
+	int	ret;
 
-	word32	opcode;
-	register word32	addr;
-	word32	addr_latch;
-	word32	tmp1, tmp2;
-
-
-	tmp_pc_ptr = 0;
-
-	kpc = engine_ptr->kpc;
-	acc = engine_ptr->acc;
-	xreg = engine_ptr->xreg;
-	yreg = engine_ptr->yreg;
-	stack = engine_ptr->stack;
-	dbank = engine_ptr->dbank;
-	direct = engine_ptr->direct;
-	psr = engine_ptr->psr;
-	fcycles = engine_ptr->fcycles;
-	fplus_ptr = engine_ptr->fplus_ptr;
-	zero = !(psr & 2);
-	neg = (psr >> 7) & 1;
-
-	fplus_1 = fplus_ptr->plus_1;
-	fplus_2 = fplus_ptr->plus_2;
-	fplus_3 = fplus_ptr->plus_3;
-	fplus_x_m1 = fplus_ptr->plus_x_minus_1;
-
-	g_ret1 = 0;
-	g_ret2 = 0;
-
-recalc_accsize:
-	if(psr & 0x20) {
-		while(fcycles <= g_fcycles_stop) {
-#if 0
-			if((neg & ~1) || (psr & (~0x1ff))) {
-				halt_printf("psr = %04x\n", psr);
+	fcycles_end_save = g_fcycles_end;
+	while(1) {
+		if(g_log_pc_enable) {
+			if(engine_ptr->psr & 0x20) {	// 8-bit accumulator
+				ret = enter_engine_acc8_log(engine_ptr);
+			} else {
+				ret = enter_engine_acc16_log(engine_ptr);
 			}
-#endif
-
-			FETCH_OPCODE;
-
-			LOG_PC_MACRO();
-
-			switch(opcode) {
-			default:
-				halt_printf("acc8 unk op: %02x\n", opcode);
-				arg = 9
-#define ACC8
-#include "defs_instr.h"
-				* 2;
-				break;
-#include "8inst_c.h"
-				break;
+		} else {
+			if(engine_ptr->psr & 0x20) {	// 8-bit accumulator
+				ret = enter_engine_acc8(engine_ptr);
+			} else {
+				ret = enter_engine_acc16(engine_ptr);
 			}
 		}
-	} else {
-		while(fcycles <= g_fcycles_stop) {
-			FETCH_OPCODE;
-			LOG_PC_MACRO();
-
-			switch(opcode) {
-			default:
-				halt_printf("acc16 unk op: %02x\n", opcode);
-				arg = 9
-#undef ACC8
-#include "defs_instr.h"
-				* 2;
-				break;
-#include "16inst_c.h"
-				break;
-			}
+		if((ret == RET_PSR) && !g_halt_sim) {
+			g_fcycles_end = fcycles_end_save;
+			continue;
 		}
+		return ret;
 	}
-
-finish:
-	engine_ptr->kpc = kpc;
-	engine_ptr->acc = acc;
-	engine_ptr->xreg = xreg;
-	engine_ptr->yreg = yreg;
-	engine_ptr->stack = stack;
-	engine_ptr->dbank = dbank;
-	engine_ptr->direct = direct;
-	engine_ptr->fcycles = fcycles;
-
-	psr = psr & (~0x82);
-	psr |= (neg << 7);
-	psr |= ((!zero) << 1);
-
-	engine_ptr->psr = psr;
-
-	return (g_ret1 << 28) + g_ret2;
 }
-
-
-int	g_engine_c_mode = 1;
-
-int defs_instr_start_8 = 0;
-int defs_instr_end_8 = 0;
-int defs_instr_start_16 = 0;
-int defs_instr_end_16 = 0;
-int op_routs_start = 0;
-int op_routs_end = 0;
-
 

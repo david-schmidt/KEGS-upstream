@@ -1,19 +1,11 @@
 
 TARGET = xkegs
-OBJECTS = $(OBJECTS1) xdriver.o
-CC = cc
-CCOPTS = -O2 -Wall -fomit-frame-pointer -march=pentium
-OPTS = -DKEGS_LITTLE_ENDIAN
-SUFFIX =
+OBJECTS1 = pulseaudio_driver.o xdriver.o
+CCOPTS = -O2 -Wall -fomit-frame-pointer -DPULSE_AUDIO
 NAME = xkegs
-LDFLAGS =
-LDOPTS =
 LD = $(CC)
-EXTRA_LIBS = -lXext
+EXTRA_LIBS = -lXext -lpulse
 EXTRA_SPECIALS =
-
-AS = cc
-PERL = perl
 
 XOPTS = -I/usr/X11R6/include
 

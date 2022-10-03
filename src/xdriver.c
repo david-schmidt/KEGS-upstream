@@ -1,14 +1,16 @@
+const char rcsid_xdriver_c[] = "@(#)$KmKId: xdriver.c,v 1.228 2021-01-23 22:45:26+00 kentd Exp $";
+
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002 by Kent Dickey			*/
+/*			Copyright 2002-2020 by Kent Dickey		*/
 /*									*/
-/*		This code is covered by the GNU GPL			*/
+/*	This code is covered by the GNU GPL v3				*/
+/*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
+/*	This program is provided with no warranty			*/
 /*									*/
 /*	The KEGS web page is kegs.sourceforge.net			*/
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
-
-const char rcsid_xdriver_c[] = "@(#)$KmKId: xdriver.c,v 1.187 2004-11-15 16:24:19-05 kentd Exp $";
 
 # if !defined(__CYGWIN__) && !defined(__POWERPC__)
 /* No shared memory on Cygwin */
@@ -18,6 +20,7 @@ const char rcsid_xdriver_c[] = "@(#)$KmKId: xdriver.c,v 1.187 2004-11-15 16:24:1
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
+#include <X11/Xatom.h>
 #include <time.h>
 #include <stdlib.h>
 #include <signal.h>
@@ -32,83 +35,55 @@ int XShmQueryExtension(Display *display);
 void _XInitImageFuncPtrs(XImage *xim);
 
 #include "defc.h"
+
+extern word32 g_cycs_in_run_16ms;
+extern word32 g_cycs_in_refresh_ximage;
+extern word32 g_cycs_in_check_input;
+extern int g_video_scale_algorithm;
+extern int g_audio_enable;
+
+typedef struct windowinfo {
+	XShmSegmentInfo *seginfo;
+	XImage *xim;
+	Kimage *kimage_ptr;		// KEGS Image pointer for window content
+	char	*name_str;
+	Window	x_win;
+	GC	x_winGC;
+	Atom	delete_atom;
+	int	x_use_shmem;
+	int	x_shift_control_state;
+	int	active;
+	int	width_req;
+	int	pixels_per_line;
+	int	main_height;
+	int	full_min_width;
+	int	full_min_height;
+} Window_info;
+
 #include "protos_xdriver.h"
 
-#define FONT_NAME_STATUS	"8x13"
+int	g_x_warp_x = 0;
+int	g_x_warp_y = 0;
+int	g_x_warp_pointer = 0;
+int	g_x_hide_pointer = 0;
 
 extern int Verbose;
-
-extern int g_warp_pointer;
-extern int g_screen_depth;
-extern int g_force_depth;
-int g_screen_mdepth = 0;
+int	g_x_screen_depth = 24;
+int	g_x_screen_mdepth = 32;
+int	g_x_max_width = 0;
+int	g_x_max_height = 0;
+int	g_screen_num = 0;
 
 extern int _Xdebug;
 
-extern int g_send_sound_to_file;
-
-extern int g_quit_sim_now;
-
-int	g_has_focus = 0;
 int	g_auto_repeat_on = -1;
-int	g_x_shift_control_state = 0;
-
 
 Display *g_display = 0;
 Visual	*g_vis = 0;
-Window g_a2_win;
-GC g_a2_winGC;
-XFontStruct *g_text_FontSt;
-Colormap g_a2_colormap = 0;
 Colormap g_default_colormap = 0;
-int	g_needs_cmap = 0;
 
-extern word32 g_red_mask;
-extern word32 g_green_mask;
-extern word32 g_blue_mask;
-extern int g_red_left_shift;
-extern int g_green_left_shift;
-extern int g_blue_left_shift;
-extern int g_red_right_shift;
-extern int g_green_right_shift;
-extern int g_blue_right_shift;
-
-#ifdef X_SHARED_MEM
-int g_use_shmem = 1;
-#else
-int g_use_shmem = 0;
-#endif
-
-extern Kimage g_mainwin_kimage;
-
-extern int Max_color_size;
-
-XColor g_xcolor_a2vid_array[256];
-
-extern word32 g_palette_8to1624[256];
-extern word32 g_a2palette_8to1624[256];
-
-int	g_alt_left_up = 1;
-int	g_alt_right_up = 1;
-
-extern word32 g_full_refresh_needed;
-
-extern int g_border_sides_refresh_needed;
-extern int g_border_special_refresh_needed;
-extern int g_status_refresh_needed;
-
-extern int g_lores_colors[];
-extern int g_cur_a2_stat;
-
-extern int g_a2vid_palette;
-
-extern int g_installed_full_superhires_colormap;
-
-extern int g_screen_redraw_skip_amt;
-
-extern word32 g_a2_screen_buffer_changed;
-
-extern char *g_status_ptrs[MAX_STATUS_LINES];
+Window_info g_mainwin_info = { 0 };
+Window_info g_debugwin_info = { 0 };
 
 Cursor	g_cursor;
 Pixmap	g_cursor_shape;
@@ -117,23 +92,23 @@ Pixmap	g_cursor_mask;
 XColor	g_xcolor_black = { 0, 0x0000, 0x0000, 0x0000, DoRed|DoGreen|DoBlue, 0 };
 XColor	g_xcolor_white = { 0, 0xffff, 0xffff, 0xffff, DoRed|DoGreen|DoBlue, 0 };
 
-int g_depth_attempt_list[] = { 16, 24, 15, 8 };
-
+int g_depth_attempt_list[] = { 24, 16, 15 };
 
 #define X_EVENT_LIST_ALL_WIN						\
 	(ExposureMask | ButtonPressMask | ButtonReleaseMask |		\
-	 OwnerGrabButtonMask | KeyPressMask | KeyReleaseMask |		\
-	 KeymapStateMask | ColormapChangeMask | FocusChangeMask)
+	OwnerGrabButtonMask | KeyPressMask | KeyReleaseMask |		\
+	KeymapStateMask | ColormapChangeMask | FocusChangeMask)
 
 #define X_BASE_WIN_EVENT_LIST						\
-	(X_EVENT_LIST_ALL_WIN | PointerMotionMask | ButtonMotionMask)
+	(X_EVENT_LIST_ALL_WIN | PointerMotionMask | ButtonMotionMask |	\
+	StructureNotifyMask)
 
 #define X_A2_WIN_EVENT_LIST						\
 	(X_BASE_WIN_EVENT_LIST)
 
 int	g_num_a2_keycodes = 0;
 
-int a2_key_to_xsym[][3] = {
+int	g_x_a2_key_to_xsym[][3] = {
 	{ 0x35,	XK_Escape,	0 },
 	{ 0x7a,	XK_F1,	0 },
 	{ 0x78,	XK_F2,	0 },
@@ -245,67 +220,45 @@ int a2_key_to_xsym[][3] = {
 int
 main(int argc, char **argv)
 {
-	return kegsmain(argc, argv);
-}
+	word32	start_time, time1, time2, end_time;
+	int	ret, mdepth;
 
-void
-x_dialog_create_kegs_conf(const char *str)
-{
-	/* do nothing -- not implemented yet */
-	return;
-}
-
-int
-x_show_alert(int is_fatal, const char *str)
-{
-	/* Not implemented yet */
-	adb_all_keys_up();
-
-	clear_fatal_logs();
-	return 0;
-}
-
-
-#define MAKE_2(val)	( (val << 8) + val)
-
-void
-x_update_color(int col_num, int red, int green, int blue, word32 rgb)
-{
-	XColor *xcol;
-
-	xcol = &(g_xcolor_a2vid_array[col_num]);
-	xcol->red = MAKE_2(red);
-	xcol->green = MAKE_2(green);
-	xcol->blue = MAKE_2(blue);
-	xcol->flags = DoRed | DoGreen | DoBlue;
-}
-
-void
-x_update_physical_colormap()
-{
-	if(g_needs_cmap) {
-		XStoreColors(g_display, g_a2_colormap,
-				&g_xcolor_a2vid_array[0], Max_color_size);
+	ret = parse_argv(argc, argv, 1);
+	if(ret) {
+		printf("kegsmain ret: %d, stopping\n", ret);
+		exit(1);
 	}
-}
 
-void
-show_xcolor_array()
-{
-	int i;
+	mdepth = x_video_get_mdepth();
 
-	for(i = 0; i < 256; i++) {
-		printf("%02x: %08x\n", i, g_palette_8to1624[i]);
-			
-#if 0
-		printf("%02x: %04x %04x %04x, %02x %x\n",
-			i, xcolor_array[i].red, xcolor_array[i].green,
-			xcolor_array[i].blue, (word32)xcolor_array[i].pixel,
-			xcolor_array[i].flags);
-#endif
+	ret = kegs_init(mdepth);
+	printf("kegs_init done\n");
+	if(ret) {
+		printf("kegs_init ret: %d, stopping\n", ret);
+		exit(1);
 	}
-}
+	x_video_init();
 
+	while(1) {
+		GET_ITIMER(start_time);
+		ret = run_16ms();
+		if(ret != 0) {
+			printf("run_16ms returned: %d\n", ret);
+			break;
+		}
+		GET_ITIMER(time1);
+		g_cycs_in_run_16ms += (time1 - start_time);
+		x_update_display(&g_mainwin_info);
+		x_update_display(&g_debugwin_info);
+		GET_ITIMER(time2);
+		g_cycs_in_refresh_ximage += (time2 - time1);
+		x_input_events();
+		GET_ITIMER(end_time);
+		g_cycs_in_check_input += (end_time - time2);
+	}
+	xdriver_end();
+	exit(0);
+}
 
 int
 my_error_handler(Display *display, XErrorEvent *ev)
@@ -330,30 +283,12 @@ xdriver_end()
 }
 
 void
-show_colormap(char *str, Colormap cmap, int index1, int index2, int index3)
+x_try_xset_r()
 {
-	XColor	xcol;
-	int	i;
-	int	pix;
-
-	printf("Show colormap: %08x = %s, cmap cells: %d,%d,%d\n",
-			(int)cmap, str, index1, index2, index3);
-	for(i = 0; i < index1 + index2 + index3; i++) {
-		pix = i;
-		if(i >= index1) {
-			pix = (i-index1)*index1;
-			if(i >= (index1 + index2)) {
-				pix = (i - index1 - index2)*index2*index1;
-			}
-		}
-		if(i == 0 && index1 < 250) {
-			pix = 0x842;
-		}
-		xcol.pixel = pix;
-		XQueryColor(g_display, cmap, &xcol);
-		printf("Cell %03x: pix: %03x, R:%04x, G:%04x, B:%04x\n",
-			i, (int)xcol.pixel, xcol.red, xcol.green, xcol.blue);
-	}
+	/* attempt "xset r" */
+	system("xset r");
+	xdriver_end();
+	exit(5);
 }
 
 void
@@ -362,62 +297,30 @@ x_badpipe(int signum)
 	/* restore normal sigpipe handling */
 	signal(SIGPIPE, SIG_DFL);
 
-	/* attempt to xset r */
-	system("xset r");
-	my_exit(5);
+	x_try_xset_r();
 }
 
-void
-dev_video_init()
+int
+kegs_x_io_error_handler(Display *display)
 {
-	int	tmp_array[0x80];
-	XGCValues new_gc;
-	XSetWindowAttributes win_attr;
-	XSizeHints my_winSizeHints;
-	XClassHint my_winClassHint;
-	XTextProperty my_winText;
-	XVisualInfo *visualList;
-	char	**font_ptr;
-	char	cursor_data;
-	word32	create_win_list;
-	int	depth;
-	int	len;
-	int	cmap_alloc_amt;
-	int	cnt;
-	int	font_height;
-	int	base_height;
-	int	screen_num;
-	char	*myTextString[1];
-	word32	lores_col;
-	int	ret;
+	printf("kegs_x_io_error_handler called (likely window closed)\n");
+	g_display = 0;
+	x_try_xset_r();
+	return 0;
+}
+
+int
+x_video_get_mdepth()
+{
+	XWindowAttributes get_attr;
+	int	depth, len, ret, force_depth;
 	int	i;
-	int	keycode;
 
 	printf("Preparing X Windows graphics system\n");
 	ret = 0;
 
 	signal(SIGPIPE, x_badpipe);
-
-	g_num_a2_keycodes = 0;
-	for(i = 0; i <= 0x7f; i++) {
-		tmp_array[i] = 0;
-	}
-	for(i = 0; i < 0x7f; i++) {
-		keycode = a2_key_to_xsym[i][0];
-		if(keycode < 0) {
-			g_num_a2_keycodes = i;
-			break;
-		} else if(keycode > 0x7f) {
-			printf("a2_key_to_xsym[%d] = %02x!\n", i, keycode);
-				exit(2);
-		} else {
-			if(tmp_array[keycode]) {
-				printf("a2_key_to_x[%d] = %02x used by %d\n",
-					i, keycode, tmp_array[keycode] - 1);
-			}
-			tmp_array[keycode] = i + 1;
-		}
-	}
+	signal(SIGPIPE, x_badpipe);
 
 #if 0
 	printf("Setting _Xdebug = 1, makes X synchronous\n");
@@ -433,217 +336,48 @@ dev_video_init()
 	vid_printf("Just opened display = %p\n", g_display);
 	fflush(stdout);
 
-	screen_num = DefaultScreen(g_display);
+	g_screen_num = DefaultScreen(g_display);
+
+	get_attr.width = 0;
+	get_attr.height = 0;
+	ret = XGetWindowAttributes(g_display, DefaultRootWindow(g_display),
+			&get_attr);
+	printf("XGetWindowAttributes ret: %d\n", ret);
+	g_x_max_width = get_attr.width;
+	g_x_max_height = get_attr.height;
+	printf("get_attr.width:%d, height:%d\n", g_x_max_width, g_x_max_height);
 
 	len = sizeof(g_depth_attempt_list)/sizeof(int);
-	if(g_force_depth > 0) {
+	force_depth = sim_get_force_depth();
+	if(force_depth > 0) {
 		/* Only use the requested user depth */
 		len = 1;
-		g_depth_attempt_list[0] = g_force_depth;
+		g_depth_attempt_list[0] = force_depth;
 	}
-	g_vis = 0;
+
 	for(i = 0; i < len; i++) {
 		depth = g_depth_attempt_list[i];
 
-		g_vis = x_try_find_visual(depth, screen_num,
-			&visualList);
-		if(g_vis != 0) {
+		g_x_screen_mdepth = x_try_find_visual(depth, g_screen_num);
+		if(g_x_screen_mdepth != 0) {
 			break;
 		}
 	}
-	if(g_vis == 0) {
+	if(g_x_screen_mdepth == 0) {
 		fprintf(stderr, "Couldn't find any visuals at any depth!\n");
 		exit(2);
 	}
 
-	g_default_colormap = XDefaultColormap(g_display, screen_num);
-	if(!g_default_colormap) {
-		printf("g_default_colormap == 0!\n");
-		exit(4);
-	}
-
-	g_a2_colormap = -1;
-	cmap_alloc_amt = AllocNone;
-	if(g_needs_cmap) {
-		cmap_alloc_amt = AllocAll;
-	}
-	g_a2_colormap = XCreateColormap(g_display,
-			RootWindow(g_display,screen_num), g_vis,
-					cmap_alloc_amt);
-
-	vid_printf("g_a2_colormap: %08x, main: %08x\n",
-			(word32)g_a2_colormap, (word32)g_default_colormap);
-
-	if(g_needs_cmap && g_a2_colormap == g_default_colormap) {
-		printf("A2_colormap = default colormap!\n");
-		exit(4);
-	}
-
-	/* and define cursor */
-	cursor_data = 0;
-	g_cursor_shape = XCreatePixmapFromBitmapData(g_display,
-		RootWindow(g_display,screen_num), &cursor_data, 1, 1, 1, 0, 1);
-	g_cursor_mask = XCreatePixmapFromBitmapData(g_display,
-		RootWindow(g_display,screen_num), &cursor_data, 1, 1, 1, 0, 1);
-
-	g_cursor = XCreatePixmapCursor(g_display, g_cursor_shape,
-			g_cursor_mask, &g_xcolor_black, &g_xcolor_white, 0, 0);
-
-	XFreePixmap(g_display, g_cursor_shape);
-	XFreePixmap(g_display, g_cursor_mask);
-
-	XFlush(g_display);
-
-	win_attr.event_mask = X_A2_WIN_EVENT_LIST;
-	win_attr.colormap = g_a2_colormap;
-	win_attr.backing_store = WhenMapped;
-	win_attr.border_pixel = 1;
-	win_attr.background_pixel = 0;
-	if(g_warp_pointer) {
-		win_attr.cursor = g_cursor;
-	} else {
-		win_attr.cursor = None;
-	}
-
-	vid_printf("About to a2_win, depth: %d\n", g_screen_depth);
-	fflush(stdout);
-
-	create_win_list = CWEventMask | CWBackingStore | CWCursor;
-	create_win_list |= CWColormap | CWBorderPixel | CWBackPixel;
-
-	base_height = X_A2_WINDOW_HEIGHT + (MAX_STATUS_LINES * 13);
-
-	g_a2_win = XCreateWindow(g_display, RootWindow(g_display, screen_num),
-		0, 0, BASE_WINDOW_WIDTH, base_height,
-		0, g_screen_depth, InputOutput, g_vis,
-		create_win_list, &win_attr);
-
-	XSetWindowColormap(g_display, g_a2_win, g_a2_colormap);
-
-	XFlush(g_display);
-
-/* Check for XShm */
-#ifdef X_SHARED_MEM
-	if(g_use_shmem) {
-		ret = XShmQueryExtension(g_display);
-		if(ret == 0) {
-			printf("XShmQueryExt ret: %d\n", ret);
-			printf("not using shared memory\n");
-			g_use_shmem = 0;
-		} else {
-			printf("Will use shared memory for X\n");
-		}
-	}
-#endif
-
-	video_get_kimages();
-	if(g_screen_depth != 8) {
-		video_get_kimage(&g_mainwin_kimage, 0, g_screen_depth,
-				g_screen_mdepth);
-	}
-
-	if(!g_use_shmem) {
-		if(g_screen_redraw_skip_amt < 0) {
-			g_screen_redraw_skip_amt = 3;
-		}
-		printf("Not using shared memory, setting skip_amt = %d\n",
-			g_screen_redraw_skip_amt);
-	}
-
-	/* Done with visualList now */
-	XFree(visualList);
-
-	for(i = 0; i < 256; i++) {
-		g_xcolor_a2vid_array[i].pixel = i;
-		lores_col = g_lores_colors[i & 0xf];
-		video_update_color_raw(i, lores_col);
-		g_a2palette_8to1624[i] = g_palette_8to1624[i];
-	}
-
-	x_update_physical_colormap();
-
-	g_installed_full_superhires_colormap = !g_needs_cmap;
-	
-	myTextString[0] = "KEGS";
-
-	XStringListToTextProperty(myTextString, 1, &my_winText);
-
-	my_winSizeHints.flags = PSize | PMinSize | PMaxSize;
-	my_winSizeHints.width = BASE_WINDOW_WIDTH;
-	my_winSizeHints.height = base_height;
-	my_winSizeHints.min_width = BASE_WINDOW_WIDTH;
-	my_winSizeHints.min_height = base_height;
-	my_winSizeHints.max_width = BASE_WINDOW_WIDTH;
-	my_winSizeHints.max_height = base_height;
-	my_winClassHint.res_name = "KEGS";
-	my_winClassHint.res_class = "KEGS";
-
-	XSetWMProperties(g_display, g_a2_win, &my_winText, &my_winText, 0,
-		0, &my_winSizeHints, 0, &my_winClassHint);
-	XMapRaised(g_display, g_a2_win);
-
-	XSync(g_display, False);
-
-	g_a2_winGC = XCreateGC(g_display, g_a2_win, 0, (XGCValues *) 0);
-	font_ptr = XListFonts(g_display, FONT_NAME_STATUS, 4, &cnt);
-
-	vid_printf("act_cnt of fonts: %d\n", cnt);
-	for(i = 0; i < cnt; i++) {
-		vid_printf("Font %d: %s\n", i, font_ptr[i]);
-	}
-	fflush(stdout);
-	g_text_FontSt = XLoadQueryFont(g_display, FONT_NAME_STATUS);
-	vid_printf("font # returned: %08x\n", (word32)(g_text_FontSt->fid));
-	font_height = g_text_FontSt->ascent + g_text_FontSt->descent;
-	vid_printf("font_height: %d\n", font_height);
-
-	vid_printf("widest width: %d\n", g_text_FontSt->max_bounds.width);
-
-	new_gc.font = g_text_FontSt->fid;
-	new_gc.fill_style = FillSolid;
-	XChangeGC(g_display, g_a2_winGC, GCFillStyle | GCFont, &new_gc);
-
-	/* XSync(g_display, False); */
-#if 0
-/* MkLinux for Powermac depth 15 has bugs--this was to try to debug them */
-	if(g_screen_depth == 15) {
-		/* draw phony screen */
-		ptr16 = (word16 *)dint_main_win;
-		for(i = 0; i < 320*400; i++) {
-			ptr16[i] = 0;
-		}
-		for(i = 0; i < 400; i++) {
-			for(j = 0; j < 640; j++) {
-				sh = (j / 20) & 0x1f;
-				val = sh;
-				val = val;
-				*ptr16++ = val;
-			}
-		}
-		XPutImage(g_display, g_a2_win, g_a2_winGC, xint_main_win,
-			0, 0,
-			BASE_MARGIN_LEFT, BASE_MARGIN_TOP,
-			640, 400);
-		XFlush(g_display);
-	}
-#endif
-
-
-	XFlush(g_display);
-	fflush(stdout);
+	return g_x_screen_mdepth;
 }
 
-Visual *
-x_try_find_visual(int depth, int screen_num, XVisualInfo **visual_list_ptr)
+int
+x_try_find_visual(int depth, int screen_num)
 {
 	XVisualInfo *visualList;
 	XVisualInfo *v_chosen;
 	XVisualInfo vTemplate;
-	int	visualsMatched;
-	int	mdepth;
-	int	needs_cmap;
-	int	visual_chosen;
-	int	match8, match24;
+	int	visualsMatched, visual_chosen, mdepth;
 	int	i;
 
 	vTemplate.screen = screen_num;
@@ -655,11 +389,10 @@ x_try_find_visual(int depth, int screen_num, XVisualInfo **visual_list_ptr)
 
 	vid_printf("visuals matched: %d\n", visualsMatched);
 	if(visualsMatched == 0) {
-		return (Visual *)0;
+		return 0;
 	}
 
 	visual_chosen = -1;
-	needs_cmap = 0;
 	for(i = 0; i < visualsMatched; i++) {
 		printf("Visual %d\n", i);
 		printf("	id: %08x, screen: %d, depth: %d, class: %d\n",
@@ -674,18 +407,8 @@ x_try_find_visual(int depth, int screen_num, XVisualInfo **visual_list_ptr)
 		printf("	cmap size: %d, bits_per_rgb: %d\n",
 			visualList[i].colormap_size,
 			visualList[i].bits_per_rgb);
-		match8 = (visualList[i].class == PseudoColor);
-		match24 = (visualList[i].class == TrueColor);
-		if((depth == 8) && match8) {
+		if((depth != 8) && (visualList[i].class == TrueColor)) {
 			visual_chosen = i;
-			Max_color_size = visualList[i].colormap_size;
-			needs_cmap = 1;
-			break;
-		}
-		if((depth != 8) && match24) {
-			visual_chosen = i;
-			Max_color_size = -1;
-			needs_cmap = 0;
 			break;
 		}
 	}
@@ -693,21 +416,19 @@ x_try_find_visual(int depth, int screen_num, XVisualInfo **visual_list_ptr)
 	if(visual_chosen < 0) {
 		printf("Couldn't find any good visuals at depth %d!\n",
 			depth);
-		return (Visual *)0;
+		return 0;
 	}
 
-	printf("Chose visual: %d, max_colors: %d\n", visual_chosen,
-		Max_color_size);
+	printf("Chose visual: %d\n", visual_chosen);
 
 	v_chosen = &(visualList[visual_chosen]);
-	x_set_mask_and_shift(v_chosen->red_mask, &g_red_mask,
-				&g_red_left_shift, &g_red_right_shift);
-	x_set_mask_and_shift(v_chosen->green_mask, &g_green_mask,
-				&g_green_left_shift, &g_green_right_shift);
-	x_set_mask_and_shift(v_chosen->blue_mask, &g_blue_mask,
-				&g_blue_left_shift, &g_blue_right_shift);
+	video_set_red_mask((word32)v_chosen->red_mask);
+	video_set_green_mask((word32)v_chosen->green_mask);
+	video_set_blue_mask((word32)v_chosen->blue_mask);
 
-	g_screen_depth = depth;
+	video_set_palette();	// Uses above masks to initialize palettes
+
+	g_x_screen_depth = depth;
 	mdepth = depth;
 	if(depth > 8) {
 		mdepth = 16;
@@ -715,44 +436,220 @@ x_try_find_visual(int depth, int screen_num, XVisualInfo **visual_list_ptr)
 	if(depth > 16) {
 		mdepth = 32;
 	}
-	g_screen_mdepth = mdepth;
-	g_needs_cmap = needs_cmap;
-	*visual_list_ptr = visualList;
 
-	return v_chosen->visual;
+	// XFree(visualList); -- Cannot free, still using g_vis...
+
+	g_vis = v_chosen->visual;
+
+	return mdepth;
 }
 
 void
-x_set_mask_and_shift(word32 x_mask, word32 *mask_ptr, int *shift_left_ptr,
-		int *shift_right_ptr)
+x_video_init()
 {
-	int	shift;
+	int	tmp_array[0x80];
+	char	cursor_data;
+	int	keycode;
 	int	i;
 
-	/* Shift until we find first set bit in mask, then remember mask,shift*/
+	printf("Opening X Window now\n");
 
-	shift = 0;
-	for(i = 0; i < 32; i++) {
-		if(x_mask & 1) {
-			/* we're done! */
+	g_num_a2_keycodes = 0;
+	for(i = 0; i <= 0x7f; i++) {
+		tmp_array[i] = 0;
+	}
+	for(i = 0; i < 0x7f; i++) {
+		keycode = g_x_a2_key_to_xsym[i][0];
+		if(keycode < 0) {
+			g_num_a2_keycodes = i;
 			break;
+		} else if(keycode > 0x7f) {
+			printf("a2_key_to_xsym[%d] = %02x!\n", i, keycode);
+				exit(2);
+		} else {
+			if(tmp_array[keycode]) {
+				printf("a2_key_to_x[%d] = %02x used by %d\n",
+					i, keycode, tmp_array[keycode] - 1);
+			}
+			tmp_array[keycode] = i + 1;
 		}
-		x_mask = x_mask >> 1;
-		shift++;
-	}
-	*mask_ptr = x_mask;
-	*shift_left_ptr = shift;
-	/* Now, calculate shift_right_ptr */
-	shift = 0;
-	x_mask |= 1;		// make sure at least one bit is set
-	while(x_mask < 0x80) {
-		shift++;
-		x_mask = x_mask << 1;
 	}
 
-	*shift_right_ptr = shift;
-	return;
 
+	g_default_colormap = XDefaultColormap(g_display, g_screen_num);
+	if(!g_default_colormap) {
+		printf("g_default_colormap == 0!\n");
+		exit(4);
+	}
+
+	/* and define cursor */
+	cursor_data = 0;
+	g_cursor_shape = XCreatePixmapFromBitmapData(g_display,
+		RootWindow(g_display,g_screen_num), &cursor_data, 1, 1, 1, 0,1);
+	g_cursor_mask = XCreatePixmapFromBitmapData(g_display,
+		RootWindow(g_display,g_screen_num), &cursor_data, 1, 1, 1, 0,1);
+
+	g_cursor = XCreatePixmapCursor(g_display, g_cursor_shape,
+			g_cursor_mask, &g_xcolor_black, &g_xcolor_white, 0, 0);
+
+	XFreePixmap(g_display, g_cursor_shape);
+	XFreePixmap(g_display, g_cursor_mask);
+
+	XFlush(g_display);
+
+	x_init_window(&g_mainwin_info, video_get_kimage(0), "KEGS");
+	x_init_window(&g_debugwin_info, video_get_kimage(1), "KEGS Debugger");
+
+	x_create_window(&g_mainwin_info);
+
+	vid_printf("Set error handler to my_x_handler\n");
+	XSetIOErrorHandler(kegs_x_io_error_handler);
+}
+
+void
+x_init_window(Window_info *win_info_ptr, Kimage *kimage_ptr, char *name_str)
+{
+	int	width, height, x_use_shmem, ret;
+
+	height = video_get_a2_height(kimage_ptr);
+	width = video_get_a2_width(kimage_ptr);
+
+	win_info_ptr->seginfo = 0;
+	win_info_ptr->xim = 0;
+	win_info_ptr->kimage_ptr = kimage_ptr;
+	win_info_ptr->name_str = name_str;
+	win_info_ptr->x_win = 0;
+	win_info_ptr->x_winGC = 0;
+	win_info_ptr->delete_atom = 0;
+	win_info_ptr->active = 0;
+	win_info_ptr->x_use_shmem = 0;
+	win_info_ptr->x_shift_control_state = 0;
+	win_info_ptr->width_req = width;
+	win_info_ptr->pixels_per_line = width;
+	win_info_ptr->main_height = height;
+	win_info_ptr->full_min_width = width;
+	win_info_ptr->full_min_height = height;
+	vid_printf("init win %p (main:%p) width:%d, height:%d\n", win_info_ptr,
+		&g_mainwin_info, width, height);
+
+	x_use_shmem = 0;
+		// Allow cmd-line args to force shmem off
+/* Check for XShm */
+#ifdef X_SHARED_MEM
+	if(sim_get_use_shmem()) {
+		ret = XShmQueryExtension(g_display);
+		if(ret == 0) {
+			printf("XShmQueryExt ret: %d, not using shared mem\n",
+									ret);
+		} else {
+			vid_printf("Will use shared memory for X\n");
+			x_use_shmem = 1;
+		}
+	}
+#endif
+	win_info_ptr->x_use_shmem = x_use_shmem;
+
+	video_update_scale(kimage_ptr, win_info_ptr->width_req,
+						win_info_ptr->main_height);
+}
+
+void
+x_create_window(Window_info *win_info_ptr)
+{
+	XGCValues new_gc;
+	XSetWindowAttributes win_attr;
+	XSizeHints my_winSizeHints;
+	XClassHint my_winClassHint;
+	XTextProperty my_winText;
+	Window	x_win;
+	GC	x_winGC;
+	word32	create_win_list;
+	int	width, height;
+
+	win_attr.event_mask = X_A2_WIN_EVENT_LIST;
+	win_attr.colormap = g_default_colormap;
+	win_attr.backing_store = WhenMapped;
+	win_attr.border_pixel = 1;
+	win_attr.background_pixel = 0;
+	if(g_x_warp_pointer) {
+		win_attr.cursor = g_cursor;
+	} else {
+		win_attr.cursor = None;
+	}
+
+	vid_printf("About to win, depth: %d\n", g_x_screen_depth);
+	fflush(stdout);
+
+	create_win_list = CWEventMask | CWBackingStore | CWCursor;
+	create_win_list |= CWColormap | CWBorderPixel | CWBackPixel;
+
+	width = win_info_ptr->width_req;
+	height = win_info_ptr->main_height;
+
+	x_win = XCreateWindow(g_display, RootWindow(g_display, g_screen_num),
+		0, 0, width, height, 0, g_x_screen_depth, InputOutput, g_vis,
+		create_win_list, &win_attr);
+	vid_printf("x_win = %d, width:%d, height:%d\n", (int)x_win, width,
+									height);
+
+	XFlush(g_display);
+
+	win_info_ptr->x_win = x_win;
+	win_info_ptr->active = 0;
+	video_set_active(win_info_ptr->kimage_ptr, 1);
+
+	x_allocate_window_data(win_info_ptr);
+	video_update_scale(win_info_ptr->kimage_ptr, win_info_ptr->width_req,
+						win_info_ptr->main_height);
+
+	if(!win_info_ptr->x_use_shmem) {
+		printf("Not using shared memory, setting skip_amt = 2, "
+							"g_audio_enable=0\n");
+		video_set_redraw_skip_amt(2);
+		g_audio_enable = 0;
+	}
+
+	XStringListToTextProperty(&(win_info_ptr->name_str), 1, &my_winText);
+
+	my_winSizeHints.flags = PSize | PMinSize | PMaxSize | PAspect;
+	my_winSizeHints.width = width;
+	my_winSizeHints.height = height;
+	my_winSizeHints.min_width = width;
+	my_winSizeHints.min_height = height;
+	my_winSizeHints.max_width = g_x_max_width;
+	my_winSizeHints.max_height = g_x_max_height;
+	my_winSizeHints.min_aspect.x = width - 1;
+	my_winSizeHints.min_aspect.y = height;
+	my_winSizeHints.max_aspect.x = width + 1;
+	my_winSizeHints.max_aspect.y = height;
+	my_winClassHint.res_name = win_info_ptr->name_str;
+	my_winClassHint.res_class = win_info_ptr->name_str;
+
+	XSetWMProperties(g_display, x_win, &my_winText, &my_winText, 0,
+		0, &my_winSizeHints, 0, &my_winClassHint);
+	XMapRaised(g_display, x_win);
+
+	if(win_info_ptr != &g_mainwin_info) {
+		// Debugger window
+		win_info_ptr->delete_atom = XInternAtom(g_display,
+						"WM_DELETE_WINDOW", False);
+		XSetWMProtocols(g_display, x_win, &(win_info_ptr->delete_atom),
+									1);
+	}
+
+	XSync(g_display, False);
+
+	x_winGC = XCreateGC(g_display, x_win, 0, (XGCValues *) 0);
+	win_info_ptr->x_winGC = x_winGC;
+	win_info_ptr->active = 1;
+
+	new_gc.fill_style = FillSolid;
+	XChangeGC(g_display, x_winGC, GCFillStyle, &new_gc);
+
+	/* XSync(g_display, False); */
+
+	XFlush(g_display);
+	fflush(stdout);
 }
 
 int g_xshm_error = 0;
@@ -765,54 +662,59 @@ xhandle_shm_error(Display *display, XErrorEvent *event)
 }
 
 void
-x_get_kimage(Kimage *kimage_ptr) {
-	if(g_use_shmem) {
-		g_use_shmem = get_shm(kimage_ptr);
+x_allocate_window_data(Window_info *win_info_ptr)
+{
+	if(win_info_ptr->x_use_shmem) {
+		win_info_ptr->x_use_shmem = 0;		// Default to no shmem
+		get_shm(win_info_ptr);
 	}
-	if(!g_use_shmem) {
-		get_ximage(kimage_ptr);
+	if(!win_info_ptr->x_use_shmem) {
+		get_ximage(win_info_ptr);
 	}
 }
 
-int
-get_shm(Kimage *kimage_ptr)
+void
+get_shm(Window_info *win_info_ptr)
 {
 #ifdef X_SHARED_MEM
 	XShmSegmentInfo *seginfo;
 	XImage *xim;
 	int	(*old_x_handler)(Display *, XErrorEvent *);
-	int	width;
-	int	height;
-	int	depth;
+	int	width, height, depth, size;
 
-	width = kimage_ptr->width_req;
-	height = kimage_ptr->height;
-	depth = kimage_ptr->depth;
+	width = g_x_max_width;
+	height = g_x_max_height;
+	depth = g_x_screen_depth;		// 24, actual bits per pixel
 
 	seginfo = (XShmSegmentInfo *)malloc(sizeof(XShmSegmentInfo));
 	xim = XShmCreateImage(g_display, g_vis, depth, ZPixmap,
 		(char *)0, seginfo, width, height);
 
-	/* check mdepth! */
-	if(xim->bits_per_pixel != kimage_ptr->mdepth) {
+	/* check mdepth, which should be 32 */
+	if(xim->bits_per_pixel != g_x_screen_mdepth) {
 		printf("get_shm bits_per_pix: %d != %d\n",
-				xim->bits_per_pixel, g_screen_mdepth);
+				xim->bits_per_pixel, g_x_screen_mdepth);
 	}
+	vid_printf("xim: %p, DO_VERBOSE:%d, Verbose:%d, VERBOSE_VIDEO:%d\n",
+		xim, DO_VERBOSE, Verbose, VERBOSE_VIDEO);
 
 	vid_printf("xim: %p\n", xim);
-	kimage_ptr->dev_handle = xim;
-	kimage_ptr->dev_handle2 = seginfo;
+	win_info_ptr->seginfo = seginfo;
 	if(xim == 0) {
-		return 0;
+		return;
 	}
+	vid_printf("bytes_per_line:%d, height:%d\n", xim->bytes_per_line,
+								xim->height);
+	size = xim->bytes_per_line * xim->height;
+	vid_printf("size: %d\n", size);
 
 	/* It worked, we got it */
-	seginfo->shmid = shmget(IPC_PRIVATE, xim->bytes_per_line * xim->height,
-		IPC_CREAT | 0777);
-	vid_printf("seginfo->shmid = %d\n", seginfo->shmid);
+	seginfo->shmid = shmget(IPC_PRIVATE, size, IPC_CREAT | 0777);
+	vid_printf("seginfo->shmid = %d, errno:%d, %s\n", seginfo->shmid,
+		errno, strerror(errno));
 	if(seginfo->shmid < 0) {
 		XDestroyImage(xim);
-		return 0;
+		return;
 	}
 
 	/* Still working */
@@ -820,12 +722,13 @@ get_shm(Kimage *kimage_ptr)
 	vid_printf("seginfo->shmaddr: %p\n", seginfo->shmaddr);
 	if(seginfo->shmaddr == ((char *) -1)) {
 		XDestroyImage(xim);
-		return 0;
+		return;
 	}
 
 	/* Still working */
 	xim->data = seginfo->shmaddr;
 	seginfo->readOnly = False;
+	vid_printf("xim->data is %p, size:%08x\n", xim->data, size);
 
 	/* XShmAttach will trigger X error if server is remote, so catch it */
 	g_xshm_error = 0;
@@ -846,34 +749,35 @@ get_shm(Kimage *kimage_ptr)
 		/* We could release the shared mem segment, but by doing the */
 		/* RMID, it will go away when we die now, so just leave it */
 		printf("Not using shared memory\n");
-		return 0;
+		return;
 	}
 
-	kimage_ptr->data_ptr = (byte *)xim->data;
-	vid_printf("Sharing memory. xim: %p, xim->data: %p\n", xim, xim->data);
+	width = xim->bytes_per_line;
+	win_info_ptr->pixels_per_line = width / 4;
+	win_info_ptr->xim = xim;
+	win_info_ptr->x_use_shmem = 1;
 
-	return 1;
-#else
-	return 0;		/* No shared memory */
+	vid_printf("Sharing memory. xim: %p, xim->data: %p, width:%d\n", xim,
+		xim->data, win_info_ptr->pixels_per_line);
 #endif	/* X_SHARED_MEM */
 }
 
 void
-get_ximage(Kimage *kimage_ptr)
+get_ximage(Window_info *win_info_ptr)
 {
 	XImage	*xim;
 	byte	*ptr;
-	int	width;
-	int	height;
-	int	depth;
-	int	mdepth;
+	int	width, height, depth, mdepth, size;
 
-	width = kimage_ptr->width_req;
-	height = kimage_ptr->height;
-	depth = kimage_ptr->depth;
-	mdepth = kimage_ptr->mdepth;
+	width = g_x_max_width;
+	height = g_x_max_height;
+	depth = g_x_screen_depth;
+	mdepth = g_x_screen_mdepth;
 
-	ptr = (byte *)malloc((width * height * mdepth) >> 3);
+	size = (width * height * mdepth) >> 3;
+	printf("Get_ximage, w:%d, h:%d, mdepth:%d, size:%08x\n", width,
+						height, mdepth, size);
+	ptr = (byte *)malloc(size);
 
 	vid_printf("ptr: %p\n", ptr);
 
@@ -882,15 +786,15 @@ get_ximage(Kimage *kimage_ptr)
 		exit(2);
 	}
 
-	kimage_ptr->data_ptr = ptr;
+	win_info_ptr->pixels_per_line = width;
 
 	xim = XCreateImage(g_display, g_vis, depth, ZPixmap, 0,
 		(char *)ptr, width, height, 8, 0);
 
-#ifdef KEGS_LITTLE_ENDIAN
-	xim->byte_order = LSBFirst;
-#else
+#ifdef KEGS_BIG_ENDIAN
 	xim->byte_order = MSBFirst;
+#else
+	xim->byte_order = LSBFirst;
 #endif
 	_XInitImageFuncPtrs(xim);	/* adjust to new byte order */
 
@@ -902,106 +806,195 @@ get_ximage(Kimage *kimage_ptr)
 
 	vid_printf("xim: %p\n", xim);
 
-	kimage_ptr->dev_handle = xim;
+	win_info_ptr->xim = xim;
+	win_info_ptr->x_use_shmem = 0;
 
 	return;
 }
 
-
 void
-x_redraw_status_lines()
+x_update_display(Window_info *win_info_ptr)
 {
-	char	*buf;
-	int	line;
-	int	height;
-	int	margin;
-	word32	white, black;
+	Change_rect rect;
+	int	did_copy, valid, x_active, a2_active;
+	int	i;
 
-	height = g_text_FontSt->ascent + g_text_FontSt->descent;
-	margin = g_text_FontSt->ascent;
-
-	white = (g_a2vid_palette << 4) + 0xf;
-	black = (g_a2vid_palette << 4) + 0x0;
-	if(g_screen_depth != 8) {
-		white = (2 << (g_screen_depth - 1)) - 1;
-		black = 0;
+	// Update active state
+	a2_active = video_get_active(win_info_ptr->kimage_ptr);
+	x_active = win_info_ptr->active;
+	if(x_active && !a2_active) {
+		// We need to unmap this window
+		XUnmapWindow(g_display, win_info_ptr->x_win);
+		x_active = 0;
+		win_info_ptr->active = x_active;
 	}
-	XSetForeground(g_display, g_a2_winGC, white);
-	XSetBackground(g_display, g_a2_winGC, black);
-
-	for(line = 0; line < MAX_STATUS_LINES; line++) {
-		buf = g_status_ptrs[line];
-		if(buf == 0) {
-			/* skip it */
-			continue;
+	if(!x_active && a2_active) {
+		// We need to map this window (and maybe create it)
+		if(win_info_ptr->xim == 0) {
+			x_create_window(win_info_ptr);
 		}
-		XDrawImageString(g_display, g_a2_win, g_a2_winGC, 0,
-			X_A2_WINDOW_HEIGHT + height*line + margin,
-			buf, strlen(buf));
+		XMapWindow(g_display, win_info_ptr->x_win);
+		x_active = 1;
+		win_info_ptr->active = x_active;
 	}
-
-	XFlush(g_display);
-}
-
-
-
-void
-x_push_kimage(Kimage *kimage_ptr, int destx, int desty, int srcx, int srcy,
-	int width, int height)
-{
-	XImage	*xim;
-
-	xim = (XImage *)kimage_ptr->dev_handle;
-
-#ifdef X_SHARED_MEM
-	if(g_use_shmem) {
-		XShmPutImage(g_display, g_a2_win, g_a2_winGC, xim,
-			srcx, srcy, destx, desty, width, height, False);
+	if(x_active == 0) {
+		return;
 	}
+	did_copy = 0;
+	for(i = 0; i < MAX_CHANGE_RECTS; i++) {
+		valid = video_out_data(win_info_ptr->xim->data,
+				win_info_ptr->kimage_ptr,
+				win_info_ptr->pixels_per_line, &rect, i);
+		if(!valid) {
+			break;
+		}
+#if 0
+		if(win_info_ptr == &g_debugwin_info) {
+			printf("  i:%d valid:%d, w:%d h:%d\n", i, valid,
+					rect.width, rect.height);
+		}
 #endif
-	if(!g_use_shmem) {
-		XPutImage(g_display, g_a2_win, g_a2_winGC, xim,
-			srcx, srcy, destx, desty, width, height);
+		did_copy = 1;
+#ifdef X_SHARED_MEM
+		if(win_info_ptr->x_use_shmem) {
+			XShmPutImage(g_display, win_info_ptr->x_win,
+				win_info_ptr->x_winGC,
+				win_info_ptr->xim, rect.x, rect.y,
+				rect.x, rect.y,
+				rect.width, rect.height, False);
+		}
+#endif
+		if(!win_info_ptr->x_use_shmem) {
+			XPutImage(g_display, win_info_ptr->x_win,
+				win_info_ptr->x_winGC,
+				win_info_ptr->xim, rect.x, rect.y,
+				rect.x, rect.y,
+				rect.width, rect.height);
+		}
+	}
+
+	if(did_copy) {
+		XFlush(g_display);
 	}
 }
 
-void
-x_push_done()
+Window_info *
+x_find_xwin(Window in_win)
 {
-	XFlush(g_display);
+	if(g_mainwin_info.kimage_ptr) {
+		if(g_mainwin_info.x_win == in_win) {
+			return &g_mainwin_info;
+		}
+	}
+	if(g_debugwin_info.kimage_ptr) {
+		if(g_debugwin_info.x_win == in_win) {
+			return &g_debugwin_info;
+		}
+	}
+	printf("in_win:%d not found\n", (int)in_win);
+	exit(1);
 }
-
 
 #define KEYBUFLEN	128
 
 int g_num_check_input_calls = 0;
 int g_check_input_flush_rate = 2;
 
-int
-x_update_mouse(int raw_x, int raw_y, int button_states, int buttons_valid)
+void
+x_request_paste_data(Window_info *win_info_ptr)
 {
-	int	x, y;
-
-	x = raw_x - BASE_MARGIN_LEFT;
-	y = raw_y - BASE_MARGIN_TOP;
-
-	if(g_warp_pointer && (x == A2_WINDOW_WIDTH/2) &&
-			(y == A2_WINDOW_HEIGHT/2) && (buttons_valid == 0) ) {
-		/* tell adb routs to recenter but ignore this motion */
-		update_mouse(x, y, 0, -1);
-		return 0;
-	}
-	return update_mouse(x, y, button_states, buttons_valid & 7);
+	printf("Pasting selection\n");
+	// printf("Calling XConvertSelection\n");
+	XConvertSelection(g_display, XA_PRIMARY, XA_STRING, XA_STRING,
+		win_info_ptr->x_win, CurrentTime);
+	// This will cause a SelectionNotify event, and we get the data
+	//  by using XGetWindowProperty on our own window.  This will eventually
+	//  call x_handle_paste().
 }
 
 void
-check_input_events()
+x_handle_paste(Window w, Atom property)
+{
+	byte	*bptr;
+	Atom	sel_type;
+	unsigned long sel_nitems, sel_bytes_after;
+	long	sel_length;
+	int	sel_format, ret, ret2, c;
+	int	i;
+
+	sel_length = 16384;
+	sel_type = 0;
+	sel_format = 0;
+	sel_nitems = 0;
+	sel_bytes_after = 0;
+	bptr = 0;
+	ret = XGetWindowProperty(g_display, w, property, 0, sel_length, 1,
+		AnyPropertyType, &sel_type, &sel_format, &sel_nitems,
+		&sel_bytes_after, &bptr);
+#if 0
+	printf("XGetWindowProperty ret:%d, sel_type:%ld, sel_format:%d, "
+		"sel_nitems:%ld, sel_bytes_after:%ld, bptr:%p\n",
+		ret, sel_type, sel_format, sel_nitems, sel_bytes_after, bptr);
+#endif
+	if(bptr && (sel_type == property) && sel_nitems && (sel_format == 8)) {
+		//printf("bptr: %s\n", (char *)bptr);
+		for(i = 0; i < sel_nitems; i++) {
+			c = bptr[i];
+			if(c == 10) {
+				c = 13;		// newline -> return
+			} else if((c == 9) || (c == 13)) {
+				// Allow these unchanged
+			} else if(c < 32) {
+				c = 0;
+			}
+			if((c > 0) && (c < 0x7f)) {
+				ret2 = adb_paste_add_buf(c);
+				if(ret2) {
+					printf("Paste buffer full!\n");
+					break;
+				}
+			}
+		}
+	}
+	if(ret == 0) {
+		XFree(bptr);
+	}
+}
+
+int
+x_update_mouse(Window_info *win_info_ptr, int raw_x, int raw_y,
+				int button_states, int buttons_valid)
+{
+	Kimage	*kimage_ptr;
+	int	x, y, ret;
+
+	if((button_states & buttons_valid & 2) == 2) {
+		// Middle button: Paste request
+		x_request_paste_data(win_info_ptr);
+		button_states = button_states & (~2);
+	}
+	kimage_ptr = win_info_ptr->kimage_ptr;
+	x = video_scale_mouse_x(kimage_ptr, raw_x, 0);
+	y = video_scale_mouse_y(kimage_ptr, raw_y, 0);
+
+	if(g_x_warp_pointer && (raw_x == g_x_warp_x) &&
+			(raw_y == g_x_warp_y) && (buttons_valid == 0) ) {
+		/* tell adb routs to recenter but ignore this motion */
+		adb_update_mouse(kimage_ptr, x, y, 0, -1);
+		return 0;
+	}
+	ret = adb_update_mouse(kimage_ptr, x, y, button_states,
+							buttons_valid & 7);
+	return ret;
+}
+
+void
+x_input_events()
 {
 	XEvent	ev;
-	int	len;
-	int	motion;
-	int	buttons;
-	int	refresh_needed;
+	Window_info *win_info_ptr;
+	int	len, motion, key_or_mouse, refresh_needed, buttons, hide, warp;
+	int	width, height;
 
 	g_num_check_input_calls--;
 	if(g_num_check_input_calls < 0) {
@@ -1012,7 +1005,9 @@ check_input_events()
 	}
 
 	motion = 0;
+	win_info_ptr = 0;
 	refresh_needed = 0;
+	key_or_mouse = 0;
 	while(len > 0) {
 		XNextEvent(g_display, &ev);
 		len--;
@@ -1024,16 +1019,16 @@ check_input_events()
 		switch(ev.type) {
 		case FocusIn:
 		case FocusOut:
+			win_info_ptr = x_find_xwin(ev.xfocus.window);
 			if(ev.xfocus.type == FocusOut) {
 				/* Allow keyrepeat again! */
 				vid_printf("Left window, auto repeat on\n");
 				x_auto_repeat_on(0);
-				g_has_focus = 0;
-			} else if(ev.xfocus.type == FocusIn) {
+			} else if(ev.xfocus.type == FocusIn &&
+					(win_info_ptr == &g_mainwin_info)) {
 				/* Allow keyrepeat again! */
 				vid_printf("Enter window, auto repeat off\n");
 				x_auto_repeat_off(0);
-				g_has_focus = 1;
 			}
 			break;
 		case EnterNotify:
@@ -1047,27 +1042,29 @@ check_input_events()
 				ev.xcrossing.type);
 			break;
 		case ButtonPress:
+			win_info_ptr = x_find_xwin(ev.xbutton.window);
 			vid_printf("Got button press of button %d!\n",
 						ev.xbutton.button);
 			buttons = (1 << ev.xbutton.button) >> 1;
-			motion |= x_update_mouse(ev.xbutton.x, ev.xbutton.y,
-				buttons, buttons & 7);
-
+			motion |= x_update_mouse(win_info_ptr, ev.xbutton.x,
+				ev.xbutton.y, buttons, buttons & 7);
+			key_or_mouse = 1;
 			break;
 		case ButtonRelease:
+			win_info_ptr = x_find_xwin(ev.xbutton.window);
 			buttons = (1 << ev.xbutton.button) >> 1;
-			motion |= x_update_mouse(ev.xbutton.x, ev.xbutton.y, 0,
-								buttons & 7);
+			motion |= x_update_mouse(win_info_ptr, ev.xbutton.x,
+						ev.xbutton.y, 0, buttons & 7);
+			key_or_mouse = 1;
 			break;
 		case MotionNotify:
-			if(ev.xmotion.window != g_a2_win) {
-				printf("Motion in window %08x unknown!\n",
-					(word32)ev.xmotion.window);
-			}
-			motion |= x_update_mouse(ev.xmotion.x, ev.xmotion.y, 0,
-								0);
+			win_info_ptr = x_find_xwin(ev.xmotion.window);
+			motion |= x_update_mouse(win_info_ptr, ev.xmotion.x,
+						ev.xmotion.y, 0, 0);
+			key_or_mouse = 1;
 			break;
 		case Expose:
+			win_info_ptr = x_find_xwin(ev.xexpose.window);
 			refresh_needed = -1;
 			break;
 		case NoExpose:
@@ -1075,16 +1072,60 @@ check_input_events()
 			break;
 		case KeyPress:
 		case KeyRelease:
-			handle_keysym(&ev);
+			x_handle_keysym(&ev);
+			key_or_mouse = 1;
 			break;
 		case KeymapNotify:
 			break;
 		case ColormapNotify:
-			vid_printf("ColormapNotify for %08x\n",
-				(word32)(ev.xcolormap.window));
-			vid_printf("colormap: %08x, new: %d, state: %d\n",
-				(word32)ev.xcolormap.colormap,
-				ev.xcolormap.new, ev.xcolormap.state);
+			break;
+		case DestroyNotify:
+			win_info_ptr = x_find_xwin(ev.xdestroywindow.window);
+			video_set_active(win_info_ptr->kimage_ptr, 0);
+			win_info_ptr->active = 0;
+			printf("Destroy %s\n", win_info_ptr->name_str);
+			break;
+		case ReparentNotify:
+		case UnmapNotify:
+		case MapNotify:
+			break;
+		case ClientMessage:
+			win_info_ptr = x_find_xwin(ev.xclient.window);
+			if(ev.xclient.data.l[0] == win_info_ptr->delete_atom) {
+				// This is a WM_DELETE_WINDOW event
+				// Just unmap the window
+				win_info_ptr->kimage_ptr->active = 0;
+			} else {
+				printf("unknown ClientMessage\n");
+			}
+			break;
+		case ConfigureNotify:
+			win_info_ptr = x_find_xwin(ev.xmotion.window);
+			width = ev.xconfigure.width;
+			height = ev.xconfigure.height;
+#if 0
+			printf("ConfigureNotify, width:%d, height:%d\n",
+				width, height);
+#endif
+			video_update_scale(win_info_ptr->kimage_ptr, width,
+								height);
+			break;
+		case SelectionNotify:
+			// We get this event after we requested the PRIMARY
+			//  selection, so paste this to adb().
+			vid_printf("SelectionNotify received\n");
+			vid_printf("req:%ld, selection:%ld, target:%ld, "
+				"property:%ld\n", ev.xselection.requestor,
+				ev.xselection.selection,
+				ev.xselection.target,
+				ev.xselection.property);
+			if(ev.xselection.property == None) {
+				printf("No selection\n");
+				break;
+			}
+			x_handle_paste(ev.xselection.requestor,
+							ev.xselection.property);
+
 			break;
 		default:
 			printf("X event 0x%08x is unknown!\n",
@@ -1093,47 +1134,54 @@ check_input_events()
 		}
 	}
 
-	if(motion && g_warp_pointer) {
-		XWarpPointer(g_display, None, g_a2_win, 0, 0, 0, 0,
-			BASE_MARGIN_LEFT + (A2_WINDOW_WIDTH/2),
-			BASE_MARGIN_TOP + (A2_WINDOW_HEIGHT/2));
+	if(key_or_mouse && (win_info_ptr == &g_mainwin_info)) {
+		hide = adb_get_hide_warp_info(win_info_ptr->kimage_ptr, &warp);
+		if(warp != g_x_warp_pointer) {
+			motion = 1;
+		}
+		g_x_warp_pointer = warp;
+		if(g_x_hide_pointer != hide) {
+			x_hide_pointer(&g_mainwin_info, hide);
+		}
+		g_x_hide_pointer = hide;
 	}
 
-	if(refresh_needed) {
-		printf("Full refresh needed\n");
-		g_a2_screen_buffer_changed = -1;
-		g_full_refresh_needed = -1;
+	if(motion && g_x_warp_pointer && (win_info_ptr == &g_mainwin_info)) {
+		// Calculate where to warp to
+		g_x_warp_x = video_unscale_mouse_x(win_info_ptr->kimage_ptr,
+			BASE_MARGIN_LEFT + (BASE_WINDOW_WIDTH/2), 0);
+		g_x_warp_y = video_unscale_mouse_y(win_info_ptr->kimage_ptr,
+			BASE_MARGIN_TOP + (A2_WINDOW_HEIGHT/2), 0);
 
-		g_border_sides_refresh_needed = 1;
-		g_border_special_refresh_needed = 1;
-		g_status_refresh_needed = 1;
+		XWarpPointer(g_display, None, win_info_ptr->x_win, 0, 0, 0, 0,
+			g_x_warp_x, g_x_warp_y);
+	}
 
-		/* x_refresh_ximage(); */
-		/* redraw_border(); */
+	if(refresh_needed && win_info_ptr) {
+		video_set_x_refresh_needed(win_info_ptr->kimage_ptr, 1);
 	}
 
 }
 
 void
-x_hide_pointer(int do_hide)
+x_hide_pointer(Window_info *win_info_ptr, int do_hide)
 {
-	if(do_hide) {
-		XDefineCursor(g_display, g_a2_win, g_cursor);
-	} else {
-		XDefineCursor(g_display, g_a2_win, None);
+	if(do_hide) {				// invisible
+		XDefineCursor(g_display, win_info_ptr->x_win, g_cursor);
+	} else {				// Default cursor
+		XDefineCursor(g_display, win_info_ptr->x_win, None);
 	}
 }
 
-
 void
-handle_keysym(XEvent *xev_in)
+x_handle_keysym(XEvent *xev_in)
 {
+	Window_info *win_info_ptr;
 	KeySym	keysym;
 	word32	state;
-	int	keycode;
-	int	a2code;
-	int	type;
-	int	is_up;
+	int	keycode, a2code, type, is_up;
+
+	win_info_ptr = x_find_xwin(xev_in->xkey.window);
 
 	keycode = xev_in->xkey.keycode;
 	type = xev_in->xkey.type;
@@ -1145,48 +1193,47 @@ handle_keysym(XEvent *xev_in)
 	vid_printf("keycode: %d, type: %d, state:%d, sym: %08x\n",
 		keycode, type, state, (word32)keysym);
 
-	x_update_modifier_state(state);
+	x_update_modifier_state(win_info_ptr, state);
 
 	is_up = 0;
 	if(type == KeyRelease) {
 		is_up = 1;
 	}
 
-#if 0
-	if(keysym == XK_Alt_L || keysym == XK_Meta_L) {
-		g_alt_left_up = is_up;
-	}
-
-	if(keysym == XK_Alt_R || keysym == XK_Meta_R) {
-		g_alt_right_up = is_up;
-	}
-
-	if(g_alt_left_up == 0 && g_alt_right_up == 0) {
-		printf("Sending sound to file\n");
-		g_send_sound_to_file = 1;
-	} else {
-		if(g_send_sound_to_file) {
-			printf("Stopping sending sound to file\n");
-			close_sound_file();
-		}
-		g_send_sound_to_file = 0;
-	}
-#endif
-
 	/* first, do conversions */
 	switch(keysym) {
-	case XK_Alt_R:
-	case XK_Meta_R:
+	case XK_Alt_L:
+	case XK_Meta_R:				// Windows key on right side
 	case XK_Super_R:
 	case XK_Mode_switch:
 	case XK_Cancel:
 		keysym = XK_Print;		/* option */
 		break;
-	case XK_Alt_L:
-	case XK_Meta_L:
+	case XK_Meta_L:				// Windows key on left side
+	case XK_Alt_R:
 	case XK_Super_L:
 	case XK_Menu:
 		keysym = XK_Scroll_Lock;	/* cmd */
+		break;
+	case XK_F5:
+		if(!is_up) {
+			video_set_x_refresh_needed(win_info_ptr->kimage_ptr, 1);
+			printf("g_x_refresh_needed = 1\n");
+		}
+		break;
+	case XK_F10:
+		if(!is_up) {
+			g_video_scale_algorithm++;
+			if(g_video_scale_algorithm >= 3) {
+				g_video_scale_algorithm = 0;
+			}
+			printf("g_video_scale_algorithm = %d\n",
+						g_video_scale_algorithm);
+			video_set_x_refresh_needed(win_info_ptr->kimage_ptr, 1);
+			video_update_scale(win_info_ptr->kimage_ptr,
+					win_info_ptr->width_req,
+					win_info_ptr->main_height);
+		}
 		break;
 	case 0x1000003:
 		if(keycode == 0x3c) {
@@ -1228,9 +1275,12 @@ handle_keysym(XEvent *xev_in)
 		}
 	}
 
-	a2code = x_keysym_to_a2code(keysym, is_up);
+	a2code = x_keysym_to_a2code(win_info_ptr, (int)keysym, is_up);
 	if(a2code >= 0) {
-		adb_physical_key_update(a2code, is_up);
+		adb_physical_key_update(win_info_ptr->kimage_ptr, a2code, is_up,
+			win_info_ptr->x_shift_control_state & ShiftMask,
+			win_info_ptr->x_shift_control_state & ControlMask,
+			win_info_ptr->x_shift_control_state & LockMask);
 	} else if(a2code != -2) {
 		printf("Keysym: %04x of keycode: %02x unknown\n",
 			(word32)keysym, keycode);
@@ -1238,46 +1288,41 @@ handle_keysym(XEvent *xev_in)
 }
 
 int
-x_keysym_to_a2code(int keysym, int is_up)
+x_keysym_to_a2code(Window_info *win_info_ptr, int keysym, int is_up)
 {
+	word32	mask;
 	int	i;
 
 	if(keysym == 0) {
 		return -1;
 	}
 
+	mask = 0;
 	if((keysym == XK_Shift_L) || (keysym == XK_Shift_R)) {
-		if(is_up) {
-			g_x_shift_control_state &= ~ShiftMask;
-		} else {
-			g_x_shift_control_state |= ShiftMask;
-		}
+		mask = ShiftMask;
 	}
 	if(keysym == XK_Caps_Lock) {
-		if(is_up) {
-			g_x_shift_control_state &= ~LockMask;
-		} else {
-			g_x_shift_control_state |= LockMask;
-		}
+		mask = LockMask;
 	}
 	if((keysym == XK_Control_L) || (keysym == XK_Control_R)) {
-		if(is_up) {
-			g_x_shift_control_state &= ~ControlMask;
-		} else {
-			g_x_shift_control_state |= ControlMask;
-		}
+		mask = ControlMask;
+	}
+	if(is_up) {
+		win_info_ptr->x_shift_control_state &= ~mask;
+	} else {
+		win_info_ptr->x_shift_control_state |= mask;
 	}
 
 	/* Look up Apple 2 keycode */
 	for(i = g_num_a2_keycodes - 1; i >= 0; i--) {
-		if((keysym == a2_key_to_xsym[i][1]) ||
-					(keysym == a2_key_to_xsym[i][2])) {
+		if((keysym == g_x_a2_key_to_xsym[i][1]) ||
+					(keysym == g_x_a2_key_to_xsym[i][2])) {
 
 			vid_printf("Found keysym:%04x = a[%d] = %04x or %04x\n",
-				(int)keysym, i, a2_key_to_xsym[i][1],
-				a2_key_to_xsym[i][2]);
+				(int)keysym, i, g_x_a2_key_to_xsym[i][1],
+				g_x_a2_key_to_xsym[i][2]);
 
-			return a2_key_to_xsym[i][0];
+			return g_x_a2_key_to_xsym[i][0];
 		}
 	}
 
@@ -1285,28 +1330,34 @@ x_keysym_to_a2code(int keysym, int is_up)
 }
 
 void
-x_update_modifier_state(int state)
+x_update_modifier_state(Window_info *win_info_ptr, int state)
 {
-	int	state_xor;
+	word32	state_xor, shift_down, ctrl_down, lock_down;
 	int	is_up;
 
 	state = state & (ControlMask | LockMask | ShiftMask);
-	state_xor = g_x_shift_control_state ^ state;
+	state_xor = win_info_ptr->x_shift_control_state ^ state;
 	is_up = 0;
+	shift_down = state & ShiftMask;
+	ctrl_down = state & ControlMask;
+	lock_down = state & LockMask;
 	if(state_xor & ControlMask) {
 		is_up = ((state & ControlMask) == 0);
-		adb_physical_key_update(0x36, is_up);
+		adb_physical_key_update(win_info_ptr->kimage_ptr, 0x36, is_up,
+					shift_down, ctrl_down, lock_down);
 	}
 	if(state_xor & LockMask) {
 		is_up = ((state & LockMask) == 0);
-		adb_physical_key_update(0x39, is_up);
+		adb_physical_key_update(win_info_ptr->kimage_ptr, 0x39, is_up,
+					shift_down, ctrl_down, lock_down);
 	}
 	if(state_xor & ShiftMask) {
 		is_up = ((state & ShiftMask) == 0);
-		adb_physical_key_update(0x38, is_up);
+		adb_physical_key_update(win_info_ptr->kimage_ptr, 0x38, is_up,
+					shift_down, ctrl_down, lock_down);
 	}
 
-	g_x_shift_control_state = state;
+	win_info_ptr->x_shift_control_state = state;
 }
 
 void

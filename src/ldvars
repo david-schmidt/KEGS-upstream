@@ -1,0 +1,3 @@
+OBJECTS = adb.o engine_c.o clock.o config.o debugger.o scc.o scc_socket_driver.o scc_windriver.o scc_macdriver.o iwm.o joystick_driver.o moremem.o paddles.o mockingboard.o sim65816.o smartport.o sound.o sound_driver.o unshk.o undeflate.o video.o $(OBJECTS1)
+PROTO_FILE_LIST = adb.proto engine_c.proto clock.proto compile_time.proto config.proto debugger.proto scc.proto scc_socket_driver.proto scc_windriver.proto scc_macdriver.proto iwm.proto joystick_driver.proto moremem.proto paddles.proto mockingboard.proto sim65816.proto smartport.proto sound.proto sound_driver.proto unshk.proto undeflate.proto video.proto
+PROJROOT = ..

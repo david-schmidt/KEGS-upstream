@@ -1,16 +1,18 @@
+#ifdef INCLUDE_RCSID_C
+const char rcsid_config_h[] = "@(#)$KmKId: config.h,v 1.11 2020-06-14 02:49:53+00 kentd Exp $";
+#endif
+
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2003-2004 by Kent Dickey		*/
+/*			Copyright 2002-2019 by Kent Dickey		*/
 /*									*/
-/*		This code is covered by the GNU GPL			*/
+/*	This code is covered by the GNU GPL v3				*/
+/*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
+/*	This program is provided with no warranty			*/
 /*									*/
 /*	The KEGS web page is kegs.sourceforge.net			*/
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
-
-#ifdef INCLUDE_RCSID_C
-const char rcsid_config_h[] = "@(#)$KmKId: config.h,v 1.9 2004-11-12 23:10:28-05 kentd Exp $";
-#endif
 
 #define CONF_BUF_LEN		1024
 #define COPY_BUF_SIZE		4096

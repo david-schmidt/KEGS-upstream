@@ -1,14 +1,16 @@
+const char rcsid_clock_c[] = "@(#)$KmKId: clock.c,v 1.36 2020-06-14 02:49:53+00 kentd Exp $";
+
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002 by Kent Dickey			*/
+/*			Copyright 2002-2019 by Kent Dickey		*/
 /*									*/
-/*		This code is covered by the GNU GPL			*/
+/*	This code is covered by the GNU GPL v3				*/
+/*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
+/*	This program is provided with no warranty			*/
 /*									*/
 /*	The KEGS web page is kegs.sourceforge.net			*/
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
-
-const char rcsid_clock_c[] = "@(#)$KmKId: clock.c,v 1.31 2004-10-19 17:32:07-04 kentd Exp $";
 
 #include "defc.h"
 #include <time.h>
@@ -40,7 +42,7 @@ extern int g_c034_val;
 byte	g_bram[2][256];
 byte	*g_bram_ptr = &(g_bram[0][0]);
 
-word32	g_clk_cur_time = 0xa0000000;
+word32 g_clk_cur_time = 0xa0000000;
 int	g_clk_next_vbl_update = 0;
 
 double
@@ -127,6 +129,14 @@ clk_bram_zero()
 void
 clk_bram_set(int bram_num, int offset, int val)
 {
+	if((bram_num < 0) || (bram_num > 2)) {
+		printf("bram_num %d out of range\n", bram_num);
+		return;
+	}
+	if((offset < 0) || (offset > 0x100)) {
+		printf("bram offset %05x out of range\n", offset);
+		return;
+	}
 	g_bram[bram_num][offset] = val;
 }
 
@@ -162,7 +172,7 @@ update_cur_time()
 {
 	struct tm *tm_ptr;
 	time_t	cur_time;
-	unsigned int secs, secs2;
+	unsigned long secs, secs2;
 
 	cur_time = time(0);
 
@@ -179,7 +189,7 @@ update_cur_time()
 	/*  will use the tm_ptr->gmtoff member to correct the time */
 	secs = secs + tm_ptr->tm_gmtoff;
 #else
-	secs = (unsigned int)cur_time - (secs2 - secs);
+	secs = (unsigned long)cur_time - (secs2 - secs);
 
 	if(tm_ptr->tm_isdst) {
 		/* adjust for daylight savings time */
@@ -188,11 +198,11 @@ update_cur_time()
 #endif
 
 	/* add in secs to make date based on Apple Jan 1, 1904 instead of */
-	/*   Unix's Jan 1, 1970 */
-	/*  So add in 66 years and 17 leap year days (1904 is a leap year) */
+	/*  Unix's Jan 1, 1970 */
+	/* So add in 66 years and 17 leap year days (1904 is a leap year) */
 	secs += ((66*365) + 17) * (24*3600);
 
-	g_clk_cur_time = secs;
+	g_clk_cur_time = (word32)secs;
 
 	clk_printf("Update g_clk_cur_time to %08x\n", g_clk_cur_time);
 	g_clk_next_vbl_update = g_vbl_count + 5;

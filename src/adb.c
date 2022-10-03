@@ -1,20 +1,20 @@
+const char rcsid_adb_c[] = "@(#)$KmKId: adb.c,v 1.88 2021-01-23 22:44:35+00 kentd Exp $";
+
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002 by Kent Dickey			*/
+/*			Copyright 2002-2019 by Kent Dickey		*/
 /*									*/
-/*		This code is covered by the GNU GPL			*/
+/*	This code is covered by the GNU GPL v3				*/
+/*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
+/*	This program is provided with no warranty			*/
 /*									*/
 /*	The KEGS web page is kegs.sourceforge.net			*/
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
 
-const char rcsid_adb_c[] = "@(#)$KmKId: adb.c,v 1.73 2004-11-14 14:05:33-05 kentd Exp $";
-
 /* adb_mode bit 3 and bit 2 (faster repeats for arrows and space/del) not done*/
 
-#include "adb.h"
-
-int g_fullscreen = 0;
+#include "defc.h"
 
 extern int Verbose;
 extern word32 g_vbl_count;
@@ -27,14 +27,14 @@ extern int g_irq_pending;
 extern int g_swap_paddles;
 extern int g_invert_paddles;
 extern int g_joystick_type;
-extern int g_a2vid_palette;
 extern int g_config_control_panel;
-extern word32 g_cfg_vbl_count;
 extern double g_cur_dcycs;
 
 extern byte *g_slow_memory_ptr;
 extern byte *g_memory_ptr;
 extern word32 g_mem_size_total;
+extern Kimage g_mainwin_kimage;
+extern Kimage g_debugwin_kimage;
 
 enum {
 	ADB_IDLE = 0,
@@ -52,7 +52,7 @@ enum {
 #define ADB_C027_CMD_FULL	0x01
 
 #define ADB_C027_NEG_MASK	( ~ (				\
-	 	ADB_C027_MOUSE_DATA | ADB_C027_DATA_VALID |	\
+		ADB_C027_MOUSE_DATA | ADB_C027_DATA_VALID |	\
 		ADB_C027_KBD_VALID | ADB_C027_MOUSE_COORD |	\
 		ADB_C027_CMD_FULL))
 
@@ -107,13 +107,11 @@ STRUCT(Mouse_fifo) {
 
 Mouse_fifo g_mouse_fifo[ADB_MOUSE_FIFO] = { { 0, 0, 0, 0 } };
 
-int g_mouse_warp_x = 0;
-int g_mouse_warp_y = 0;
-
 int	g_adb_mouse_valid_data = 0;
 int	g_adb_mouse_coord = 0;
 
 #define MAX_KBD_BUF		8
+#define MAX_KBD_PASTE_BUF	32768
 
 int	g_key_down = 0;
 int	g_hard_key_down = 0;
@@ -121,6 +119,9 @@ int	g_a2code_down = 0;
 int	g_kbd_read_no_update = 0;
 int	g_kbd_chars_buffered = 0;
 int	g_kbd_buf[MAX_KBD_BUF];
+int	g_kbd_paste_rd_pos = 0;
+int	g_kbd_paste_wr_pos = 0;
+byte	g_kbd_paste_buf[MAX_KBD_PASTE_BUF];
 word32	g_adb_repeat_vbl = 0;
 
 int	g_kbd_dev_addr = 2;		/* ADB physical kbd addr */
@@ -152,8 +153,173 @@ int g_kbd_reg0_pos = 0;
 int g_kbd_reg0_data[MAX_ADB_KBD_REG3];
 int g_kbd_reg3_16bit = 0x602;			/* also set in adb_reset()! */
 
-
 int	g_adb_init = 0;
+
+/* Format: a2code, ascii if no shift, ascii if shift, ascii if ctl */
+const int g_a2_key_to_ascii[][4] = {
+	{ 0x00,	'a',	'A',	0x01 },
+	{ 0x01,	's',	'S',	0x13 },
+	{ 0x02,	'd',	'D',	0x04 },
+	{ 0x03,	'f',	'F',	0x06 },
+	{ 0x04,	'h',	'H',	0x08 },
+	{ 0x05,	'g',	'G',	0x07 },
+	{ 0x06,	'z',	'Z',	0x1a },
+	{ 0x07,	'x',	'X',	0x18 },
+
+	{ 0x08,	'c',	'C',	0x03 },
+	{ 0x09,	'v',	'V',	0x16 },
+	{ 0x0a, -1, -1, -1 },
+	{ 0x0b,	'b',	'B',	0x02 },
+	{ 0x0c,	'q',	'Q',	0x11 },
+	{ 0x0d,	'w',	'W',	0x17 },
+	{ 0x0e,	'e',	'E',	0x05 },
+	{ 0x0f,	'r',	'R',	0x12 },
+
+	{ 0x10,	'y',	'Y',	0x19 },
+	{ 0x11,	't',	'T',	0x14 },
+	{ 0x12,	'1',	'!',	-1 },
+	{ 0x13,	'2',	'@',	0x00 },
+	{ 0x14,	'3',	'#',	-1 },
+	{ 0x15,	'4',	'$',	-1 },
+	{ 0x16,	'6',	'^',	0x1e },
+	{ 0x17,	'5',	'%',	-1 },
+
+	{ 0x18,	'=',	'+',	-1 },
+	{ 0x19,	'9',	'(',	-1 },
+	{ 0x1a,	'7',	'&',	-1 },
+	{ 0x1b,	'-',	'_',	0x1f },
+	{ 0x1c,	'8',	'*',	-1 },
+	{ 0x1d,	'0',	')',	-1 },
+	{ 0x1e,	']',	'}',	0x1d },
+	{ 0x1f,	'o',	'O',	0x0f },
+
+	{ 0x20,	'u',	'U',	0x15 },
+	{ 0x21,	'[',	'{',	0x1b },
+	{ 0x22,	'i',	'I',	0x09 },
+	{ 0x23,	'p',	'P',	0x10 },
+	{ 0x24,	0x0d,	0x0d,	-1 },	/* return */
+	{ 0x25,	'l',	'L',	0x0c },
+	{ 0x26,	'j',	'J',	0x0a },
+	{ 0x27,	0x27,	'"',	-1 },	/* single quote */
+
+	{ 0x28,	'k',	'K',	0x0b },
+	{ 0x29,	';',	':',	-1 },
+	{ 0x2a,	0x5c,	'|',	0x1c },	/* \, | */
+	{ 0x2b,	',',	'<',	-1 },
+	{ 0x2c,	'/',	'?',	0x7f },
+	{ 0x2d,	'n',	'N',	0x0e },
+	{ 0x2e,	'm',	'M',	0x0d },
+	{ 0x2f,	'.',	'>',	-1 },
+
+	{ 0x30,	0x09,	0x09,	-1 },	/* tab */
+	{ 0x31,	' ',	' ',	-1 },
+	{ 0x32,	'`',	'~',	-1 },
+	{ 0x33,	0x7f,	0x7f,	-1 },	/* Delete */
+	{ 0x34, -1, -1, -1 },
+	{ 0x35,	0x1b,	0x1b,	-1 },	/* Esc */
+	{ 0x36,	0x0200,	0x0200,	-1 },	/* control */
+	{ 0x37,	0x8000,	0x8000,	-1 },	/* Command */
+
+	{ 0x38,	0x0100,	0x0100, -1 },	/* shift */
+	{ 0x39,	0x0400,	0x0400,	-1 },	/* caps lock */
+	{ 0x3a,	0x4000,	0x4000,	-1 },	/* Option */
+	{ 0x3b,	0x08,	0x08,	-1 },	/* left */
+	{ 0x3c,	0x15,	0x15,	-1 },	/* right */
+	{ 0x3d,	0x0a,	0x0a,	-1 },	/* down */
+	{ 0x3e,	0x0b,	0x0b,	-1 },	/* up arrow */
+	{ 0x3f, -1, -1, -1 },
+
+	{ 0x40, -1, -1, -1 },
+	{ 0x41,	0x102e,	0x102c,	-1 },	/* keypad . */
+	{ 0x42, -1, -1, -1 },
+	{ 0x43,	0x102a,	0x102a,	-1 },	/* keypad * */
+	{ 0x44, -1, -1, -1 },
+	{ 0x45,	0x102b, 0x102b, -1 },	/* keypad + */
+	{ 0x46, -1, -1, -1 },
+	{ 0x47,	0x1018,	0x1018,	-1 },	/* keypad Clear */
+
+	{ 0x48, -1, -1, -1 },
+	{ 0x49, -1, -1, -1 },
+	{ 0x4a, -1, -1, -1 },
+	{ 0x4b,	0x102f,	0x102f,	-1 },	/* keypad / */
+	{ 0x4c,	0x100d,	0x100d,	-1 },	/* keypad enter */
+	{ 0x4d, -1, -1, -1 },
+	{ 0x4e,	0x102d,	0x102d,	-1 },	/* keypad - */
+	{ 0x4f, -1, -1, -1 },
+
+	{ 0x50, -1, -1, -1 },
+	{ 0x51,	0x103d,	0x103d,	-1 },	/* keypad = */
+	{ 0x52,	0x1030,	0x1030,	-1 },	/* keypad 0 */
+	{ 0x53,	0x1031,	0x1031,	-1 },	/* keypad 1 */
+	{ 0x54,	0x1032,	0x1032,	-1 },	/* keypad 2 */
+	{ 0x55,	0x1033,	0x1033,	-1 },	/* keypad 3 */
+	{ 0x56,	0x1034,	0x1034,	-1 },	/* keypad 4 */
+	{ 0x57,	0x1035, 0x1035, -1 },	/* keypad 5 */
+
+	{ 0x58,	0x1036, 0x1036, -1 },	/* keypad 6 */
+	{ 0x59,	0x1037, 0x1037,	-1 },	/* keypad 7 */
+	{ 0x5a,	'a',	'A',	0x01 },	/* probably not necessary */
+	{ 0x5b,	0x1038,	0x1038,	-1 },	/* keypad 8 */
+	{ 0x5c,	0x1039,	0x1039,	-1 },	/* keypad 9 */
+	{ 0x5d, -1, -1, -1 },
+	{ 0x5e, -1, -1, -1 },
+	{ 0x5f, -1, -1, -1 },
+
+	{ 0x60,	0x8005,	0x1060,	-1 },	/* F5 */
+	{ 0x61,	0x8006,	0x1061,	-1 },	/* F6 */
+	{ 0x62,	0x8007,	0x1062,	-1 },	/* F7 */
+	{ 0x63,	0x8003,	0x1063,	-1 },	/* F3 */
+	{ 0x64,	0x8008,	0x1064,	-1 },	/* F8 */
+	{ 0x65,	0x8009,	0x1065,	-1 },	/* F9 */
+	{ 0x66, -1, -1, -1 },
+	{ 0x67,	0x800b,	0x1067,	-1 },	/* F11 */
+
+	{ 0x68, -1, -1, -1 },
+	{ 0x69,	0x800d,	0x1069,	-1 },	/* F13 */
+	{ 0x6a, -1, -1, -1 },
+	{ 0x6b,	0x800e,	0x106b,	-1 },	/* F14 */
+	{ 0x6c, -1, -1, -1 },
+	{ 0x6d,	0x800a,	0x106d,	-1 },	/* F10 */
+	{ 0x6e, 0x4000, 0x4000, -1 },	/* windows key alias to option */
+	{ 0x6f,	0x800c,	0x106f,	-1 },	/* F12 */
+
+	{ 0x70, -1, -1, -1 },
+	{ 0x71,	0x800f,	0x1071,	-1 },	/* F15 */
+	{ 0x72,	0x1072,	0x1072,	-1 },	/* Help, insert */
+	{ 0x73,	0x1073,	0x1073,	-1 },	/* Home */
+	{ 0x74,	0x1074,	0x1074,	-1 },	/* Page up */
+	{ 0x75,	0x1075,	0x1075,	-1 },	/* keypad delete */
+	{ 0x76,	0x8004,	0x1076,	-1 },	/* F4 */
+	{ 0x77,	0x1077,	0x1077,	-1 },	/* keypad end */
+
+	{ 0x78,	0x8002,	0x1078,	-1 },	/* F2 */
+	{ 0x79,	0x1079,	0x1079,	-1 },	/* keypad page down */
+	{ 0x7a,	0x8001,	0x107a,	-1 },	/* F1 */
+	{ 0x7b,	0x08,	0x08,	-1 },	/* left */	/* remapped to 0x3b */
+	{ 0x7c,	0x15,	0x15,	-1 },	/* right */	/* remapped to 0x3c */
+	{ 0x7d,	0x0a,	0x0a,	-1 },	/* down */	/* remapped to 0x3d */
+	{ 0x7e,	0x0b,	0x0b,	-1 },	/* up arrow */	/* remapped to 0x3e */
+	{ 0x7f, -1,	-1,	-1 },	/* Reset */
+};
+
+int
+adb_get_hide_warp_info(Kimage *kimage_ptr, int *warpptr)
+{
+	if(kimage_ptr == &g_mainwin_kimage) {
+		*warpptr = g_warp_pointer;
+		return g_hide_pointer;
+	}
+	*warpptr = 0;
+	return 0;
+}
+
+void
+adb_nonmain_check()
+{
+	// Debug window active.  Undo F8 pointer warping
+	g_warp_pointer = 0;
+	g_hide_pointer = 0;
+}
 
 void
 adb_init()
@@ -167,7 +333,7 @@ adb_init()
 	g_adb_init = 1;
 
 	for(i = 0; i < 128; i++) {
-		keycode = a2_key_to_ascii[i][0];
+		keycode = g_a2_key_to_ascii[i][0];
 		if(keycode != i) {
 			printf("ADB keycode lost/skipped: i=%x: keycode=%x\n",
 				i, keycode);
@@ -196,6 +362,9 @@ adb_reset()
 	g_c027_val = 0;
 
 	g_key_down = 0;
+	g_kbd_paste_rd_pos = 0;
+	g_kbd_paste_wr_pos = 0;
+	g_kbd_chars_buffered = 0;
 
 	g_kbd_dev_addr = 2;
 	g_mouse_dev_addr = 3;
@@ -371,8 +540,6 @@ adb_send_1byte(word32 val)
 	adb_send_bytes(1, val << 24, 0, 0);
 }
 
-
-
 void
 adb_response_packet(int num_bytes, word32 val)
 {
@@ -400,7 +567,6 @@ adb_response_packet(int num_bytes, word32 val)
 	adb_add_data_int();
 }
 
-
 void
 adb_kbd_reg0_data(int a2code, int is_up)
 {
@@ -423,10 +589,8 @@ adb_kbd_reg0_data(int a2code, int is_up)
 void
 adb_kbd_talk_reg0()
 {
-	word32	val0, val1;
-	word32	reg;
-	int	num_bytes;
-	int	num;
+	word32	val0, val1, reg;
+	int	num_bytes, num;
 	int	i;
 
 	num = 0;
@@ -819,10 +983,8 @@ adb_write_c026(int val)
 void
 do_adb_cmd()
 {
-	int	dev;
-	int	new_kbd;
-	int	addr;
-	int	val;
+	word32	val;
+	int	dev, new_kbd, addr;
 
 	dev = g_adb_cmd & 0xf;
 
@@ -1083,9 +1245,7 @@ write_adb_ram(word32 addr, int val)
 int
 adb_get_keypad_xy(int get_y)
 {
-	int	x, y;
-	int	key;
-	int	num_keys;
+	int	x, y, key, num_keys;
 	int	i, j;
 
 	key = 1;
@@ -1095,7 +1255,7 @@ adb_get_keypad_xy(int get_y)
 	for(i = 0; i < 3; i++) {
 		for(j = 0; j < 3; j++) {
 			if(g_keypad_key_is_down[key]) {
-				num_keys++;	
+				num_keys++;
 				x = x + (j - 1)*32768;
 				y = y + (1 - i)*32768;
 			}
@@ -1116,47 +1276,67 @@ adb_get_keypad_xy(int get_y)
 	}
 }
 
+// g_mouse_raw_x/y: Current position (in A2 coordinates) of mouse on host screen
+// g_mouse_fifo[0].x/y: Current position (in A2 coords) of where we "want"
+//		mouse on the A2 screen.
+// g_mouse_a2_x/y: last x,y returned through $c024 to software.
+// So, reading $c024 return g_mouse_fifo[].x - g_mouse_a2_x.
+// And, in simple cases, host mouse movement just sets g_mouse_fifo[0].x=raw_x
 int
-update_mouse(int x, int y, int button_states, int buttons_valid)
+adb_update_mouse(Kimage *kimage_ptr, int x, int y, int button_states,
+							int buttons_valid)
 {
 	double	dcycs;
-	int	button1_changed;
-	int	mouse_moved;
-	int	unhide;
-	int	pos;
+	int	button1_changed, mouse_moved, unhide, pos;
 	int	i;
 
+	if(kimage_ptr != &g_mainwin_kimage) {
+		adb_nonmain_check();
+	}
 	dcycs = g_cur_dcycs;
 
-	g_mouse_raw_x = x;
-	g_mouse_raw_y = y;
-
 	unhide = 0;
-	if(x < 0) {
-		x = 0;
-		unhide = 1;
-	}
-	if(x >= 640) {
-		x = 639;
-		unhide = 1;
-	}
-	if(y < 0) {
-		y = 0;
-		unhide = 1;
-	}
-	if(y >= 400) {
-		y = 399;
-		unhide = 1;
-	}
+	if((buttons_valid >= 0) && (buttons_valid & 0x1000)) {
+		// x, y are really deltas
+		buttons_valid &= 0xfff;
+		x = g_mouse_raw_x + x;
+		y = g_mouse_raw_y + y;
+		g_mouse_raw_x = x;
+		g_mouse_raw_y = y;
+	} else {
+		g_mouse_raw_x = x;
+		g_mouse_raw_y = y;
 
+		// Clamp mouse to 0-639, 0-399 to make GSOS work nicely
+		if(x < 0) {
+			x = 0;
+			unhide = 1;
+		}
+		if(x >= 640) {
+			x = 639;
+			unhide = 1;
+		}
+		if(y < 0) {
+			y = 0;
+			unhide = 1;
+		}
+		if(y >= 400) {
+			y = 399;
+			unhide = 1;
+		}
+	}
 
 	g_unhide_pointer = unhide && !g_warp_pointer;
+
+	if(kimage_ptr != &g_mainwin_kimage) {
+		// In debugger window...just get out
+		return 0;
+	}
 
 	if(!g_warp_pointer) {
 		if(g_hide_pointer && g_unhide_pointer) {
 			/* cursor has left a2 window, show it */
 			g_hide_pointer = 0;
-			x_hide_pointer(0);
 		}
 		if((g_num_lines_prev_superhires == 200) &&
 				(g_num_lines_prev_superhires640 == 0) &&
@@ -1187,20 +1367,15 @@ update_mouse(int x, int y, int button_states, int buttons_valid)
 	}
 
 #if 0
-	printf("...real move, warp: %d, %d, new x: %d, %d, a2:%d,%d\n",
-		g_mouse_warp_x, g_mouse_warp_y, g_mouse_fifo[0].x,
-		g_mouse_fifo[0].y, g_mouse_a2_x, g_mouse_a2_y);
+	printf("...real move, new x: %d, %d, a2:%d,%d\n", g_mouse_fifo[0].x,
+			g_mouse_fifo[0].y, g_mouse_a2_x, g_mouse_a2_y);
 #endif
 
 	mouse_moved = (g_mouse_fifo[0].x != x) || (g_mouse_fifo[0].y != y);
 
-	g_mouse_a2_x += g_mouse_warp_x;
-	g_mouse_a2_y += g_mouse_warp_y;
 	g_mouse_fifo[0].x = x;
 	g_mouse_fifo[0].y = y;
 	g_mouse_fifo[0].dcycs = dcycs;
-	g_mouse_warp_x = 0;
-	g_mouse_warp_y = 0;
 
 	button1_changed = (buttons_valid & 1) &&
 			((button_states & 1) != (g_mouse_fifo[0].buttons & 1));
@@ -1245,15 +1420,9 @@ update_mouse(int x, int y, int button_states, int buttons_valid)
 int
 mouse_read_c024(double dcycs)
 {
-	word32	ret;
-	word32	tool_start;
-	int	em_active;
-	int	target_x, target_y;
-	int	delta_x, delta_y;
-	int	a2_x, a2_y;
-	int	mouse_button;
-	int	clamped;
-	int	pos;
+	word32	ret, tool_start;
+	int	em_active, target_x, target_y, delta_x, delta_y, a2_x, a2_y;
+	int	mouse_button, clamped, pos;
 
 	if(((g_adb_mode & 0x2) != 0) || (g_mouse_dev_addr != g_mouse_ctl_addr)){
 		/* mouse is off, return 0, or mouse is not autopoll */
@@ -1326,6 +1495,7 @@ mouse_read_c024(double dcycs)
 		}
 	}
 
+	em_active = 0;		// HACK!
 	a2_x = g_mouse_a2_x;
 	a2_y = g_mouse_a2_y;
 
@@ -1334,7 +1504,6 @@ mouse_read_c024(double dcycs)
 				!g_unhide_pointer) {
 			/* if super-hires and forcing tracking, then hide */
 			g_hide_pointer = 1;
-			x_hide_pointer(1);
 		}
 		if(g_adb_mouse_coord == 0) {
 			/* update x coord values */
@@ -1357,7 +1526,6 @@ mouse_read_c024(double dcycs)
 	} else {
 		if(g_hide_pointer && !g_warp_pointer) {
 			g_hide_pointer = 0;
-			x_hide_pointer(0);
 		}
 	}
 
@@ -1424,15 +1592,55 @@ mouse_compress_fifo(double dcycs)
 }
 
 void
+adb_paste_update_state()
+{
+	int	rd_pos, wr_pos;
+
+	rd_pos = g_kbd_paste_rd_pos;
+	wr_pos = g_kbd_paste_wr_pos;
+	if(rd_pos >= wr_pos) {
+		g_kbd_paste_rd_pos = 0;
+		g_kbd_paste_wr_pos = 0;
+		return;
+	}
+	if(g_kbd_chars_buffered == 0) {
+		g_kbd_buf[0] = g_kbd_paste_buf[rd_pos];
+		g_kbd_paste_rd_pos = rd_pos + 1;
+		g_kbd_chars_buffered = 1;
+	}
+}
+
+int
+adb_paste_add_buf(word32 key)
+{
+	int	pos;
+
+	// Applesoft reads $C000 to check for ctrl-C after each statement.
+	//  So if we dropped all chars into g_kbd_buf[], we could end up
+	//  losing chars due to multiple reads of $C000 without writes to $C010
+	//  causing g_kbd_read_no_update to toss a paste char.
+	// Instead, have a separate buffer, and when g_kbd_chars_buffered==0,
+	//  copy one paste char to g_kbd_buf[0].  This also solves a problem
+	//  where Applesoft is doing: 10 GOTO 10 and it needs to see a Ctrl-C
+	//  to stop--but a paste buffer is in the way.
+	// But, now pressing keys while a paste is pending causes those keys
+	//  to take priority during the paste.
+	pos = g_kbd_paste_wr_pos;
+	if(pos >= MAX_KBD_PASTE_BUF) {
+		return 1;
+	}
+	g_kbd_paste_buf[pos] = key | 0x80;
+	g_kbd_paste_wr_pos = pos + 1;
+
+	adb_paste_update_state();
+	return 0;
+}
+
+void
 adb_key_event(int a2code, int is_up)
 {
-	word32	special;
-	word32	vbl_count;
-	int	key;
-	int	hard_key;
-	int	pos;
-	int	tmp_ascii;
-	int	ascii;
+	word32	special, vbl_count;
+	int	key, hard_key, pos, tmp_ascii, ascii;
 
 	if(is_up) {
 		adb_printf("adb_key_event, key:%02x, is up, g_key_down: %02x\n",
@@ -1457,7 +1665,7 @@ adb_key_event(int a2code, int is_up)
 
 	/* convert key to ascii, if possible */
 	hard_key = 0;
-	if(a2_key_to_ascii[a2code][1] & 0xef00) {
+	if(g_a2_key_to_ascii[a2code][1] & 0xef00) {
 		/* special key */
 	} else {
 		/* we have ascii */
@@ -1465,7 +1673,7 @@ adb_key_event(int a2code, int is_up)
 	}
 
 	pos = 1;
-	ascii = a2_key_to_ascii[a2code][1];
+	ascii = g_a2_key_to_ascii[a2code][1];
 	if(CAPS_LOCK_DOWN && (ascii >= 'a' && ascii <= 'z')) {
 		pos = 2;
 		if(SHIFT_DOWN && (g_adb_mode & 0x40)) {
@@ -1476,9 +1684,9 @@ adb_key_event(int a2code, int is_up)
 		pos = 2;
 	}
 
-	ascii = a2_key_to_ascii[a2code][pos];
+	ascii = g_a2_key_to_ascii[a2code][pos];
 	if(CTRL_DOWN) {
-		tmp_ascii = a2_key_to_ascii[a2code][3];
+		tmp_ascii = g_a2_key_to_ascii[a2code][3];
 		if(tmp_ascii >= 0) {
 			ascii = tmp_ascii;
 		}
@@ -1492,7 +1700,6 @@ adb_key_event(int a2code, int is_up)
 		special = 0;
 	}
 
-
 	if(!is_up) {
 		if(hard_key) {
 			g_kbd_buf[g_kbd_chars_buffered] = key;
@@ -1505,9 +1712,6 @@ adb_key_event(int a2code, int is_up)
 
 			/* first key down, set up autorepeat */
 			vbl_count = g_vbl_count;
-			if(g_config_control_panel) {
-				vbl_count = g_cfg_vbl_count;
-			}
 			g_adb_repeat_vbl = vbl_count + g_adb_repeat_delay;
 			if(g_adb_repeat_delay == 0) {
 				g_key_down = 0;
@@ -1556,10 +1760,7 @@ adb_read_c000()
 		}
 	} else {
 		vbl_count = g_vbl_count;
-		if(g_config_control_panel) {
-			vbl_count = g_cfg_vbl_count;
-		}
-		if(g_key_down && vbl_count >= g_adb_repeat_vbl) {
+		if(g_key_down && (vbl_count >= g_adb_repeat_vbl)) {
 			/* repeat the g_key_down */
 			g_c025_val |= 0x8;
 			adb_key_event(g_a2code_down, 0);
@@ -1587,6 +1788,9 @@ adb_access_c010()
 			g_kbd_buf[i - 1] = g_kbd_buf[i];
 		}
 		g_kbd_chars_buffered--;
+		if(g_kbd_chars_buffered == 0) {
+			adb_paste_update_state();
+		}
 	}
 
 	g_c025_val = g_c025_val & (~ (0x08));
@@ -1641,12 +1845,10 @@ adb_increment_speed()
 }
 
 void
-adb_physical_key_update(int a2code, int is_up)
+adb_physical_key_update(Kimage *kimage_ptr, int a2code, int is_up,
+			int shift_down, int ctrl_down, int lock_down)
 {
-	int	autopoll;
-	int	special;
-	int	ascii_and_type;
-	int	ascii;
+	int	autopoll, special, ascii_and_type, ascii;
 
 	/* this routine called by xdriver to pass raw codes--handle */
 	/*  ucontroller and ADB bus protocol issues here */
@@ -1654,8 +1856,6 @@ adb_physical_key_update(int a2code, int is_up)
 	/*  else only put it in kbd reg 3, and pull SRQ if needed */
 
 	adb_printf("adb_phys_key_update: %02x, %d\n", a2code, is_up);
-
-	adb_printf("Handle a2code: %02x, is_up: %d\n", a2code, is_up);
 
 	if(a2code < 0 || a2code > 0x7f) {
 		halt_printf("a2code: %04x!\n", a2code);
@@ -1668,7 +1868,7 @@ adb_physical_key_update(int a2code, int is_up)
 	}
 
 	/* Now check for special keys (function keys, etc) */
-	ascii_and_type = a2_key_to_ascii[a2code][1];
+	ascii_and_type = g_a2_key_to_ascii[a2code][1];
 	special = 0;
 	if((ascii_and_type & 0xf000) == 0x8000) {
 		/* special function key */
@@ -1708,6 +1908,10 @@ adb_physical_key_update(int a2code, int is_up)
 		case 0x04: /* F4 - Emulator config panel */
 			cfg_toggle_config_panel();
 			break;
+		case 0x05: /* F5 - Force Refresh */
+			video_set_x_refresh_needed(&g_mainwin_kimage, 1);
+			printf("Set x_refresh_needed=1\n");
+			break;
 		case 0x06: /* F6 - emulator speed */
 			if(SHIFT_DOWN) {
 				halt2_printf("Shift-F6 pressed\n");
@@ -1715,17 +1919,23 @@ adb_physical_key_update(int a2code, int is_up)
 				adb_increment_speed();
 			}
 			break;
-		case 0x07: /* F7 - fast disk emul */
-			g_fast_disk_emul = !g_fast_disk_emul;
-			printf("g_fast_disk_emul is now %d\n",
+		case 0x07: /* F7 - toggle debugger window, SHIFT:fast disk */
+			if(SHIFT_DOWN) {
+				g_fast_disk_emul = !g_fast_disk_emul;
+				printf("g_fast_disk_emul is now %d\n",
 							g_fast_disk_emul);
+			} else {
+				video_set_active(&g_debugwin_kimage,
+						!g_debugwin_kimage.active);
+				printf("Toggled debugger window to:%d\n",
+						g_debugwin_kimage.active);
+			}
 			break;
 		case 0x08: /* F8 - warp pointer */
 			g_warp_pointer = !g_warp_pointer;
-			if(g_hide_pointer != g_warp_pointer) {
-				g_hide_pointer = g_warp_pointer;
-				x_hide_pointer(g_hide_pointer);
-			}
+			g_hide_pointer = g_warp_pointer;
+			printf("New warp:%d, new hide:%d\n", g_warp_pointer,
+								g_hide_pointer);
 			break;
 		case 0x09: /* F9 - swap paddles */
 			if(SHIFT_DOWN) {
@@ -1738,17 +1948,21 @@ adb_physical_key_update(int a2code, int is_up)
 							g_invert_paddles);
 			}
 			break;
-		case 0x0a: /* F10 - change a2vid paletter */
-			change_a2vid_palette((g_a2vid_palette + 1) & 0xf);
+		case 0x0a: /* F10 - nothing */
 			break;
 		case 0x0b: /* F11 - full screen */
-			g_fullscreen = !g_fullscreen;
-			x_full_screen(g_fullscreen);
 			break;
 		}
 
 		return;
 	}
+
+	if(kimage_ptr == &g_debugwin_kimage) {
+		debugger_key_event(a2code, is_up, shift_down, ctrl_down,
+								lock_down);
+		return;
+	}
+
 	/* Handle Keypad Joystick here partly...if keypad key pressed */
 	/*  while in Keypad Joystick mode, do not pass it on as a key press */
 	if((ascii_and_type & 0xff00) == 0x1000) {
@@ -1811,9 +2025,9 @@ adb_physical_key_update(int a2code, int is_up)
 void
 adb_virtual_key_update(int a2code, int is_up)
 {
-	int	i;
-	int	bitpos;
 	word32	mask;
+	int	bitpos;
+	int	i;
 
 	adb_printf("Virtual handle a2code: %02x, is_up: %d\n", a2code, is_up);
 
@@ -1841,6 +2055,7 @@ adb_virtual_key_update(int a2code, int is_up)
 	}
 }
 
+#if 0
 void
 adb_all_keys_up()
 {
@@ -1857,6 +2072,7 @@ adb_all_keys_up()
 		}
 	}
 }
+#endif
 
 void
 adb_kbd_repeat_off()

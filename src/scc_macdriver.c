@@ -1,14 +1,16 @@
+const char rcsid_scc_macdriver_c[] = "@(#)$KmKId: scc_macdriver.c,v 1.9 2020-09-04 18:35:37+00 kentd Exp $";
+
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002 by Kent Dickey			*/
+/*			Copyright 2002-2020 by Kent Dickey		*/
 /*									*/
-/*		This code is covered by the GNU GPL			*/
+/*	This code is covered by the GNU GPL v3				*/
+/*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
+/*	This program is provided with no warranty			*/
 /*									*/
 /*	The KEGS web page is kegs.sourceforge.net			*/
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
-
-const char rcsid_scc_macdriver_c[] = "@(#)$KmKId: scc_macdriver.c,v 1.5 2004-11-25 13:32:51-05 kentd Exp $";
 
 /* This file contains the Mac serial calls */
 
@@ -41,7 +43,7 @@ scc_serial_mac_init(int port)
 
 	fd = open(&str_buf[0], O_RDWR | O_NONBLOCK);
 
-	scc_ptr->host_handle = (void *)fd;
+	scc_ptr->host_handle = (void *)(long)fd;
 	scc_ptr->host_handle2 = 0;
 
 	printf("scc_serial_mac_init %d called, fd: %d\n", port, fd);
@@ -146,7 +148,7 @@ scc_serial_mac_fill_readbuf(int port, int space_left, double dcycs)
 	}
 
 	/* Try reading some bytes */
-	space_left = MIN(space_left, 256);
+	space_left = MY_MIN(space_left, 256);
 	ret = read(fd, tmp_buf, space_left);
 
 	if(ret > 0) {
@@ -154,7 +156,6 @@ scc_serial_mac_fill_readbuf(int port, int space_left, double dcycs)
 			scc_add_to_readbuf(port, tmp_buf[i], dcycs);
 		}
 	}
-	
 }
 
 void
