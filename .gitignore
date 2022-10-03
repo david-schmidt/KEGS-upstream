@@ -1,0 +1,13 @@
+# Build outputs
+*.o
+src/*.o
+
+# Mac-isms
+.DS_Store
+KEGSMAC.app
+
+# Linux-isms
+xkegs
+
+# Windows-isms
+kegswin.exe
