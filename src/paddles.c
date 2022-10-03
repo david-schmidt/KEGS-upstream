@@ -1,8 +1,8 @@
-const char rcsid_paddles_c[] = "@(#)$KmKId: paddles.c,v 1.16 2020-06-16 22:26:26+00 kentd Exp $";
+const char rcsid_paddles_c[] = "@(#)$KmKId: paddles.c,v 1.18 2021-06-25 02:44:57+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2020 by Kent Dickey		*/
+/*			Copyright 2002-2021 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -107,9 +107,7 @@ paddle_trigger_mouse(double dcycs)
 void
 paddle_trigger_keypad(double dcycs)
 {
-	int	get_y;
-	int	val_x, val_y;
-
+	int	get_y, val_x, val_y;
 
 	val_x = adb_get_keypad_xy(get_y=0);
 	val_y = adb_get_keypad_xy(get_y=1);
@@ -157,7 +155,7 @@ paddle_update_trigger_dcycs(double dcycs)
 				val, val, scale, (val*scale)>>16);
 		}
 #endif
-		val = val * scale >> 16;
+		val = (val * scale) >> 16;
 		/* Val is now from -128 to + 128 since scale is */
 		/*  256=1.0, 128 = 0.5 */
 		val = val + 128 + trim;
@@ -166,6 +164,10 @@ paddle_update_trigger_dcycs(double dcycs)
 		}
 		trig_dcycs = dcycs + (val * 11.04);
 		g_paddle_dcycs[i] = trig_dcycs;
+		if(i < 2) {
+			dbg_log_info(dcycs, (scale << 16) | (val & 0xffff),
+					(trim << 16) | i, 0x70);
+		}
 	}
 }
 

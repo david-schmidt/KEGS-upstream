@@ -1,8 +1,8 @@
-// $KmKId: op_routs.h,v 1.43 2020-09-06 15:48:11+00 kentd Exp $
+// $KmKId: op_routs.h,v 1.45 2021-08-17 00:08:26+00 kentd Exp $
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2020 by Kent Dickey		*/
+/*			Copyright 2002-2021 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -68,8 +68,13 @@
 	}								\
 	GET_MEMORY_DIRECT_PAGE16((direct + arg) & 0xffff, tmp1);	\
 	tmp1 += (dbank << 16);						\
+	arg = (tmp1 & 0xffff00) | ((tmp1 + yreg) & 0xff);		\
+	if(IS_ACC16) {							\
+		CYCLES_PLUS_1;						\
+	} else {							\
+		GET_MEMORY8(arg, tmp2);					\
+	}								\
 	arg = tmp1 + yreg;						\
-	CYCLES_PLUS_1;							\
 	INC_KPC_2;
 
 

@@ -1,8 +1,8 @@
-const char rcsid_smartport_c[] = "@(#)$KmKId: smartport.c,v 1.39 2021-01-16 04:00:19+00 kentd Exp $";
+const char rcsid_smartport_c[] = "@(#)$KmKId: smartport.c,v 1.46 2021-08-17 00:02:08+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2020 by Kent Dickey		*/
+/*			Copyright 2002-2021 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -19,8 +19,6 @@ extern int Halt_on;
 extern int g_rom_version;
 extern int g_io_amt;
 extern int g_highest_smartport_unit;
-
-int g_cycs_in_io_read = 0;
 
 extern Engine_reg engine;
 
@@ -102,34 +100,19 @@ smartport_log(word32 start_addr, int cmd, int rts_addr, int cmd_list)
 void
 do_c70d(word32 arg0)
 {
-	int	cmd;
-	int	cmd_list_lo, cmd_list_mid, cmd_list_hi;
-	int	rts_lo, rts_hi;
-	word32	rts_addr;
-	word32	cmd_list;
-	int	unit;
-	int	param_cnt;
-	int	status_ptr_lo, status_ptr_mid, status_ptr_hi;
-	int	buf_ptr_lo, buf_ptr_hi;
-	int	buf_ptr;
-	int	block_lo, block_mid, block_hi;
-	int	block;
-	word32	status_ptr;
-	int	status_code;
-	int	ctl_ptr_lo, ctl_ptr_hi;
-	int	ctl_ptr;
-	int	ctl_code;
-	int	mask;
-	int	stat_val;
-	int	size;
-	int	ret;
-	int	ext;
+	dword64	dsize;
+	word32	status_ptr, rts_addr, cmd_list,	cmd_list_lo, cmd_list_mid;
+	word32	cmd_list_hi, status_ptr_lo, status_ptr_mid, status_ptr_hi;
+	word32	rts_lo, rts_hi, buf_ptr_lo, buf_ptr_hi, buf_ptr, mask, cmd;
+	word32	block_lo, block_mid, block_hi, block_hi2, unit;
+	word32	ctl_ptr_lo, ctl_ptr_hi, ctl_ptr;
+	int	param_cnt, block, status_code, ctl_code, stat_val, ret, ext;
 	int	i;
 
-	set_memory_c(0x7f8, 0xc7, 0);
+	set_memory_c(0x7f8, 0xc7, 1);
 
 	if((engine.psr & 0x100) == 0) {
-		disk_printf("c70d called in native mode!\n");
+		disk_printf("c70d %02x called in native mode!\n", arg0);
 		if((engine.psr & 0x30) != 0x30) {
 			halt_printf("c70d called native, psr: %03x!\n",
 							engine.psr);
@@ -137,27 +120,27 @@ do_c70d(word32 arg0)
 	}
 
 	engine.stack = ((engine.stack + 1) & 0xff) + 0x100;
-	rts_lo = get_memory_c(engine.stack, 0);
+	rts_lo = get_memory_c(engine.stack);
 	engine.stack = ((engine.stack + 1) & 0xff) + 0x100;
-	rts_hi = get_memory_c(engine.stack, 0);
+	rts_hi = get_memory_c(engine.stack);
 	rts_addr = (rts_lo + (256*rts_hi) + 1) & 0xffff;
 	disk_printf("rts_addr: %04x\n", rts_addr);
 
-	cmd = get_memory_c(rts_addr, 0);
-	cmd_list_lo = get_memory_c((rts_addr + 1) & 0xffff, 0);
-	cmd_list_mid = get_memory_c((rts_addr + 2) & 0xffff, 0);
+	cmd = get_memory_c(rts_addr);
+	cmd_list_lo = get_memory_c((rts_addr + 1) & 0xffff);
+	cmd_list_mid = get_memory_c((rts_addr + 2) & 0xffff);
 	cmd_list_hi = 0;
 	mask = 0xffff;
 	if(cmd & 0x40) {
 		/* extended */
 		mask = 0xffffff;
-		cmd_list_hi = get_memory_c((rts_addr + 3) & 0xffff, 0);
+		cmd_list_hi = get_memory_c((rts_addr + 3) & 0xffff);
 	}
 
 	cmd_list = cmd_list_lo + (256*cmd_list_mid) + (65536*cmd_list_hi);
 
 	disk_printf("cmd: %02x, cmd_list: %06x\n", cmd, cmd_list);
-	param_cnt = get_memory_c(cmd_list, 0);
+	param_cnt = get_memory_c(cmd_list);
 
 	ext = 0;
 	if(cmd & 0x40) {
@@ -172,20 +155,20 @@ do_c70d(word32 arg0)
 			disk_printf("param_cnt %d is != 3!\n", param_cnt);
 			exit(8);
 		}
-		unit = get_memory_c((cmd_list+1) & mask, 0);
-		status_ptr_lo = get_memory_c((cmd_list+2) & mask, 0);
-		status_ptr_mid = get_memory_c((cmd_list+3) & mask, 0);
+		unit = get_memory_c((cmd_list+1) & mask);
+		status_ptr_lo = get_memory_c((cmd_list+2) & mask);
+		status_ptr_mid = get_memory_c((cmd_list+3) & mask);
 		status_ptr_hi = 0;
 		if(cmd & 0x40) {
-			status_ptr_hi = get_memory_c((cmd_list+4) & mask, 0);
+			status_ptr_hi = get_memory_c((cmd_list+4) & mask);
 		}
 
 		status_ptr = status_ptr_lo + (256*status_ptr_mid) +
-			(65536*status_ptr_hi);
+							(65536*status_ptr_hi);
 		if(cmd & 0x40) {
-			status_code = get_memory_c((cmd_list+6) & mask, 0);
+			status_code = get_memory_c((cmd_list+6) & mask);
 		} else {
-			status_code = get_memory_c((cmd_list+4) & mask, 0);
+			status_code = get_memory_c((cmd_list+4) & mask);
 		}
 
 		smartport_log(0, unit, status_ptr, status_code);
@@ -195,11 +178,11 @@ do_c70d(word32 arg0)
 		if(unit == 0 && status_code == 0) {
 			/* Smartport driver status */
 			/* see technotes/smpt/tn-smpt-002 */
-			set_memory_c(status_ptr, g_highest_smartport_unit+1, 0);
-			set_memory_c(status_ptr+1, 0xff, 0); /* interrupt stat*/
-			set_memory16_c(status_ptr+2, 0x0002, 0); /* vendor id */
-			set_memory16_c(status_ptr+4, 0x1000, 0); /* version */
-			set_memory16_c(status_ptr+6, 0x0000, 0);
+			set_memory_c(status_ptr, g_highest_smartport_unit+1, 1);
+			set_memory_c(status_ptr+1, 0xff, 1);	// intrpt stat
+			set_memory16_c(status_ptr+2, 0x0002, 1); // vendor id
+			set_memory16_c(status_ptr+4, 0x1000, 1); // version
+			set_memory16_c(status_ptr+6, 0x0000, 1);
 
 			engine.xreg = 8;
 			engine.yreg = 0;
@@ -212,18 +195,18 @@ do_c70d(word32 arg0)
 			if((unit > MAX_C7_DISKS) ||
 					(g_iwm.smartport[unit-1].fd < 0)) {
 				stat_val = 0x80;
-				size = 0;
+				dsize = 0;
 			} else {
 				stat_val = 0xf8;
-				size = g_iwm.smartport[unit-1].image_size;
-				size = (size+511) / 512;
+				dsize = g_iwm.smartport[unit-1].dimage_size;
+				dsize = (dsize+511) / 512;
 			}
-			set_memory_c(status_ptr, stat_val, 0);
-			set_memory24_c(status_ptr +1, size, 0);
+			set_memory_c(status_ptr, stat_val, 1);
+			set_memory24_c(status_ptr + 1, (word32)dsize);
 			engine.xreg = 4;
 			if(cmd & 0x40) {
 				set_memory_c(status_ptr + 4,
-						(size >> 16) & 0xff, 0);
+						(dsize >> 24) & 0xff, 1);
 				engine.xreg = 5;
 			}
 			engine.yreg = 0;
@@ -237,35 +220,35 @@ do_c70d(word32 arg0)
 			if((unit > MAX_C7_DISKS) ||
 					(g_iwm.smartport[unit-1].fd < 0)) {
 				stat_val = 0x80;
-				size = 0;
+				dsize = 0;
 			} else {
 				stat_val = 0xf8;
-				size = g_iwm.smartport[unit-1].image_size;
-				size = (size+511) / 512;
+				dsize = g_iwm.smartport[unit-1].dimage_size;
+				dsize = (dsize + 511) / 512;
 			}
 			if(cmd & 0x40) {
 				disk_printf("extended for stat_code 3!\n");
 			}
 			/* DIB for unit 1 */
-			set_memory_c(status_ptr, stat_val, 0);
-			set_memory24_c(status_ptr +1, size, 0);
+			set_memory_c(status_ptr, stat_val, 1);
+			set_memory24_c(status_ptr + 1, (word32)dsize);
 			if(cmd & 0x40) {
 				set_memory_c(status_ptr + 4,
-						(size >> 24) & 0xff, 0);
+						(dsize >> 24) & 0xff, 1);
 				status_ptr++;
 			}
-			set_memory_c(status_ptr +4, 4, 0);
+			set_memory_c(status_ptr + 4, 4, 1);
 			for(i = 5; i < 21; i++) {
-				set_memory_c(status_ptr +i, 0x20, 0);
+				set_memory_c(status_ptr + i, 0x20, 1);
 			}
-			set_memory_c(status_ptr +5, 'K', 0);
-			set_memory_c(status_ptr +6, 'E', 0);
-			set_memory_c(status_ptr +7, 'G', 0);
-			set_memory_c(status_ptr +8, 'S', 0);
+			set_memory_c(status_ptr + 5, 'K', 1);
+			set_memory_c(status_ptr + 6, 'E', 1);
+			set_memory_c(status_ptr + 7, 'G', 1);
+			set_memory_c(status_ptr + 8, 'S', 1);
 
 			/* hard disk supporting extended calls */
-			set_memory16_c(status_ptr + 21, 0xa002, 0);
-			set_memory16_c(status_ptr + 23, 0x0000, 0);
+			set_memory16_c(status_ptr + 21, 0xa002, 1);
+			set_memory16_c(status_ptr + 23, 0x0000, 1);
 
 			if(cmd & 0x40) {
 				engine.xreg = 26;
@@ -291,22 +274,27 @@ do_c70d(word32 arg0)
 			halt_printf("param_cnt %d is != 3!\n", param_cnt);
 			return;
 		}
-		unit = get_memory_c((cmd_list+1) & mask, 0);
-		buf_ptr_lo = get_memory_c((cmd_list+2) & mask, 0);
-		buf_ptr_hi = get_memory_c((cmd_list+3) & mask, 0);
+		unit = get_memory_c((cmd_list+1) & mask);
+		buf_ptr_lo = get_memory_c((cmd_list+2) & mask);
+		buf_ptr_hi = get_memory_c((cmd_list+3) & mask);
 
 		buf_ptr = buf_ptr_lo + (256*buf_ptr_hi);
 		if(cmd & 0x40) {
-			buf_ptr_lo = get_memory_c((cmd_list+4) & mask, 0);
-			buf_ptr_hi = get_memory_c((cmd_list+5) & mask, 0);
+			buf_ptr_lo = get_memory_c((cmd_list+4) & mask);
+			buf_ptr_hi = get_memory_c((cmd_list+5) & mask);
 			buf_ptr += ((buf_ptr_hi*256) + buf_ptr_lo)*65536;
 			cmd_list += 2;
 		}
-		block_lo = get_memory_c((cmd_list+4) & mask, 0);
-		block_mid = get_memory_c((cmd_list+5) & mask, 0);
-		block_hi = get_memory_c((cmd_list+6) & mask, 0);
-		block = ((block_hi*256) + block_mid)*256 + block_lo;
-		disk_printf("smartport read unit %d of block %04x into %04x\n",
+		block_lo = get_memory_c((cmd_list+4) & mask);
+		block_mid = get_memory_c((cmd_list+5) & mask);
+		block_hi = get_memory_c((cmd_list+6) & mask);
+		block_hi2 = 0;
+		if(cmd & 0x40) {
+			block_hi2 = get_memory_c((cmd_list+7) & mask);
+		}
+		block = (block_hi2 << 24) | (block_hi << 16) |
+					(block_mid << 8) | block_lo;
+		disk_printf("smartport read unit %d of block %06x to %06x\n",
 			unit, block, buf_ptr);
 		if(unit < 1 || unit > MAX_C7_DISKS) {
 			halt_printf("Unknown unit #: %d\n", unit);
@@ -331,21 +319,26 @@ do_c70d(word32 arg0)
 			halt_printf("param_cnt %d is != 3!\n", param_cnt);
 			return;
 		}
-		unit = get_memory_c((cmd_list+1) & mask, 0);
-		buf_ptr_lo = get_memory_c((cmd_list+2) & mask, 0);
-		buf_ptr_hi = get_memory_c((cmd_list+3) & mask, 0);
+		unit = get_memory_c((cmd_list+1) & mask);
+		buf_ptr_lo = get_memory_c((cmd_list+2) & mask);
+		buf_ptr_hi = get_memory_c((cmd_list+3) & mask);
 
 		buf_ptr = buf_ptr_lo + (256*buf_ptr_hi);
 		if(cmd & 0x40) {
-			buf_ptr_lo = get_memory_c((cmd_list+4) & mask, 0);
-			buf_ptr_hi = get_memory_c((cmd_list+5) & mask, 0);
+			buf_ptr_lo = get_memory_c((cmd_list+4) & mask);
+			buf_ptr_hi = get_memory_c((cmd_list+5) & mask);
 			buf_ptr += ((buf_ptr_hi*256) + buf_ptr_lo)*65536;
 			cmd_list += 2;
 		}
-		block_lo = get_memory_c((cmd_list+4) & mask, 0);
-		block_mid = get_memory_c((cmd_list+5) & mask, 0);
-		block_hi = get_memory_c((cmd_list+6) & mask, 0);
-		block = ((block_hi*256) + block_mid)*256 + block_lo;
+		block_lo = get_memory_c((cmd_list+4) & mask);
+		block_mid = get_memory_c((cmd_list+5) & mask);
+		block_hi = get_memory_c((cmd_list+6) & mask);
+		block_hi2 = 0;
+		if(cmd & 0x40) {
+			block_hi2 = get_memory_c((cmd_list+7) & mask);
+		}
+		block = (block_hi2 << 24) | (block_hi << 16) |
+					(block_mid << 8) | block_lo;
 		disk_printf("smartport write unit %d of block %04x from %04x\n",
 			unit, block, buf_ptr);
 		if(unit < 1 || unit > MAX_C7_DISKS) {
@@ -372,9 +365,9 @@ do_c70d(word32 arg0)
 			halt_printf("param_cnt %d is != 1!\n", param_cnt);
 			return;
 		}
-		unit = get_memory_c((cmd_list+1) & mask, 0);
+		unit = get_memory_c((cmd_list+1) & mask);
 
-		if(unit < 1 || unit > MAX_C7_DISKS) {
+		if((unit < 1) || (unit > MAX_C7_DISKS)) {
 			halt_printf("Unknown unit #: %d\n", unit);
 		}
 
@@ -401,18 +394,18 @@ do_c70d(word32 arg0)
 			halt_printf("param_cnt %d is != 3!\n", param_cnt);
 			return;
 		}
-		unit = get_memory_c((cmd_list+1) & mask, 0);
-		ctl_ptr_lo = get_memory_c((cmd_list+2) & mask, 0);
-		ctl_ptr_hi = get_memory_c((cmd_list+3) & mask, 0);
+		unit = get_memory_c((cmd_list+1) & mask);
+		ctl_ptr_lo = get_memory_c((cmd_list+2) & mask);
+		ctl_ptr_hi = get_memory_c((cmd_list+3) & mask);
 		ctl_ptr = (ctl_ptr_hi << 8) + ctl_ptr_lo;
 		if(cmd & 0x40) {
-			ctl_ptr_lo = get_memory_c((cmd_list+4) & mask, 0);
-			ctl_ptr_hi = get_memory_c((cmd_list+5) & mask, 0);
+			ctl_ptr_lo = get_memory_c((cmd_list+4) & mask);
+			ctl_ptr_hi = get_memory_c((cmd_list+5) & mask);
 			ctl_ptr += ((ctl_ptr_hi << 8) + ctl_ptr_lo) << 16;
 			cmd_list += 2;
 		}
 
-		ctl_code = get_memory_c((cmd_list +4) & mask, 0);
+		ctl_code = get_memory_c((cmd_list +4) & mask);
 
 		switch(ctl_code) {
 		case 0x00:
@@ -452,27 +445,24 @@ do_c70d(word32 arg0)
 void
 do_c70a(word32 arg0)
 {
-	int	cmd, unit;
-	int	buf_lo, buf_hi;
-	int	blk_lo, blk_hi;
-	int	blk, buf;
-	int	prodos_unit;
-	int	size;
+	dword64	dsize;
+	word32	cmd, unit, buf_lo, buf_hi, blk_lo, blk_hi, blk, buf;
+	word32	prodos_unit;
 	int	ret;
 
-	set_memory_c(0x7f8, 0xc7, 0);
+	set_memory_c(0x7f8, 0xc7, 1);
 
-	cmd = get_memory_c((engine.direct + 0x42) & 0xffff, 0);
-	prodos_unit = get_memory_c((engine.direct + 0x43) & 0xffff, 0);
-	buf_lo = get_memory_c((engine.direct + 0x44) & 0xffff, 0);
-	buf_hi = get_memory_c((engine.direct + 0x45) & 0xffff, 0);
-	blk_lo = get_memory_c((engine.direct + 0x46) & 0xffff, 0);
-	blk_hi = get_memory_c((engine.direct + 0x47) & 0xffff, 0);
+	cmd = get_memory_c((engine.direct + 0x42) & 0xffff);
+	prodos_unit = get_memory_c((engine.direct + 0x43) & 0xffff);
+	buf_lo = get_memory_c((engine.direct + 0x44) & 0xffff);
+	buf_hi = get_memory_c((engine.direct + 0x45) & 0xffff);
+	blk_lo = get_memory_c((engine.direct + 0x46) & 0xffff);
+	blk_hi = get_memory_c((engine.direct + 0x47) & 0xffff);
 
 	blk = (blk_hi << 8) + blk_lo;
 	buf = (buf_hi << 8) + buf_lo;
-	disk_printf("cmd: %02x, pro_unit: %02x, buf: %04x, blk: %04x\n",
-		cmd, prodos_unit, buf, blk);
+	disk_printf("c70a %02x cmd:%02x, pro_unit:%02x, buf:%04x, blk:%04x\n",
+		arg0, cmd, prodos_unit, buf, blk);
 
 	if((prodos_unit & 0x7f) == 0x70) {
 		unit = 0 + (prodos_unit >> 7);
@@ -494,14 +484,14 @@ do_c70a(word32 arg0)
 
 	ret = 0x27;	/* I/O error */
 	if(cmd == 0x00) {
-		size = g_iwm.smartport[unit].image_size;
-		size = (size+511) / 512;
+		dsize = g_iwm.smartport[unit].dimage_size;
+		dsize = (dsize + 511) / 512;
 
-		smartport_log(0, unit, size, 0);
+		smartport_log(0, unit, dsize, 0);
 
 		ret = 0;
-		engine.xreg = size & 0xff;
-		engine.yreg = size >> 8;
+		engine.xreg = dsize & 0xff;
+		engine.yreg = dsize >> 8;
 	} else if(cmd == 0x01) {
 		smartport_log(0, unit, buf, blk);
 		ret = do_read_c7(unit, buf, blk);
@@ -521,19 +511,17 @@ do_c70a(word32 arg0)
 }
 
 int
-do_read_c7(int unit_num, word32 buf, int blk)
+do_read_c7(int unit_num, word32 buf, word32 blk)
 {
 	byte	local_buf[0x200];
 	Disk	*dsk;
 	byte	*bptr;
-	register word32 start_time;
-	register word32 end_time;
-	long	image_start, image_size, ret;
+	dword64	dimage_start, dimage_size, dret;
 	word32	val;
 	int	len, fd;
 	int	i;
 
-	if(unit_num < 0 || unit_num > MAX_C7_DISKS) {
+	if((unit_num < 0) || (unit_num > MAX_C7_DISKS)) {
 		halt_printf("do_read_c7: unit_num: %d\n", unit_num);
 		smartport_error();
 		return 0x28;
@@ -541,8 +529,8 @@ do_read_c7(int unit_num, word32 buf, int blk)
 
 	dsk = &(g_iwm.smartport[unit_num]);
 	fd = dsk->fd;
-	image_start = dsk->image_start;
-	image_size = dsk->image_size;
+	dimage_start = dsk->dimage_start;
+	dimage_size = dsk->dimage_size;
 	if(fd < 0) {
 		printf("c7_fd == %d!\n", fd);
 #if 0
@@ -554,23 +542,24 @@ do_read_c7(int unit_num, word32 buf, int blk)
 #endif
 		return 0x2f;
 	}
-	if(((blk + 1) * 0x200) > (image_start + image_size)) {
-		halt_printf("Tried to read past %08lx on disk (blk:%04x)\n",
-			image_start + image_size, blk);
+	if(((blk + 1) * 0x200LL) > (dimage_start + dimage_size)) {
+		halt_printf("Tried to read past %08llx on disk (blk:%04x)\n",
+			dimage_start + dimage_size, blk);
 		smartport_error();
 		return 0x27;
 	}
 
-	if(fd == 0) {
+	if(dsk->raw_data) {
 		// image was compressed and is in dsk->raw_data
-		bptr = dsk->raw_data + image_start + (blk*0x200);
+		bptr = dsk->raw_data + dimage_start + (blk*0x200ULL);
 		for(i = 0; i < 0x200; i++) {
 			local_buf[i] = bptr[i];
 		}
 	} else {
-		ret = lseek(fd, image_start + blk*0x200, SEEK_SET);
-		if(ret != (image_start + blk*0x200)) {
-			halt_printf("lseek ret %08lx, errno: %d\n", ret, errno);
+		dret = lseek(fd, dimage_start + blk*0x200ULL, SEEK_SET);
+		if(dret != (dimage_start + blk*0x200ULL)) {
+			halt_printf("lseek ret %08llx, errno:%d\n", dret,
+									errno);
 			smartport_error();
 			return 0x27;
 		}
@@ -592,26 +581,20 @@ do_read_c7(int unit_num, word32 buf, int blk)
 		return 0;
 	}
 
-	GET_ITIMER(start_time);
-
 	for(i = 0; i < 0x200; i += 2) {
 		val = (local_buf[i+1] << 8) + local_buf[i];
 		set_memory16_c(buf + i, val, 0);
 	}
 
-	GET_ITIMER(end_time);
-
-	g_cycs_in_io_read += (end_time - start_time);
-
 	return 0;
 }
 
 int
-do_write_c7(int unit_num, word32 buf, int blk)
+do_write_c7(int unit_num, word32 buf, word32 blk)
 {
 	byte	local_buf[0x200];
 	Disk	*dsk;
-	long	ret, image_start, image_size;
+	dword64	dret, dimage_start, dimage_size;
 	int	len, fd;
 	int	i;
 
@@ -623,8 +606,8 @@ do_write_c7(int unit_num, word32 buf, int blk)
 
 	dsk = &(g_iwm.smartport[unit_num]);
 	fd = dsk->fd;
-	image_start = dsk->image_start;
-	image_size = dsk->image_size;
+	dimage_start = dsk->dimage_start;
+	dimage_size = dsk->dimage_size;
 	if(fd < 0) {
 		halt_printf("c7_fd == %d!\n", fd);
 		smartport_error();
@@ -632,10 +615,10 @@ do_write_c7(int unit_num, word32 buf, int blk)
 	}
 
 	for(i = 0; i < 0x200; i++) {
-		local_buf[i] = get_memory_c(buf + i, 0);
+		local_buf[i] = get_memory_c(buf + i);
 	}
 
-	if(dsk->write_prot || dsk->raw_data) {
+	if(dsk->write_prot || (dsk->raw_data && !dsk->dynapro_info_ptr)) {
 		printf("Write, but %s is write protected!\n", dsk->name_ptr);
 		return 0x2b;
 	}
@@ -645,24 +628,30 @@ do_write_c7(int unit_num, word32 buf, int blk)
 		return 0x00;
 	}
 
-	ret = lseek(fd, image_start + blk*0x200, SEEK_SET);
-	if(ret != (image_start + blk*0x200)) {
-		halt_printf("lseek returned %08x, errno: %d\n", ret, errno);
-		smartport_error();
-		return 0x27;
-	}
+	if(dsk->dynapro_info_ptr) {
+		dynapro_write(dsk, &local_buf[0], blk*0x200UL, 0x200);
+	} else {
+		dret = lseek(fd, dimage_start + blk*0x200ULL, SEEK_SET);
+		if(dret != (dimage_start + blk*0x200ULL)) {
+			halt_printf("lseek returned %08llx, errno: %d\n", dret,
+								errno);
+			smartport_error();
+			return 0x27;
+		}
 
-	if(ret >= (image_start + image_size)) {
-		halt_printf("Tried to write to %08x\n", ret);
-		smartport_error();
-		return 0x27;
-	}
+		if(dret >= (dimage_start + dimage_size)) {
+			halt_printf("Tried to write to %08llx\n", dret);
+			smartport_error();
+			return 0x27;
+		}
 
-	len = (int)write(fd, &local_buf[0], 0x200);
-	if(len != 0x200) {
-		halt_printf("write ret %08x bytes, errno: %d\n", len, errno);
-		smartport_error();
-		return 0x27;
+		len = (int)write(fd, &local_buf[0], 0x200);
+		if(len != 0x200) {
+			halt_printf("write ret %08x bytes, errno: %d\n", len,
+									errno);
+			smartport_error();
+			return 0x27;
+		}
 	}
 
 	g_io_amt += 0x200;
@@ -675,7 +664,7 @@ do_format_c7(int unit_num)
 {
 	byte	local_buf[0x1000];
 	Disk	*dsk;
-	long	image_start, image_size, ret, total, sum;
+	dword64	dimage_start, dimage_size, dret, dtotal, dsum;
 	int	len, max, fd;
 	int	i;
 
@@ -687,15 +676,15 @@ do_format_c7(int unit_num)
 
 	dsk = &(g_iwm.smartport[unit_num]);
 	fd = dsk->fd;
-	image_start = dsk->image_start;
-	image_size = dsk->image_size;
+	dimage_start = dsk->dimage_start;
+	dimage_size = dsk->dimage_size;
 	if(fd < 0) {
 		halt_printf("c7_fd == %d!\n", fd);
 		smartport_error();
 		return 0x28;
 	}
 
-	if(dsk->write_prot || dsk->raw_data) {
+	if(dsk->write_prot || (dsk->raw_data && !dsk->dynapro_info_ptr)) {
 		printf("Format, but %s is write protected!\n", dsk->name_ptr);
 		return 0x2b;
 	}
@@ -709,30 +698,37 @@ do_format_c7(int unit_num)
 		local_buf[i] = 0;
 	}
 
-	ret = lseek(fd, image_start, SEEK_SET);
-	if(ret != image_start) {
-		halt_printf("lseek returned %08lx, errno: %d\n", ret, errno);
-		smartport_error();
-		return 0x27;
+	if(!dsk->dynapro_info_ptr) {
+		dret = lseek(fd, dimage_start, SEEK_SET);
+		if(dret != dimage_start) {
+			halt_printf("lseek returned %08llx, errno: %d\n", dret,
+									errno);
+			smartport_error();
+			return 0x27;
+		}
 	}
 
-	sum = 0;
-	total = image_size;
+	dsum = 0;
+	dtotal = dimage_size;
 
-	while(sum < total) {
-		max = (int)MY_MIN(0x1000, total-sum);
-		len = (int)write(fd, &local_buf[0], max);
+	while(dsum < dtotal) {
+		max = (int)MY_MIN(0x10000, dtotal - dsum);
+		if(dsk->dynapro_info_ptr) {
+			dynapro_write(dsk, &local_buf[0], dsum, max);
+			len = max;
+		} else {
+			len = (int)write(fd, &local_buf[0], max);
+		}
 		if(len != max) {
 			halt_printf("write ret %08x, errno:%d\n", len, errno);
 			smartport_error();
 			return 0x27;
 		}
-		sum += len;
+		dsum += len;
 	}
 
 	return 0;
 }
-
 
 void
 do_c700(word32 ret)
@@ -741,16 +737,16 @@ do_c700(word32 ret)
 
 	ret = do_read_c7(0, 0x800, 0);
 
-	set_memory_c(0x7f8, 7, 0);
-	set_memory16_c(0x42, 0x7001, 0);
-	set_memory16_c(0x44, 0x0800, 0);
-	set_memory16_c(0x46, 0x0000, 0);
+	set_memory_c(0x7f8, 7, 1);
+	set_memory16_c(0x42, 0x7001, 1);
+	set_memory16_c(0x44, 0x0800, 1);
+	set_memory16_c(0x46, 0x0000, 1);
 	engine.xreg = 0x70;
 	engine.kpc = 0x801;
 
 	if(ret != 0) {
 		printf("Failure reading boot disk in s7d1!\n");
-		engine.kpc = 0xff59;	/* Jump to monitor, fix $36-$39 */
+		engine.kpc = 0xc500;		// Try to boot slot 5
 	}
 }
 

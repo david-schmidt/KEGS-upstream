@@ -1,8 +1,8 @@
-const char rcsid_scc_socket_driver_c[] = "@(#)$KmKId: scc_socket_driver.c,v 1.19 2020-09-04 18:35:37+00 kentd Exp $";
+const char rcsid_scc_socket_driver_c[] = "@(#)$KmKId: scc_socket_driver.c,v 1.21 2021-08-17 00:08:26+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2020 by Kent Dickey		*/
+/*			Copyright 2002-2021 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -75,7 +75,7 @@ scc_socket_maybe_open_incoming(int port, double dcycs)
 
 	scc_ptr = &(scc_stat[port]);
 
-	if(scc_ptr->sockfd != -1) {
+	if(scc_ptr->sockfd != (SOCKET)-1) {
 		/* it's already open, get out */
 		return;
 	}
@@ -95,7 +95,7 @@ scc_socket_maybe_open_incoming(int port, double dcycs)
 	while(1) {
 		sockfd = socket(AF_INET, SOCK_STREAM, 0);
 		printf("sockfd ret: %d\n", sockfd);
-		if(sockfd == -1) {
+		if(sockfd == (SOCKET)-1) {
 			printf("socket ret: %d, errno: %d\n", sockfd, errno);
 			scc_socket_close(port, 0, dcycs);
 			scc_ptr->socket_state = -1;
@@ -168,7 +168,7 @@ scc_socket_open_outgoing(int port, double dcycs)
 
 	sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	printf("sockfd ret: %d\n", sockfd);
-	if(sockfd == -1) {
+	if(sockfd == (SOCKET)-1) {
 		printf("socket ret: %d, errno: %d\n", sockfd, errno);
 		scc_socket_close(port, 1, dcycs);
 		return;
@@ -270,11 +270,6 @@ scc_socket_make_nonblock(int port, double dcycs)
 }
 
 void
-scc_socket_change_params(int port)
-{
-}
-
-void
 scc_socket_close(int port, int full_close, double dcycs)
 {
 	Scc	*scc_ptr;
@@ -292,7 +287,7 @@ scc_socket_close(int port, int full_close, double dcycs)
 		close(rdwrfd);
 	}
 	sockfd = scc_ptr->sockfd;
-	if(sockfd != -1) {
+	if(sockfd != (SOCKET)-1) {
 		printf("socket_close: sockfd=%d, closing\n", sockfd);
 		close(sockfd);
 	}
@@ -338,11 +333,11 @@ scc_accept_socket(int port, double dcycs)
 
 	scc_ptr = &(scc_stat[port]);
 
-	if(scc_ptr->sockfd == -1) {
+	if(scc_ptr->sockfd == (SOCKET)-1) {
 		printf("in accept_socket, call socket_open\n");
 		scc_socket_maybe_open_incoming(port, dcycs);
 	}
-	if(scc_ptr->sockfd == -1) {
+	if(scc_ptr->sockfd == (SOCKET)-1) {
 		return;		/* just give up */
 	}
 	if(scc_ptr->rdwrfd == -1) {
@@ -391,7 +386,7 @@ scc_accept_socket(int port, double dcycs)
 }
 
 void
-scc_socket_telnet_reqs(int port, double dcycs)
+scc_socket_telnet_reqs(int port)
 {
 	Scc	*scc_ptr;
 	word32	mask, willmask, domask;
@@ -404,16 +399,16 @@ scc_socket_telnet_reqs(int port, double dcycs)
 		willmask = scc_ptr->telnet_reqwill_mode[j];
 		if(willmask & mask) {
 			printf("Telnet reqwill %d\n", i);
-			scc_add_to_writebuf(port, 0xff, dcycs);
-			scc_add_to_writebuf(port, 0xfb, dcycs);	/* WILL */
-			scc_add_to_writebuf(port, i, dcycs);
+			scc_add_to_writebuf(port, 0xff);
+			scc_add_to_writebuf(port, 0xfb);	/* WILL */
+			scc_add_to_writebuf(port, i);
 		}
 		domask = scc_ptr->telnet_reqdo_mode[j];
 		if(domask & mask) {
 			printf("Telnet reqdo %d\n", i);
-			scc_add_to_writebuf(port, 0xff, dcycs);
-			scc_add_to_writebuf(port, 0xfd, dcycs);	/* DO */
-			scc_add_to_writebuf(port, i, dcycs);
+			scc_add_to_writebuf(port, 0xff);
+			scc_add_to_writebuf(port, 0xfd);	/* DO */
+			scc_add_to_writebuf(port, i);
 		}
 	}
 }
@@ -585,9 +580,9 @@ scc_socket_recvd_char(int port, int c, double dcycs)
 		if(locmask && (reqwillmask == 0)) {
 			/* it's a mode change */
 			/* always OK to turn off a mode that we had on */
-			scc_add_to_writebuf(port, 0xff, dcycs);
-			scc_add_to_writebuf(port, 0xfc, dcycs);	/* WON'T */
-			scc_add_to_writebuf(port, c, dcycs);
+			scc_add_to_writebuf(port, 0xff);
+			scc_add_to_writebuf(port, 0xfc);	/* WON'T */
+			scc_add_to_writebuf(port, c);
 		}
 		scc_ptr->telnet_local_mode[cpos] &= ~mask;
 		scc_ptr->telnet_reqwill_mode[cpos] &= ~mask;
@@ -601,9 +596,9 @@ scc_socket_recvd_char(int port, int c, double dcycs)
 			if(c == 0x03 || c == 0x01) {
 				reply = 0xfb;	/* Ack with WILL */
 			}
-			scc_add_to_writebuf(port, 0xff, dcycs);
-			scc_add_to_writebuf(port, reply, dcycs);
-			scc_add_to_writebuf(port, c, dcycs);
+			scc_add_to_writebuf(port, 0xff);
+			scc_add_to_writebuf(port, reply);
+			scc_add_to_writebuf(port, c);
 		}
 		if(reqwillmask || (reply == 0xfb)) {
 			scc_ptr->telnet_local_mode[cpos] |= mask;
@@ -614,9 +609,9 @@ scc_socket_recvd_char(int port, int c, double dcycs)
 	case 0xfc:	/* previous char was "WON'T" */
 		if(remmask && (reqdomask == 0)) {
 			/* it's a mode change, ack with DON'T */
-			scc_add_to_writebuf(port, 0xff, dcycs);
-			scc_add_to_writebuf(port, 0xfe, dcycs);	/* DON'T */
-			scc_add_to_writebuf(port, c, dcycs);
+			scc_add_to_writebuf(port, 0xff);
+			scc_add_to_writebuf(port, 0xfe);	/* DON'T */
+			scc_add_to_writebuf(port, c);
 		}
 		scc_ptr->telnet_remote_mode[cpos] &= ~mask;
 		scc_ptr->telnet_reqdo_mode[cpos] &= ~mask;
@@ -629,9 +624,9 @@ scc_socket_recvd_char(int port, int c, double dcycs)
 			if(c == 0x03 || c == 0x01) {
 				reply = 0xfd;	/* Ack with DO */
 			}
-			scc_add_to_writebuf(port, 0xff, dcycs);
-			scc_add_to_writebuf(port, reply, dcycs);
-			scc_add_to_writebuf(port, c, dcycs);
+			scc_add_to_writebuf(port, 0xff);
+			scc_add_to_writebuf(port, reply);
+			scc_add_to_writebuf(port, c);
 		}
 		if(reqdomask || (reply == 0xfd)) {
 			scc_ptr->telnet_remote_mode[cpos] |= mask;
@@ -787,13 +782,11 @@ scc_socket_modem_write(int port, int c, double dcycs)
 	Scc	*scc_ptr;
 	char	*str;
 	word32	modem_mode;
-	int	do_echo;
-	int	got_at;
-	int	len;
+	int	do_echo, got_at, len;
 
 	scc_ptr = &(scc_stat[port]);
 
-	if(scc_ptr->sockfd == -1) {
+	if(scc_ptr->sockfd == (SOCKET)-1) {
 		scc_ptr->socket_state = 0;
 		scc_socket_maybe_open_incoming(port, dcycs);
 	}
@@ -1141,7 +1134,7 @@ scc_socket_do_answer(int port, double dcycs)
 		/* send NO CARRIER message */
 	} else {
 		scc_ptr->socket_state = 1;
-		scc_socket_telnet_reqs(port, dcycs);
+		scc_socket_telnet_reqs(port);
 		printf("Send telnet reqs, rdwrfd=%d\n", scc_ptr->rdwrfd);
 		if(g_serial_modem[port]) {
 			scc_socket_modem_connect(port, dcycs);

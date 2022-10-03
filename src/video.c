@@ -1,4 +1,4 @@
-const char rcsid_video_c[] = "@(#)$KmKId: video.c,v 1.174 2021-01-23 22:46:19+00 kentd Exp $";
+const char rcsid_video_c[] = "@(#)$KmKId: video.c,v 1.180 2021-08-19 03:37:51+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -424,17 +424,16 @@ video_init(int mdepth)
 		g_pixels_widened[i] = val1;
 	}
 
-	prepare_a2_font();
-
 	g_new_a2_stat_cur_line = 0;
 
-	vid_printf("Zeroing out video memory\n");
+	vid_printf("Zeroing out video memory, mdepth:%d\n", mdepth);
 
 	for(i = 0; i < SLOW_MEM_CH_SIZE; i++) {
 		slow_mem_changed[i] = (word32)-1;
 	}
 
 	/* create g_dhires_convert[] array */
+	// Look at patent #4786893 for details on VGC and dhr
 	for(i = 0; i < 4096; i++) {
 		/* Convert index bits 11:0 where 3:0 is the previous color */
 		/*  and 7:4 is the current color to translate */
@@ -671,7 +670,8 @@ change_display_mode(double dcycs)
 	}
 	tmp_line = MY_MIN(199, line);
 
-	dbg_log_info(dcycs, (g_cur_a2_stat << 12) | (line & 0xfff), 2);
+	dbg_log_info(dcycs, ((word32)g_cur_a2_stat << 12) | (line & 0xfff), 0,
+									0x102);
 
 	video_update_all_stat_through_line(tmp_line);
 
@@ -1215,7 +1215,7 @@ redraw_changed_gr(int start_offset, int start_line, int reparse,
 
 void
 video_hgr_line_segment(byte *slow_mem_ptr, word32 *wptr, int x1,
-		int monochrome, int dbl, int pixels_per_line, int st_line)
+		int monochrome, int dbl, int pixels_per_line)
 {
 	word32	val0, val1, val2, prev_bits, val1_hi, dbl_step, pixel, color;
 	int	shift_per, shift;
@@ -1352,7 +1352,7 @@ redraw_changed_hgr(int start_offset, int start_line, int reparse,
 
 		wptr = in_wptr + offset;
 		video_hgr_line_segment(slow_mem_ptr, wptr, x1, monochrome,
-					dbl, pixels_per_line, st_line);
+							dbl, pixels_per_line);
 	}
 	g_a2_line_left_edge[st_line] = (left*14);
 	g_a2_line_right_edge[st_line] = (right*14);
@@ -1524,8 +1524,8 @@ redraw_changed_super_hires_oneline(word32 *in_wptr, int pixels_per_line,
 }
 
 void
-redraw_changed_super_hires(int start_offset, int start_line, int reparse,
-	word32 *wptr, int pixels_per_line)
+redraw_changed_super_hires(int start_line, int reparse, word32 *wptr,
+						int pixels_per_line)
 {
 	word32	*ch_ptr;
 	word32	mask_per_line, check0, check1, mask0, mask1;
@@ -1672,7 +1672,7 @@ video_update_through_line(int line)
 					must_reparse = 1;
 					g_mode_line[i] = new_stat;
 				}
-				mask = 1 << (line >> 3);
+				mask = 1 << (i >> 3);
 				g_full_refresh_needed |= mask;
 				g_a2_screen_buffer_changed |= mask;
 			}
@@ -1760,7 +1760,7 @@ video_refresh_line(int line, int must_reparse)
 		break;
 	case MODE_SUPER_HIRES:
 		g_num_lines_superhires++;
-		redraw_changed_super_hires(0, line, must_reparse, wptr,
+		redraw_changed_super_hires(line, must_reparse, wptr,
 							pixels_per_line);
 		break;
 	case MODE_BORDER:
@@ -1805,6 +1805,32 @@ prepare_a2_font()
 					val2 |= 3;
 				}
 				val0 = val0 >> 1;
+			}
+			g_a2font_bits[i][j] = (val2 << 8) | val1;
+		}
+	}
+}
+
+void
+prepare_a2_romx_font(byte *font_ptr)
+{
+	word32	val0, val1, val2;
+	int	i, j, k;
+
+	// ROMX file
+	for(i = 0; i < 256; i++) {
+		for(j = 0; j < 8; j++) {
+			val0 = font_ptr[i*8 + j];
+			val1 = 0;		// 80-column bits
+			val2 = 0;		// 40-column bits (doubled)
+			for(k = 0; k < 7; k++) {
+				val1 = val1 << 1;
+				val2 = val2 << 2;
+				if((val0 & 0x40) == 0) {
+					val1 |= 1;
+					val2 |= 3;
+				}
+				val0 = val0 << 1;
 			}
 			g_a2font_bits[i][j] = (val2 << 8) | val1;
 		}

@@ -1,8 +1,8 @@
-const char rcsid_sound_driver_c[] = "@(#)$KmKId: sound_driver.c,v 1.27 2020-12-12 18:44:07+00 kentd Exp $";
+const char rcsid_sound_driver_c[] = "@(#)$KmKId: sound_driver.c,v 1.29 2021-08-17 00:08:36+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2020 by Kent Dickey		*/
+/*			Copyright 2002-2021 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -212,6 +212,9 @@ sound_child_fork(int size)
 
 	parent_sound_get_sample_rate(g_pipe2_fd[0]);
 #endif
+	if(size) {
+		// Avoid unused param warning
+	}
 }
 
 void
@@ -433,7 +436,7 @@ child_sound_loop(int read_fd, int write_fd, word32 *shm_addr)
 	word32	tmp, did_init;
 	int	ret, ret1, ret2;
 
-	doc_printf("Child pipe fd: %d\n", read_fd);
+	doc_printf("Child pipe fd: %d, shm_addr:%p\n", read_fd, shm_addr);
 
 	g_audio_rate = g_preferred_rate;
 

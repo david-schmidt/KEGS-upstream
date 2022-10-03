@@ -1,4 +1,4 @@
-const char rcsid_moremem_c[] = "@(#)$KmKId: moremem.c,v 1.263 2021-01-11 06:51:57+00 kentd Exp $";
+const char rcsid_moremem_c[] = "@(#)$KmKId: moremem.c,v 1.272 2021-08-17 00:01:39+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -55,7 +55,7 @@ int	g_c033_data = 0;
 int	g_c034_val = 0;
 int	g_c035_shadow_reg = 0x08;
 int	g_c036_val_speed = 0x80;
-int	g_c03ef_doc_ptr = 0;
+word32	g_c03ef_doc_ptr = 0;
 int	g_c041_val = 0;		/* C041_EN_25SEC_INTS, C041_EN_MOVE_INTS */
 int	g_c046_val = 0;
 int	g_c05x_annuncs = 0;
@@ -94,7 +94,6 @@ Emustate_intlist g_emustate_intlist[] = {
 	EMUSTATE(g_c034_val),
 	EMUSTATE(g_c035_shadow_reg),
 	EMUSTATE(g_c036_val_speed),
-	EMUSTATE(g_c03ef_doc_ptr),
 	EMUSTATE(g_c041_val),
 	EMUSTATE(g_c046_val),
 	EMUSTATE(g_c05x_annuncs),
@@ -121,6 +120,7 @@ extern word32 g_mem_size_total;
 
 Emustate_word32list g_emustate_word32list[] = {
 	EMUSTATE(g_mem_size_total),
+	EMUSTATE(g_c03ef_doc_ptr),
 	{ 0, 0, }
 };
 
@@ -557,7 +557,7 @@ fixup_ramwrt()
 		shadow = BANK_SHADOW2;
 	}
 	if( ((g_c035_shadow_reg & 0x20) != 0) ||
-				((g_rom_version < 3) && !g_user_page2_shadow)) {
+			((g_rom_version == 1) && !g_user_page2_shadow)) {
 		shadow = 0;
 	}
 	for(j = 8; j < 0x0c; j++) {
@@ -679,6 +679,8 @@ set_statereg(double dcycs, int val)
 {
 	int	xor;
 
+	dbg_log_info(dcycs, val, g_c068_statereg, 0x68);
+
 	xor = val ^ g_c068_statereg;
 	g_c068_statereg = val;
 	if(xor == 0) {
@@ -762,7 +764,7 @@ fixup_shadow_txt2()
 		shadow = BANK_SHADOW2;
 	}
 	if(((g_c035_shadow_reg & 0x20) == 0) &&
-			((g_rom_version >= 3) || g_user_page2_shadow)) {
+			((g_rom_version != 1) || g_user_page2_shadow)) {
 		mem0wr += shadow;
 	}
 	for(j = 8; j < 0xc; j++) {
@@ -772,7 +774,7 @@ fixup_shadow_txt2()
 	/* and bank 1 */
 	mem0wr = &(g_memory_ptr[0x10000]);
 	if(((g_c035_shadow_reg & 0x20) == 0) &&
-			((g_rom_version >= 3) || g_user_page2_shadow)) {
+			((g_rom_version != 1) || g_user_page2_shadow)) {
 		mem0wr += BANK_SHADOW2;
 	}
 	for(j = 8; j < 0xc; j++) {
@@ -924,7 +926,7 @@ update_shadow_reg(int val)
 	if(xor & 1) {
 		fixup_shadow_txt1();
 	}
-	if((xor & 0x20) && ((g_rom_version >= 3) || g_user_page2_shadow)) {
+	if((xor & 0x20) && ((g_rom_version != 1) || g_user_page2_shadow)) {
 		fixup_shadow_txt2();
 	}
 	if(xor & 0x40) {
@@ -1080,6 +1082,17 @@ show_addr(byte *ptr)
 	}
 }
 
+word32
+moremem_fix_vector_pull(word32 addr)
+{
+	// Default vector for BRK will come from 0xfffffe.  But if
+	//  I/O shadowing is off, or we're a //e, then get from bank0
+	if((g_c035_shadow_reg & 0x40) || (g_rom_version == 0)) {
+		// I/O shadowing off, or Apple //e: use RAM loc
+		addr = addr & 0xffff;
+	}
+	return addr;
+}
 
 #define CALC_DCYCS_FROM_CYC_PTR(dcycs, cyc_ptr)			\
 	dcycs = g_last_vbl_dcycs + *cyc_ptr;
@@ -1089,7 +1102,7 @@ int
 io_read(word32 loc, double *cyc_ptr)
 {
 	double	dcycs;
-	word64	word64_tmp;
+	dword64	word64_tmp;
 	int	new_lcbank2, new_wrdefram, tmp;
 	int	i;
 
@@ -1161,7 +1174,7 @@ io_read(word32 loc, double *cyc_ptr)
 		case 0x27: /* 0xc027 */
 			return adb_read_c027();
 		case 0x28: /* 0xc028 */
-			UNIMPL_READ;
+			return 0;
 		case 0x29: /* 0xc029 */
 			return((g_cur_a2_stat & 0xa0) | g_c029_val_some);
 		case 0x2a: /* 0xc02a */
@@ -1211,7 +1224,7 @@ io_read(word32 loc, double *cyc_ptr)
 			return scc_read_data(0, dcycs);
 		case 0x3c: /* 0xc03c */
 			/* doc control */
-			return doc_read_c03c(dcycs);
+			return doc_read_c03c();
 		case 0x3d: /* 0xc03d */
 			return doc_read_c03d(dcycs);
 		case 0x3e: /* 0xc03e */
@@ -1335,7 +1348,7 @@ io_read(word32 loc, double *cyc_ptr)
 			return 0;
 		case 0x5b: /* 0xc05b */
 			if(g_zipgs_unlock >= 4) {
-				word64_tmp = (word64)dcycs;
+				word64_tmp = (dword64)dcycs;
 				tmp = (word64_tmp >> 9) & 1;
 				return (tmp << 7) + (g_zipgs_reg_c05b & 0x7f);
 			} else {
@@ -1489,10 +1502,8 @@ io_read(word32 loc, double *cyc_ptr)
 		case 0xe0: case 0xe1: case 0xe2: case 0xe3:
 		case 0xe4: case 0xe5: case 0xe6: case 0xe7:
 		case 0xe8: case 0xe9: case 0xea: case 0xeb:
-		case 0xed: case 0xee: case 0xef:
+		case 0xec: case 0xed: case 0xee: case 0xef:
 			return read_iwm(loc, dcycs);
-		case 0xec:
-			return iwm_read_c0ec(dcycs);
 		/* 0xc0f0 - 0xc0ff */
 		case 0xf0: case 0xf1: case 0xf2: case 0xf3:
 		case 0xf4: case 0xf5: case 0xf6: case 0xf7:
@@ -2025,7 +2036,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 			/* just ignore, someone writing c068 with m=0 */
 			return;
 		case 0x6c: /* 0xc06c */
-			g_c06c_latched_cyc = (word32)((word64)dcycs);
+			g_c06c_latched_cyc = (word32)((dword64)dcycs);
 			return;
 		case 0x6a: /* 0xc06a */
 		case 0x6b: /* 0xc06b */
@@ -2055,7 +2066,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 		case 0x7b: /* 0xc07b */
 		case 0x7c: /* 0xc07c */
 		case 0x7d: /* 0xc07d */
-			UNIMPL_WRITE;
+			return;
 
 		/* 0xc080 - 0xc08f */
 		case 0x80: case 0x81: case 0x82: case 0x83:
@@ -2121,7 +2132,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 		case 0xb4: case 0xb5: case 0xb6: case 0xb7:
 		case 0xb8: case 0xb9: case 0xba: case 0xbb:
 		case 0xbc: case 0xbd: case 0xbe: case 0xbf:
-			UNIMPL_WRITE;
+			return;
 
 		/* 0xc0c0 - 0xc0cf */
 		case 0xc0: case 0xc1: case 0xc2: case 0xc3:
@@ -2167,13 +2178,17 @@ io_write(word32 loc, int val, double *cyc_ptr)
 		}
 		return;
 	case 8: case 9: case 0xa: case 0xb: case 0xc: case 0xd: case 0xe:
-		UNIMPL_WRITE;
+		// UNIMPL_WRITE;
+		return;
 	case 0xf:
 		if((loc & 0xfff) == 0xfff) {
 			/* cfff */
 			return;
 		}
-		UNIMPL_WRITE;
+		// UNIMPL_WRITE;
+		// Wings of Fury writes to $cf00-$cfff when reading a 0x300
+		//  sector where it wants to load 0x200 to 0xd000-0xd1ff
+		return;
 	}
 	printf("Huh2? Write loc: %x\n", loc);
 	exit(-290);

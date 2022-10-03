@@ -1,8 +1,8 @@
-const char rcsid_macsnd_driver_c[] = "@(#)$KmKId: macsnd_driver.c,v 1.15 2020-12-03 05:15:40+00 kentd Exp $";
+const char rcsid_macsnd_driver_c[] = "@(#)$KmKId: macsnd_driver.c,v 1.17 2021-08-17 00:08:26+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2020 by Kent Dickey		*/
+/*			Copyright 2002-2021 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -55,6 +55,9 @@ audio_callback(void *in_ref_ptr, AudioUnitRenderActionFlags *aura_flags_ptr,
 	int	max_samples, min_samples;
 	int	i, j;
 
+	if(in_ref_ptr || aura_flags_ptr || a_timestamp_ptr || bus_number) {
+		// Avoid unused parameter warning
+	}
 #if 0
 	printf("CB: audio_callback called, in_ref:%p, bus:%d, in_frame:%d\n",
 		in_ref_ptr, bus_number, in_num_frame);
@@ -72,13 +75,13 @@ audio_callback(void *in_ref_ptr, AudioUnitRenderActionFlags *aura_flags_ptr,
 
 	sample_num = g_macsnd_rd_pos;
 	samps_avail = (g_macsnd_wr_pos - sample_num) & (MACSND_REBUF_SIZE - 1);
-	if(in_num_frame > samps_avail) {
+	if((int)in_num_frame > samps_avail) {
 		// We don't have enough samples, must pause
 		g_macsnd_playing = 0;
 		sample_num = g_macsnd_wr_pos;		// Eat remaining samps
 	}
 	if((g_macsnd_playing == 0) &&
-				(samps_avail > (min_samples + in_num_frame))) {
+			(samps_avail > (min_samples + (int)in_num_frame))) {
 		// We can unpause
 		g_macsnd_playing = 1;
 	}

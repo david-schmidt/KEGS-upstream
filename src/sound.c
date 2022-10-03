@@ -1,8 +1,8 @@
-const char rcsid_sound_c[] = "@(#)$KmKId: sound.c,v 1.135 2020-12-12 18:44:27+00 kentd Exp $";
+const char rcsid_sound_c[] = "@(#)$KmKId: sound.c,v 1.140 2021-08-01 15:47:37+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2020 by Kent Dickey		*/
+/*			Copyright 2002-2021 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -27,14 +27,14 @@ extern int g_use_shmem;
 extern word32 g_vbl_count;
 extern int g_preferred_rate;
 
-extern int g_c03ef_doc_ptr;
+extern word32 g_c03ef_doc_ptr;
 
 extern double g_last_vbl_dcycs;
 
 byte doc_ram[0x10000 + 16];
 
-word32 doc_sound_ctl = 0;
-word32 doc_saved_val = 0;
+word32 g_doc_sound_ctl = 0;
+word32 g_doc_saved_val = 0;
 int	g_doc_num_osc_en = 1;
 double	g_dcycs_per_doc_update = 1.0;
 double	g_dupd_per_dcyc = 1.0;
@@ -340,7 +340,7 @@ sound_shutdown()
 }
 
 void
-sound_update(double dcycs, double dtime)
+sound_update(double dcycs)
 {
 	double	dsamps;
 	/* Called every VBL time to update sound status */
@@ -543,7 +543,7 @@ sound_play(double dsamps)
 	float	ftmp, fsampnum, next_fsampnum, fc030_range, fc030_base;
 	float	fpercent;
 	word32	start_time1, start_time2, start_time3, start_time4;
-	word32	end_time1, end_time2, end_time3;
+	word32	end_time1, end_time2, end_time3, uval1, uval0;
 	word32	cur_acc, cur_pos, cur_mask, cur_inc, cur_end;
 	int	val, val2, new_val, imul, off, num, c030_lo_val, c030_hi_val;
 	int	sampnum, next_sampnum, c030_state, val0, val1, ctl, num_osc_en;
@@ -798,8 +798,8 @@ sound_play(double dsamps)
 					rptr->cur_acc = cur_acc;
 					rptr->samps_left = 0;
 					DOC_LOG("end or 0", osc, cur_dsamp,
-						(pos << 16) + ((i &0xff) << 8) +
-						val);
+						((pos & 0xffffU) << 16) |
+						((i &0xff) << 8) | val);
 					doc_sound_end(osc, val, cur_dsamp,
 								dsamp_now);
 					val = 0;
@@ -905,7 +905,7 @@ sound_play(double dsamps)
 				if(val0 < -32768) {
 					val = -32768;
 				}
-				val0 = val;
+				uval0 = val & 0xffffU;
 				val = val1;
 				if(val1 > 32767) {
 					val = 32767;
@@ -913,24 +913,25 @@ sound_play(double dsamps)
 				if(val1 < -32768) {
 					val = -32768;
 				}
+				uval1 = val & 0xffffU;
 				outptr += 2;
 
 #if defined(__linux__) || defined(OSS)
 				/* Linux seems to expect little-endian */
 				/*  samples always, even on PowerPC */
 # ifdef KEGS_BIG_ENDIAN
-				sndptr[pos] = ((val & 0xff) << 24) +
-						((val & 0xff00) << 8) +
-						((val0 & 0xff) << 8) +
-						((val0 >> 8) & 0xff);
+				sndptr[pos] = ((uval1 & 0xff) << 24) +
+						((uval1 & 0xff00) << 8) +
+						((uval0 & 0xff) << 8) +
+						((uval0 >> 8) & 0xff);
 # else
-				sndptr[pos] = (val << 16) + (val0 & 0xffff);
+				sndptr[pos] = (uval1 << 16) + (uval0 & 0xffff);
 # endif
 #else
 # ifdef KEGS_BIG_ENDIAN
-				sndptr[pos] = (val0 << 16) + (val & 0xffff);
+				sndptr[pos] = (uval0 << 16) + uval1;
 # else
-				sndptr[pos] = (val << 16) + (val0 & 0xffff);
+				sndptr[pos] = (uval1 << 16) + uval0;
 # endif
 #endif
 				pos++;
@@ -1003,7 +1004,7 @@ sound_mock_envelope(int pair, int *env_ptr, int num_samps, int *vol_ptr)
 {
 	Ay8913	*ay8913ptr;
 	double	dmul, denv_period;
-	word64	env_dsamp, dsamp_inc;
+	dword64	env_dsamp, dsamp_inc;
 	word32	ampl, eff_ampl, reg13, env_val, env_period;
 	int	i;
 
@@ -1042,7 +1043,7 @@ sound_mock_envelope(int pair, int *env_ptr, int num_samps, int *vol_ptr)
 	// inc_per_tick 62.5KHz tick: (1/env_period)
 	// inc_per_dcyc: (1/(16*env_period))
 	// inc_per_samp = inc_per_dcyc * g_dcycs_per_samp
-	dsamp_inc = (word64)((dmul * g_dcycs_per_samp / denv_period));
+	dsamp_inc = (dword64)((dmul * g_dcycs_per_samp / denv_period));
 			// Amount to inc per sample, fixed point, 40 bit frac
 
 	reg13 = ay8913ptr->regs[13];			// "reg15", env ctrl
@@ -1680,18 +1681,11 @@ doc_write_ctl_reg(int osc, int val, double dsamps)
 }
 
 void
-doc_recalc_sound_parms(int osc, double eff_dcycs, double dsamps)
+doc_recalc_sound_parms(int osc, double dsamps)
 {
 	Doc_reg	*rptr;
-	double	dfreq;
-	double	dtmp1;
-	double	dacc, dacc_recip;
-	word32	res;
-	word32	sz;
-	word32	size;
-	word32	wave_size;
-	word32	cur_start;
-	word32	shifted_size;
+	double	dfreq, dtmp1, dacc, dacc_recip;
+	word32	res, sz, size, wave_size, cur_start, shifted_size;
 
 	g_num_recalc_snd_parms++;
 
@@ -1743,29 +1737,27 @@ doc_read_c030(double dcycs)
 }
 
 int
-doc_read_c03c(double dcycs)
+doc_read_c03c()
 {
-	return doc_sound_ctl;
+	return g_doc_sound_ctl;
 }
 
 int
 doc_read_c03d(double dcycs)
 {
-	double	dsamps;
 	Doc_reg	*rptr;
-	int	osc;
-	int	type;
-	int	ret;
+	double	dsamps;
+	int	osc, type, ret;
 
-	ret = doc_saved_val;
+	ret = g_doc_saved_val;
 	dsamps = dcycs * g_dsamps_per_dcyc;
 
-	if(doc_sound_ctl & 0x40) {
+	if(g_doc_sound_ctl & 0x40) {
 		/* Read RAM */
-		doc_saved_val = doc_ram[g_c03ef_doc_ptr];
+		g_doc_saved_val = doc_ram[g_c03ef_doc_ptr];
 	} else {
 		/* Read DOC */
-		doc_saved_val = 0;
+		g_doc_saved_val = 0;
 
 		osc = g_c03ef_doc_ptr & 0x1f;
 		type = (g_c03ef_doc_ptr >> 5) & 0x7;
@@ -1773,33 +1765,33 @@ doc_read_c03d(double dcycs)
 
 		switch(type) {
 		case 0x0:	/* freq lo */
-			doc_saved_val = rptr->freq & 0xff;
+			g_doc_saved_val = rptr->freq & 0xff;
 			break;
 		case 0x1:	/* freq hi */
-			doc_saved_val = rptr->freq >> 8;
+			g_doc_saved_val = rptr->freq >> 8;
 			break;
 		case 0x2:	/* vol */
-			doc_saved_val = rptr->vol;
+			g_doc_saved_val = rptr->vol;
 			break;
 		case 0x3:	/* data register */
 			/* HACK: make this call sound_play sometimes */
-			doc_saved_val = rptr->last_samp_val;
+			g_doc_saved_val = rptr->last_samp_val;
 			break;
 		case 0x4:	/* wave ptr register */
-			doc_saved_val = rptr->waveptr;
+			g_doc_saved_val = rptr->waveptr;
 			break;
 		case 0x5:	/* control register */
-			doc_saved_val = rptr->ctl;
+			g_doc_saved_val = rptr->ctl;
 			break;
 		case 0x6:	/* control register */
-			doc_saved_val = rptr->wavesize;
+			g_doc_saved_val = rptr->wavesize;
 			break;
 		case 0x7:	/* 0xe0-0xff */
 			switch(osc) {
 			case 0x00:	/* 0xe0 */
-				doc_saved_val = doc_reg_e0;
+				g_doc_saved_val = doc_reg_e0;
 				doc_printf("Reading doc 0xe0, ret: %02x\n",
-								doc_saved_val);
+							g_doc_saved_val);
 
 				/* Clear IRQ on read of e0, if any irq pend */
 				if((doc_reg_e0 & 0x80) == 0) {
@@ -1807,35 +1799,35 @@ doc_read_c03d(double dcycs)
 				}
 				break;
 			case 0x01:	/* 0xe1 */
-				doc_saved_val = (g_doc_num_osc_en - 1) << 1;
+				g_doc_saved_val = (g_doc_num_osc_en - 1) << 1;
 				break;
 			case 0x02:	/* 0xe2 */
-				doc_saved_val = 0x80;
+				g_doc_saved_val = 0x80;
 #if 0
 				halt_printf("Reading doc 0xe2, ret: %02x\n",
-								doc_saved_val);
+							g_doc_saved_val);
 #endif
 				break;
 			default:
-				doc_saved_val = 0;
+				g_doc_saved_val = 0;
 				halt_printf("Reading bad doc_reg[%04x]: %02x\n",
-					g_c03ef_doc_ptr, doc_saved_val);
+					g_c03ef_doc_ptr, g_doc_saved_val);
 			}
 			break;
 		default:
-			doc_saved_val = 0;
+			g_doc_saved_val = 0;
 			halt_printf("Reading bad doc_reg[%04x]: %02x\n",
-					g_c03ef_doc_ptr, doc_saved_val);
+					g_c03ef_doc_ptr, g_doc_saved_val);
 		}
 	}
 
 	doc_printf("read c03d, doc_ptr: %04x, ret: %02x, saved: %02x\n",
-		g_c03ef_doc_ptr, ret, doc_saved_val);
+		g_c03ef_doc_ptr, ret, g_doc_saved_val);
 
 	DOC_LOG("read c03d", -1, dsamps, (g_c03ef_doc_ptr << 16) +
-			(doc_saved_val << 8) + ret);
+			(g_doc_saved_val << 8) + ret);
 
-	if(doc_sound_ctl & 0x20) {
+	if(g_doc_sound_ctl & 0x20) {
 		g_c03ef_doc_ptr = (g_c03ef_doc_ptr + 1) & 0xffff;
 	}
 
@@ -1859,13 +1851,13 @@ doc_write_c03c(int val, double dcycs)
 	}
 	DOC_LOG("c03c write", -1, dcycs * g_dsamps_per_dcyc, val);
 
-	doc_sound_ctl = val;
+	g_doc_sound_ctl = val;
 }
 
 void
 doc_write_c03d(int val, double dcycs)
 {
-	double	dsamps, eff_dsamps;
+	double	dsamps;
 	Doc_reg	*rptr;
 	int	osc, type, ctl, tmp;
 	int	i;
@@ -1873,13 +1865,12 @@ doc_write_c03d(int val, double dcycs)
 	val = val & 0xff;
 
 	dsamps = dcycs * g_dsamps_per_dcyc;
-	eff_dsamps = dsamps;
 	doc_printf("write c03d, doc_ptr: %04x, val: %02x\n",
 		g_c03ef_doc_ptr, val);
 
 	DOC_LOG("write c03d", -1, dsamps, (g_c03ef_doc_ptr << 16) + val);
 
-	if(doc_sound_ctl & 0x40) {
+	if(g_doc_sound_ctl & 0x40) {
 		/* RAM */
 		doc_ram[g_c03ef_doc_ptr] = val;
 	} else {
@@ -1909,7 +1900,7 @@ doc_write_c03d(int val, double dcycs)
 				sound_play(dsamps);
 			}
 			rptr->freq = (rptr->freq & 0xff00) + val;
-			doc_recalc_sound_parms(osc, eff_dsamps, dsamps);
+			doc_recalc_sound_parms(osc, dsamps);
 			break;
 		case 0x1:	/* freq hi */
 			if((rptr->freq >> 8) == (word32)val) {
@@ -1921,7 +1912,7 @@ doc_write_c03d(int val, double dcycs)
 				sound_play(dsamps);
 			}
 			rptr->freq = (rptr->freq & 0xff) + (val << 8);
-			doc_recalc_sound_parms(osc, eff_dsamps, dsamps);
+			doc_recalc_sound_parms(osc, dsamps);
 			break;
 		case 0x2:	/* vol */
 			if(rptr->vol == (word32)val) {
@@ -1954,7 +1945,7 @@ doc_write_c03d(int val, double dcycs)
 				sound_play(dsamps);
 			}
 			rptr->waveptr = val;
-			doc_recalc_sound_parms(osc, eff_dsamps, dsamps);
+			doc_recalc_sound_parms(osc, dsamps);
 			break;
 		case 0x5:	/* control register */
 #if 0
@@ -1975,7 +1966,7 @@ doc_write_c03d(int val, double dcycs)
 				sound_play(dsamps);
 			}
 			rptr->wavesize = val;
-			doc_recalc_sound_parms(osc, eff_dsamps, dsamps);
+			doc_recalc_sound_parms(osc, dsamps);
 			break;
 		case 0x7:	/* 0xe0-0xff */
 			switch(osc) {
@@ -2027,22 +2018,22 @@ doc_write_c03d(int val, double dcycs)
 		}
 	}
 
-	if(doc_sound_ctl & 0x20) {
+	if(g_doc_sound_ctl & 0x20) {
 		g_c03ef_doc_ptr = (g_c03ef_doc_ptr + 1) & 0xffff;
 	}
 
-	doc_saved_val = val;
+	g_doc_saved_val = val;
 }
 
 void
-doc_show_ensoniq_state(int osc)
+doc_show_ensoniq_state()
 {
 	Doc_reg	*rptr;
 	int	i;
 
 	printf("Ensoniq state\n");
 	printf("c03c doc_sound_ctl: %02x, doc_saved_val: %02x\n",
-		doc_sound_ctl, doc_saved_val);
+		g_doc_sound_ctl, g_doc_saved_val);
 	printf("doc_ptr: %04x,    num_osc_en: %02x, e0: %02x\n",
 		g_c03ef_doc_ptr, g_doc_num_osc_en, doc_reg_e0);
 

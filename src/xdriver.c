@@ -1,8 +1,8 @@
-const char rcsid_xdriver_c[] = "@(#)$KmKId: xdriver.c,v 1.228 2021-01-23 22:45:26+00 kentd Exp $";
+const char rcsid_xdriver_c[] = "@(#)$KmKId: xdriver.c,v 1.229 2021-08-04 21:53:19+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2020 by Kent Dickey		*/
+/*			Copyright 2002-2021 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -1277,7 +1277,8 @@ x_handle_keysym(XEvent *xev_in)
 
 	a2code = x_keysym_to_a2code(win_info_ptr, (int)keysym, is_up);
 	if(a2code >= 0) {
-		adb_physical_key_update(win_info_ptr->kimage_ptr, a2code, is_up,
+		adb_physical_key_update(win_info_ptr->kimage_ptr, a2code,
+			0, is_up,
 			win_info_ptr->x_shift_control_state & ShiftMask,
 			win_info_ptr->x_shift_control_state & ControlMask,
 			win_info_ptr->x_shift_control_state & LockMask);
@@ -1343,18 +1344,18 @@ x_update_modifier_state(Window_info *win_info_ptr, int state)
 	lock_down = state & LockMask;
 	if(state_xor & ControlMask) {
 		is_up = ((state & ControlMask) == 0);
-		adb_physical_key_update(win_info_ptr->kimage_ptr, 0x36, is_up,
-					shift_down, ctrl_down, lock_down);
+		adb_physical_key_update(win_info_ptr->kimage_ptr, 0x36, 0,
+				is_up, shift_down, ctrl_down, lock_down);
 	}
 	if(state_xor & LockMask) {
 		is_up = ((state & LockMask) == 0);
-		adb_physical_key_update(win_info_ptr->kimage_ptr, 0x39, is_up,
-					shift_down, ctrl_down, lock_down);
+		adb_physical_key_update(win_info_ptr->kimage_ptr, 0x39, 0,
+				is_up, shift_down, ctrl_down, lock_down);
 	}
 	if(state_xor & ShiftMask) {
 		is_up = ((state & ShiftMask) == 0);
-		adb_physical_key_update(win_info_ptr->kimage_ptr, 0x38, is_up,
-					shift_down, ctrl_down, lock_down);
+		adb_physical_key_update(win_info_ptr->kimage_ptr, 0x38, 0,
+				is_up, shift_down, ctrl_down, lock_down);
 	}
 
 	win_info_ptr->x_shift_control_state = state;

@@ -1,8 +1,8 @@
-const char rcsid_undeflate_c[] = "@(#)$KmKId: undeflate.c,v 1.3 2020-12-11 21:07:32+00 kentd Exp $";
+const char rcsid_undeflate_c[] = "@(#)$KmKId: undeflate.c,v 1.10 2021-06-30 02:04:22+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2020 by Kent Dickey		*/
+/*			Copyright 2002-2021 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -12,9 +12,13 @@ const char rcsid_undeflate_c[] = "@(#)$KmKId: undeflate.c,v 1.3 2020-12-11 21:07
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
 
+// This file has routines for the undeflate uncompression algorithm for
+//  gzip/zip, and routines for reading .zip files.
+
 // Based on https://www.ietf.org/rfc/rfc1951.txt for Deflate algorithm,
 //  and https://www.ietf.org/rfc/rfc1952.txt for gzip file format.
 
+// .zip file format from:
 // https://pkware.cachefly.net/webdocs/APPNOTE/APPNOTE-6.3.3.TXT
 
 #include "defc.h"
@@ -101,7 +105,7 @@ show_huftb(unsigned *tabptr, int bits)
 }
 
 void
-undeflate_init_len_dist_tab(word32 *tabptr, word64 drepeats, word32 start)
+undeflate_init_len_dist_tab(word32 *tabptr, dword64 drepeats, word32 start)
 {
 	word32	pos, repeats, extra_bits;
 	int	i;
@@ -119,7 +123,7 @@ undeflate_init_len_dist_tab(word32 *tabptr, word64 drepeats, word32 start)
 			start--;		// 258, not 259
 			repeats = 1;
 		}
-		for(i = 0; i < repeats; i++) {
+		for(i = 0; i < (int)repeats; i++) {
 			tabptr[pos] = start | (extra_bits << 20) | (1 << 24);
 			//printf("Set table[%d]=%08x (%d) i:%d out of %d\n",
 			//	pos, tabptr[pos], start, i, repeats);
@@ -198,43 +202,50 @@ byte *
 undeflate_ensure_dest_len(Disk *dsk, byte *ucptr, word32 len)
 {
 	byte	*raw_ptr;
-	word32	raw_size, image_size, new_image_size;
+	dword64	raw_dsize, dimage_size;
+	word32	new_image_size;
 
-	raw_size = dsk->raw_size;
-	image_size = dsk->image_size;
+	raw_dsize = dsk->raw_dsize;
+	dimage_size = dsk->dimage_size;
 	if(ucptr) {
-		new_image_size = ucptr - dsk->raw_data;
-		if(new_image_size < image_size) {
+		new_image_size = (word32)(ucptr - dsk->raw_data);
+		if(new_image_size < dimage_size) {
 			printf("ucptr moved backwards!\n");
 			return 0;
 		}
-		image_size = new_image_size;
-		dsk->image_size = image_size;
+		if((new_image_size >> 31) != 0) {
+			printf("Output file > 2GB, failing\n");
+			return 0;
+		}
+		dimage_size = new_image_size;
+		dsk->dimage_size = dimage_size;
 	}
-	if(image_size > raw_size) {
-		printf("image_size %08x overflowed raw_size %08x\n",
-			image_size, raw_size);
+	if(dimage_size > raw_dsize) {
+		printf("dimage_size %08llx overflowed raw_dsize %08llx\n",
+			dimage_size, raw_dsize);
 		return 0;
 	}
-	if((image_size + len) > raw_size) {
-		raw_size = ((image_size + len) * 3ULL) / 2;
-		raw_ptr = realloc(dsk->raw_data, raw_size);
+	if((dimage_size + len) > raw_dsize) {
+		raw_dsize = ((dimage_size + len) * 3ULL) / 2;
+		raw_ptr = realloc(dsk->raw_data, raw_dsize);
 		//printf("Did realloc to %08x, new new_data:%p, was %p\n",
 		//			raw_size, raw_ptr, dsk->raw_data);
 		if(raw_ptr == 0) {
 			printf("undeflate realloc failed\n");
 			free(dsk->raw_data);
+			dsk->raw_data = 0;
 			return 0;
 		}
 		dsk->raw_data = raw_ptr;
-		dsk->raw_size = raw_size;
+		dsk->raw_dsize = raw_dsize;
 	}
 #if 0
 	printf("undeflate_ensure_dest_len will ret %p, dsk->raw_data:%p, "
-		"image_size:%08x, raw_size:%08x\n", dsk->raw_data + image_size,
-		dsk->raw_data, image_size, raw_size);
+		"image_size:%08llx, raw_dsize:%08llx\n",
+		dsk->raw_data + dimage_size, dsk->raw_data, dimage_size,
+		raw_dsize);
 #endif
-	return dsk->raw_data + image_size;
+	return dsk->raw_data + dimage_size;
 }
 
 void
@@ -335,6 +346,29 @@ undeflate_init_fixed_tabs()
 	return tabptr;
 }
 
+word32 *
+undeflate_init_tables()
+{
+	undeflate_init_len_dist_tab(&(g_undeflate_length_tab[0]),
+							LENGTH_ENCODED, 2);
+		// code=257 has length 3, but the first entry is really code=256
+		//  so set 256 to length=2
+	undeflate_init_len_dist_tab(&(g_undeflate_dist_tab[0]), DIST_ENCODED,
+									1);
+	undeflate_init_bit_rev_tab(&(g_undeflate_bit_rev[0]), 512);
+	// undeflate_check_bit_reverse();
+	return undeflate_init_fixed_tabs();
+}
+
+void
+undeflate_free_tables()
+{
+	free(g_undeflate_dynamic_tabptr);
+	g_undeflate_dynamic_tabptr = 0;
+	free(g_undeflate_dynamic_dist_tabptr);
+	g_undeflate_dynamic_dist_tabptr = 0;
+}
+
 void
 undeflate_check_bit_reverse()
 {
@@ -391,12 +425,12 @@ undeflate_build_huff_tab(word32 *tabptr, word32 *entry_ptr, word32 len_size,
 		next_code[i] = code;
 		// printf("Set next_code[%d] = %03x\n", i, code);
 	}
-	for(i = 0; i < tab_size; i++) {
+	for(i = 0; i < (int)tab_size; i++) {
 		tabptr[i] = 0;
 	}
 	tabptr[tab_size] = 0;
 
-	for(i = 0; i < len_size; i++) {
+	for(i = 0; i < (int)len_size; i++) {
 		entry = entry_ptr[i];
 		bits = (entry >> 16) & 0xf;
 		//printf("i:%03x, bits:%d, entry:%08x\n", i, bits, entry);
@@ -438,6 +472,9 @@ undeflate_dynamic_table(byte *cptr, word32 *bit_pos_ptr, byte *cptr_base)
 	printf("At +%06x, bit:%d, hlit:%02x hdist:%02x, hclen:%02x\n",
 		(word32)(cptr - cptr_base), bit_pos, hlit, hdist, hclen);
 #endif
+	if(cptr_base) {
+		// Avoid unused parameter warning
+	}
 	bit_pos += 14;
 	cptr += (bit_pos >> 3);
 	bit_pos = bit_pos & 7;
@@ -447,7 +484,7 @@ undeflate_dynamic_table(byte *cptr, word32 *bit_pos_ptr, byte *cptr_base)
 	}
 	hclen += 4;			// 19*3 = 57 bits, at most
 	max_bits = 0;
-	for(i = 0; i < hclen; i++) {
+	for(i = 0; i < (int)hclen; i++) {
 		val = ((cptr[0] + (cptr[1] << 8)) >> bit_pos) & 7;
 		entry = g_undeflate_lencode_positions[i];
 		entry = entry & (~0xf0000);		// clear bits from entry
@@ -525,7 +562,7 @@ undeflate_dynamic_table(byte *cptr, word32 *bit_pos_ptr, byte *cptr_base)
 				}
 			}
 		}
-		for(i = 0; i < repeat; i++) {
+		for(i = 0; i < (int)repeat; i++) {
 			code_list[code_pos] = entry;
 			// printf("Added code_list[%03x] = %08x\n", code_pos,
 			//						entry);
@@ -535,7 +572,7 @@ undeflate_dynamic_table(byte *cptr, word32 *bit_pos_ptr, byte *cptr_base)
 
 	// Fix lengths and literals
 	max_length_bits = 0;
-	for(i = 0; i < hlit; i++) {
+	for(i = 0; i < (int)hlit; i++) {
 		entry = code_list[i];
 		bits = (entry >> 16) & 0xf;
 		bl_count[bits]++;
@@ -552,7 +589,7 @@ undeflate_dynamic_table(byte *cptr, word32 *bit_pos_ptr, byte *cptr_base)
 
 	// Fix distances
 	max_distance_bits = 0;
-	for(i = 0; i < hdist; i++) {
+	for(i = 0; i < (int)hdist; i++) {
 		entry = code_list[i + hlit];
 		bits = (entry >> 16) & 0xf;
 		bl_count_dist[bits]++;
@@ -645,11 +682,10 @@ undeflate_block(Disk *dsk, byte *cptr, word32 *bit_pos_ptr, byte *cptr_base,
 			return 0;
 		}
 		cptr += 4;
-		for(i = 0; i < len; i++) {
-			//putc(*cptr, g_outf);
+		for(i = 0; i < (int)len; i++) {
 			*ucptr++ = *cptr++;
 		}
-		dsk->image_size += len;
+		dsk->dimage_size += len;
 		return cptr;
 	}
 
@@ -680,7 +716,7 @@ undeflate_block(Disk *dsk, byte *cptr, word32 *bit_pos_ptr, byte *cptr_base,
 	if(!ucptr) {
 		return 0;
 	}
-	ucptr_end = dsk->raw_data + dsk->raw_size - 500;
+	ucptr_end = dsk->raw_data + dsk->raw_dsize - 500;
 
 	while(cptr < cptr_end) {
 #if 0
@@ -690,7 +726,7 @@ undeflate_block(Disk *dsk, byte *cptr, word32 *bit_pos_ptr, byte *cptr_base,
 
 		if(ucptr > ucptr_end) {
 			ucptr = undeflate_ensure_dest_len(dsk, ucptr, 65536);
-			ucptr_end = dsk->raw_data + dsk->raw_size - 500;
+			ucptr_end = dsk->raw_data + dsk->raw_dsize - 500;
 			// printf("Update ucptr to %p\n", ucptr);
 			if(!ucptr) {
 				return 0;
@@ -725,7 +761,7 @@ undeflate_block(Disk *dsk, byte *cptr, word32 *bit_pos_ptr, byte *cptr_base,
 				// All done
 				// printf("Got the 0x100 code!  All done!\n");
 				*bit_pos_ptr = bit_pos;
-				dsk->image_size = ucptr - dsk->raw_data;
+				dsk->dimage_size = ucptr - dsk->raw_data;
 				// printf("Set dsk->image_size = %08x\n",
 				//			dsk->image_size);
 				return cptr;
@@ -794,7 +830,7 @@ undeflate_block(Disk *dsk, byte *cptr, word32 *bit_pos_ptr, byte *cptr_base,
 						dist, ucptr, dsk->raw_data);
 				return 0;
 			}
-			for(i = 0; i < len; i++) {
+			for(i = 0; i < (int)len; i++) {
 				ucptr[0] = ucptr[0-(int)dist];
 #if 0
 				putc(ucptr[0], g_outf);
@@ -813,7 +849,7 @@ undeflate_block(Disk *dsk, byte *cptr, word32 *bit_pos_ptr, byte *cptr_base,
 }
 
 byte *
-undeflate_gzip_header(Disk *dsk, byte *cptr, int compr_size)
+undeflate_gzip_header(Disk *dsk, byte *cptr, word32 compr_size)
 {
 	word32	*wptr;
 	byte	*cptr_base, *cptr_end;
@@ -849,21 +885,16 @@ undeflate_gzip_header(Disk *dsk, byte *cptr, int compr_size)
 	}
 	printf("gzip header was %02x bytes long\n", (int)(cptr - cptr_base));
 
-	dsk->raw_size = 140*1024;		// Just a guess, alloc size
-	dsk->raw_data = malloc(dsk->raw_size);
+	dsk->raw_dsize = 140*1024;		// Just a guess, alloc size
+	dsk->raw_data = malloc(dsk->raw_dsize);
+	if(dsk->raw_data == 0) {
+		return 0;
+	}
 	printf("Initial malloc (not realloc) set raw_data=%p\n", dsk->raw_data);
 
-	dsk->image_size = 0;			// Used size
+	dsk->dimage_size = 0;			// Used size
 
-	undeflate_init_len_dist_tab(&(g_undeflate_length_tab[0]),
-							LENGTH_ENCODED, 2);
-		// code=257 has length 3, but the first entry is really code=256
-		//  so set 256 to length=2
-	undeflate_init_len_dist_tab(&(g_undeflate_dist_tab[0]), DIST_ENCODED,
-									1);
-	undeflate_init_bit_rev_tab(&(g_undeflate_bit_rev[0]), 512);
-	// undeflate_check_bit_reverse();
-	wptr = undeflate_init_fixed_tabs();
+	wptr = undeflate_init_tables();
 	if(wptr == 0) {
 		return 0;			// Some sort of error, get out
 	}
@@ -891,9 +922,9 @@ undeflate_gzip_header(Disk *dsk, byte *cptr, int compr_size)
 						(cptr[3] << 24);
 			len = cptr[4] | (cptr[5] << 8) | (cptr[6] << 16) |
 						(cptr[7] << 24);
-			if(len != dsk->image_size) {
-				printf("Len mismatch: exp %08x != %08x\n", len,
-							dsk->image_size);
+			if(len != dsk->dimage_size) {
+				printf("Len mismatch: exp %08x != %08llx\n",
+							len, dsk->dimage_size);
 				break;
 			}
 			crc = undeflate_calc_crc32(dsk->raw_data, len);
@@ -902,9 +933,10 @@ undeflate_gzip_header(Disk *dsk, byte *cptr, int compr_size)
 						crc, exp_crc);
 				break;
 			}
-			// Real success, set raw_size
-			dsk->raw_data = realloc(dsk->raw_data, dsk->image_size);
-			dsk->raw_size = dsk->image_size;
+			// Real success, set raw_dsize
+			dsk->raw_data = realloc(dsk->raw_data,
+							dsk->dimage_size);
+			dsk->raw_dsize = dsk->dimage_size;
 			return cptr;
 		}
 	}
@@ -913,9 +945,9 @@ undeflate_gzip_header(Disk *dsk, byte *cptr, int compr_size)
 	// Disk image thread not found, get out
 	free(dsk->raw_data);
 	dsk->fd = -1;
-	dsk->image_size = 0;
+	dsk->dimage_size = 0;
 	dsk->raw_data = 0;
-	dsk->raw_size = 0;
+	dsk->raw_dsize = 0;
 	return 0;
 }
 
@@ -923,42 +955,463 @@ void
 undeflate_gzip(Disk *dsk, const char *name_str)
 {
 	byte	*cptr;
-	int	compr_size, fd, pos, ret;
+	dword64	compr_dsize, dret;
+	word32	compr_size;
+	int	fd;
 	int	i;
 
+	// On success, set dsk->fd=0 and dsk->raw_data,raw_dsize properly.
 	printf("undeflate_gzip on file %s\n", name_str);
 	fd = open(name_str, O_RDONLY | O_BINARY, 0x1b6);
 	if(fd < 0) {
 		return;
 	}
-	compr_size = cfg_get_fd_size(fd);
-	printf("size: %d\n", compr_size);
+	compr_dsize = cfg_get_fd_size(fd);
+	printf("size: %lld\n", compr_dsize);
+	if((compr_dsize >> 31) != 0) {
+		// > 2GB...too big for this code
+		printf("gzip file is too large\n");
+		dsk->fd = -1;
+		return;
+	}
+	compr_size = (word32)compr_dsize;
 
 	cptr = malloc(compr_size + 0x1000);
-	pos = 0;
 	for(i = 0; i < 0x1000; i++) {
 		cptr[compr_size + i] = 0;
 	}
-	while(1) {
-		if(pos >= compr_size) {
-			break;
-		}
-		ret = read(fd, cptr + pos, compr_size - pos);
-		if(ret <= 0) {
-			break;
-		}
-		pos += ret;
-	}
-	close(fd);
-	if(pos != compr_size) {
+	dret = cfg_read_from_fd(fd, cptr, 0, compr_size);
+	if(dret != compr_size) {
 		compr_size = 0;		// Make header searching fail
 	}
 	//g_outf = fopen("out.dbg", "w");
 	undeflate_gzip_header(dsk, cptr, compr_size);
 
 	free(cptr);
-	free(g_undeflate_dynamic_tabptr);
-	g_undeflate_dynamic_tabptr = 0;
-	free(g_undeflate_dynamic_dist_tabptr);
-	g_undeflate_dynamic_dist_tabptr = 0;
+	undeflate_free_tables();
 }
+
+byte *
+undeflate_zipfile_blocks(Disk *dsk, byte *cptr, word32 compr_size)
+{
+	word32	*wptr;
+	byte	*cptr_base, *cptr_end;
+	word32	bit_offset;
+
+	cptr_base = cptr;
+	cptr_end = cptr + compr_size;
+
+	dsk->raw_data = malloc(dsk->raw_dsize);
+	if(dsk->raw_data == 0) {
+		return 0;
+	}
+	printf("Initial malloc (not realloc) set raw_data=%p\n", dsk->raw_data);
+
+	dsk->dimage_size = 0;			// Used size
+
+	wptr = undeflate_init_tables();
+	if(wptr == 0) {
+		return 0;			// Some sort of error, get out
+	}
+
+	bit_offset = 0;
+	while(cptr < cptr_end) {
+		cptr = undeflate_block(dsk, cptr, &bit_offset, cptr_base,
+								cptr_end);
+		if(cptr == 0) {
+			// Failed
+			break;
+		}
+		if(dsk->fd == 0) {
+			printf("undeflate_block set fd=0, success\n");
+			// Done, success!
+			// Check crc
+			if(bit_offset) {
+				cptr++;
+			}
+			// Real success, set raw_dsize
+			dsk->raw_data = realloc(dsk->raw_data,
+							dsk->dimage_size);
+			dsk->raw_dsize = dsk->dimage_size;
+			return cptr;
+		}
+	}
+
+	printf("Failed\n");
+	// Disk image thread not found, get out
+	free(dsk->raw_data);
+	dsk->fd = -1;
+	dsk->dimage_size = 0;
+	dsk->raw_data = 0;
+	dsk->raw_dsize = 0;
+	return 0;
+}
+
+byte g_zip_local_file_header[] = { 0x50, 0x4b, 0x03, 0x04 };
+byte g_zip_central_file_header[] = { 0x50, 0x4b, 0x01, 0x02 };
+byte g_zip_end_central_dir_header[] = { 0x50, 0x4b, 0x05, 0x06, 0, 0, 0, 0 };
+byte g_zip64_end_central_dir_locator[] = { 0x50, 0x4b, 0x06, 0x07, 0, 0, 0, 0 };
+byte g_zip64_end_central_dir_header[] = { 0x50, 0x4b, 0x06, 0x06 };
+
+extern Cfg_listhdr g_cfg_partitionlist;
+
+
+int
+undeflate_zipfile(Disk *dsk, int fd, dword64 dlocal_header_off,
+			dword64 uncompr_dsize, dword64 compr_dsize)
+{
+	byte	buf[1024];
+	byte	*cptr, *cptr2;
+	dword64	dret, compr_doffset;
+	word32	compr_method, name_len, extra_len;
+	word32	bit_flags;
+	int	ret;
+	int	i;
+
+	// return -1 on failure, >= 0 on success
+
+	printf("undeflate_zipfile called, fd:%d, offset:%08llx\n", fd,
+							dlocal_header_off);
+
+	dret = cfg_read_from_fd(fd, &buf[0], dlocal_header_off, 1024);
+	if(dret != 1024) {
+		printf("read dret:%08llx != 1024\n", dret);
+		return -1;
+	}
+
+	for(i = 0; i < 4; i++) {
+		if(buf[i] != g_zip_local_file_header[i]) {
+			printf("hdr[%d]=%02x\n", i, buf[i]);
+			return -1;
+		}
+	}
+
+	if(((uncompr_dsize | compr_dsize) >> 31) != 0) {
+		printf("Size >2GB, not supported\n");
+		return -1;
+	}
+	bit_flags = cfg_get_le16(&(buf[6]));
+	compr_method = cfg_get_le16(&(buf[8]));
+	// compr_size = cfg_get_le32(&(buf[18]));	// Probably 0
+	// uncompr_size = cfg_get_le32(&(buf[22]));	// Probably 0
+	name_len = cfg_get_le16(&(buf[26]));
+	extra_len = cfg_get_le16(&(buf[28]));
+
+	// The ZIP file format is annoying, the local header doesn't have
+	//  compr_size and uncompr_size generally (if bit_flags bit 3 is set).
+	// Even if it does, it's fine to always use the central directory
+	printf("bit_flags: %04x\n", bit_flags);
+
+	compr_doffset = dlocal_header_off + 30 + name_len + extra_len;
+
+	cptr = malloc(compr_dsize + 0x1000);
+	for(i = 0; i < 0x1000; i++) {
+		cptr[compr_dsize + i] = 0;
+	}
+
+	dret = cfg_read_from_fd(fd, cptr, compr_doffset, compr_dsize);
+	if(dret != compr_dsize) {
+		return -1;
+	}
+	dsk->raw_dsize = uncompr_dsize;
+	dsk->dimage_size = uncompr_dsize;
+
+	ret = -1;
+	if(compr_method == 0) {			// Stored, just use cptr
+		dsk->raw_data = cptr;
+		dsk->raw_dsize = uncompr_dsize;
+		dsk->dimage_start = 0;
+		close(fd);
+		dsk->fd = 0;
+		cptr = 0;			// So free(cptr) does nothing
+		ret = 0;
+	} else if(compr_method == 8) {		// Deflate
+		cptr2 = undeflate_zipfile_blocks(dsk, cptr, compr_dsize);
+		printf("undeflate_zipfile_blocks ret:%p\n", cptr2);
+		if(cptr2 != 0) {
+			ret = 0;
+		}
+	} else {
+		printf("Unknown compr_method:%04x\n", compr_method);
+	}
+	free(cptr);
+	undeflate_free_tables();
+
+	return ret;
+}
+
+int
+undeflate_zipfile_search(byte *bptr, byte *cmp_ptr, int size, int cmp_len,
+				int min_size)
+{
+	int	pos, good;
+	int	i;
+
+	// Search for cmp_ptr in the bptr buffer (basically, look for "PKxx"
+	//  header strings).
+	pos = size - min_size;
+	good = 0;
+	while(pos >= 0) {
+		good = 1;
+		for(i = 0; i < cmp_len; i++) {
+			if(bptr[pos + i] != cmp_ptr[i]) {
+				good = 0;
+				break;
+			}
+		}
+		if(good) {
+			break;
+		}
+		pos--;
+	}
+
+	if(!good) {
+		return -1;
+	}
+	return pos;
+}
+
+int
+undeflate_zipfile_make_list(int fd)
+{
+	byte	buf[1024];
+	dword64	dret, dsize, dir_doff, dir_dsize, unc_dsize, compr_dsize;
+	dword64	local_dheader, dneg1, dval, doff;
+	byte	*dirptr, *name_ptr, *bptr, *bptr2;
+	char	*str;
+	word32	extra_len, comment_len, ent, entries, part_len, inc;
+	word32	tmp_off, ex_off, this_size, this_id;
+	int	pos, good, add_it, need_compr, need_unc, need_dheader;
+	int	name_len;
+	int	i;
+
+	dret = cfg_read_from_fd(fd, &buf[0], 0, 1024);
+	if(dret != 1024) {
+		return 0;		// Not a ZIP file
+	}
+
+	// See if it's a PKZIP file, starting 0x50, 0x4b, 0x03, 0x04
+	for(i = 0; i < 4; i++) {
+		if(buf[i] != g_zip_local_file_header[i]) {
+			return 0;
+		}
+	}
+
+	printf("This looks like a .zip file\n");
+
+	// Find end of central directory record in last 1024 bytes.  If it's
+	//  not there, this is too complex of a ZIP file for us, give up
+	dsize = cfg_get_fd_size(fd);
+	if(dsize < 1024) {
+		// There's nothing for us in this file
+		return 0;
+	}
+
+	dret = cfg_read_from_fd(fd, &buf[0], dsize - 1024, 1024);
+	if(dret != 1024) {
+		return 0;		// Unknown problem
+	}
+
+	pos = undeflate_zipfile_search(&buf[0],
+				&g_zip_end_central_dir_header[0], 1024, 8, 22);
+			// End of Central Directory is at least 22 bytes
+	if(pos < 0) {
+		printf("Cannot parse this .zip file\n");
+		return 0;
+	}
+
+	entries = cfg_get_le16(&(buf[pos + 8]));
+	dir_dsize = cfg_get_le32(&(buf[pos + 12]));
+	dir_doff = cfg_get_le32(&(buf[pos + 16]));
+
+#if 0
+	printf(".zip entries:%04x, dir_dsize:%06llx, dir_doff:%08llx\n",
+					entries, dir_dsize, dir_doff);
+#endif
+	dneg1 = 0xffffffffULL;
+	if(dir_doff == dneg1) {
+		printf("We must look for the ZIP64 end dir locator\n");
+		pos = undeflate_zipfile_search(&buf[0],
+			&g_zip64_end_central_dir_locator[0], 1024, 8, 20);
+		if(pos < 0) {
+			printf("Cannot parse this ZIP64 file\n");
+			return 0;
+		}
+		doff = cfg_get_le64(&(buf[pos + 8]));
+		printf("ZIP64 end of central dir record at 0x%08llx\n", doff);
+		if((doff + 64) > dsize) {
+			printf("End Central Dir record out of bounds\n");
+			return 0;
+		}
+		// Now read end of central directory record.  Just read 64 bytes
+		//  It has to be at least 56 bytes, and the locator had to be
+		//  after, so it must fit
+		dret = cfg_read_from_fd(fd, &buf[0], doff, 64);
+		if(dret != 64) {
+			return 0;		// Unknown problem
+		}
+		pos = undeflate_zipfile_search(&buf[0],
+			&g_zip64_end_central_dir_header[0], 64, 4, 64);
+		if(pos != 0) {
+			printf("ZIP64 end of central dir record not found\n");
+			return 0;
+		}
+
+		entries = cfg_get_le32(&(buf[32]));
+		dir_dsize = cfg_get_le64(&(buf[40]));
+		dir_doff = cfg_get_le64(&(buf[48]));
+	}
+
+	if((entries < 1) || (dir_dsize > dsize) || (dir_dsize > (1L << 20)) ||
+					((dir_doff + dir_dsize) > dsize)) {
+		printf("Malformed zip file\n");
+		return 0;
+	}
+
+	dirptr = malloc(dir_dsize);
+	dret = cfg_read_from_fd(fd, dirptr, dir_doff, dir_dsize);
+	if(dret != dir_dsize) {
+		printf("Couldn't read central dir\n");
+		return 0;
+	}
+
+	part_len = cfg_partition_maybe_add_dotdot();
+		// part_len is strlen(g_cfg_part_path[]);
+
+	pos = 0;
+	ent = 0;
+	while(pos < (int)dir_dsize) {
+#if 0
+		printf("Working on ent %d at pos %d\n", ent, pos);
+#endif
+		if(ent >= entries) {
+			break;		// all done
+		}
+		good = 1;
+		for(i = 0; i < 4; i++) {
+			if(dirptr[pos + i] != g_zip_central_file_header[i]) {
+				// corrupt index, get out
+				printf("At pos %04x, i:%d bad hdr\n", pos, i);
+				good = 0;
+				break;
+			}
+		}
+		if(!good) {
+			break;
+		}
+		compr_dsize = cfg_get_le32(&dirptr[pos + 20]);
+		unc_dsize = cfg_get_le32(&dirptr[pos + 24]);
+		name_len = cfg_get_le16(&dirptr[pos + 28]);
+		extra_len = cfg_get_le16(&dirptr[pos + 30]);
+		comment_len = cfg_get_le16(&dirptr[pos + 32]);
+		local_dheader = cfg_get_le32(&dirptr[pos + 42]);
+		if((pos + 46UL + name_len) > dir_dsize) {
+			printf("Corrupt entry: pos:%04x, name_len:%04x, "
+				"dir_dsize:%05llx\n", pos, name_len, dir_dsize);
+			break;
+		}
+
+		need_unc = (unc_dsize == dneg1);
+		need_compr = (compr_dsize == dneg1);
+		need_dheader = (local_dheader == dneg1);
+
+		// Walk extras to update unc/compr size and file offset, if
+		//  the standard fields are 0xffffffff.
+		bptr = &(dirptr[pos + 46 + name_len]);
+		ex_off = 0;
+		add_it = 1;
+		while(ex_off < extra_len) {
+#if 0
+			printf("Working on ex_off:%d out of %d\n", ex_off,
+								extra_len);
+#endif
+			this_id = cfg_get_le16(&bptr[ex_off]);
+			this_size = cfg_get_le16(&bptr[ex_off + 2]);
+			if((this_size + ex_off + pos + 46UL + name_len) >
+								dir_dsize) {
+				printf("Corrupt ZIP64 extra info entry\n");
+				add_it = 0;
+				break;
+			}
+			ex_off += 4;
+			if(this_id == 0x0001) {
+				tmp_off = 0;
+				bptr2 = &(bptr[ex_off]);
+				while(tmp_off < this_size) {
+					dval = cfg_get_le64(bptr2);
+#if 0
+					printf("tmp_off %d of %d, dval:"
+						"%016llx\n", tmp_off,
+						this_size, dval);
+#endif
+					if(need_compr) {
+						compr_dsize = dval;
+						need_compr = 0;
+					} else if(need_unc) {
+						unc_dsize = dval;
+						need_unc = 0;
+					} else if(need_dheader) {
+						local_dheader = dval;
+						need_dheader = 0;
+					} else {
+						printf("Corrupt ZIP64\n");
+						add_it = 0;
+					}
+					tmp_off += 8;
+					bptr += 8;
+				}
+			}
+			ex_off += this_size;
+		}
+
+		if(need_unc || need_compr || need_dheader) {
+			printf("Bad ZIP64 overrides\n");
+			add_it = 0;
+		}
+
+		// See if filename is at the proper depth
+		name_ptr = &(dirptr[pos + 46]);
+		if(add_it) {
+			add_it = cfg_partition_name_check(name_ptr, name_len);
+		}
+
+		// printf("ent:%d name:%s had add_it:%d\n", ent, name_ptr,
+		//  add_it);
+
+		inc = 46 + name_len + extra_len + comment_len;
+		if(add_it) {
+			name_ptr += part_len;
+			name_len -= part_len;
+			for(i = 0; i < name_len; i++) {
+				if(name_ptr[i] == '/') {
+					if((i == (name_len - 1)) && (i > 0)) {
+						add_it = 2;
+						name_len--;
+					} else {
+						add_it = 0;
+						break;
+					}
+				}
+			}
+		}
+		if((add_it < 2) && (unc_dsize < 140*1024)) {
+			add_it = 0;
+		}
+		if(add_it) {
+			str = malloc(name_len + 1);
+			cfg_strncpy(str, (char *)&name_ptr[0], name_len + 1);
+			cfg_file_add_dirent(&g_cfg_partitionlist, str,
+				add_it - 1, unc_dsize, local_dheader,
+				compr_dsize, ent);
+			free(str);
+		}
+		pos += inc;
+		ent++;
+	}
+	free(dirptr);
+
+	printf("Returning %d, pos:%05x, dir_dsize:%05llx\n", ent, pos,
+								dir_dsize);
+	return g_cfg_partitionlist.last;
+}
+

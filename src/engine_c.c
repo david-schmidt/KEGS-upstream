@@ -1,4 +1,4 @@
-const char rcsid_engine_c_c[] = "@(#)$KmKId: engine_c.c,v 1.76 2021-01-06 01:38:49+00 kentd Exp $";
+const char rcsid_engine_c_c[] = "@(#)$KmKId: engine_c.c,v 1.84 2021-08-17 00:04:28+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -13,7 +13,8 @@ const char rcsid_engine_c_c[] = "@(#)$KmKId: engine_c.c,v 1.76 2021-01-06 01:38:
 /************************************************************************/
 
 #include "defc.h"
-#include "protos_engine_c.h"
+
+// PSR[7:0] is NVMXDIZC
 
 #if 0
 /* define FCYCS_PTR_FCYCLES_ROUND_SLOW to get accurate 1MHz write to slow mem*/
@@ -91,6 +92,17 @@ int bogus[] = {
 #define	GET_1BYTE_ARG	arg = arg_ptr[1];
 #define	GET_2BYTE_ARG	arg = arg_ptr[1] + (arg_ptr[2] << 8);
 #define	GET_3BYTE_ARG	arg = arg_ptr[1] + (arg_ptr[2] << 8) + (arg_ptr[3]<<16);
+
+#define LOG_DATA_MACRO_ACT(in_addr, in_val, in_size, in_stat)		\
+		g_log_data_ptr->dcycs = fcycles + g_last_vbl_dcycs;	\
+		g_log_data_ptr->stat = in_stat;				\
+		g_log_data_ptr->addr = in_addr;				\
+		g_log_data_ptr->val = in_val;				\
+		g_log_data_ptr->size = in_size;				\
+		g_log_data_ptr++;					\
+		if(g_log_data_ptr >= g_log_data_end_ptr) {		\
+			g_log_data_ptr = g_log_data_start_ptr;		\
+		}
 
 /* HACK HACK HACK */
 #define	UPDATE_PSR(dummy, old_psr)				\
@@ -433,7 +445,7 @@ set_memory8_io_stub(word32 addr, word32 val, byte *stat, double *fcycs_ptr,
 		if(setmem_tmp1 != ((val) & 0xff)) {
 			g_slow_memory_ptr[tmp1] = val;
 			slow_mem_changed[tmp1 >> CHANGE_SHIFT] |=
-				(1 << (31-((tmp1 >> SHIFT_PER_CHANGE) & 0x1f)));
+				(1U << (31-((tmp1 >> SHIFT_PER_CHANGE) & 31)));
 		}
 	} else if(wstat & (1 << (31 - BANK_SHADOW2_BIT))) {
 		FCYCS_PTR_FCYCLES_ROUND_SLOW;
@@ -444,7 +456,7 @@ set_memory8_io_stub(word32 addr, word32 val, byte *stat, double *fcycs_ptr,
 		if(setmem_tmp1 != ((val) & 0xff)) {
 			g_slow_memory_ptr[tmp1] = val;
 			slow_mem_changed[tmp2 >>CHANGE_SHIFT] |=
-				(1 <<(31-((tmp2 >> SHIFT_PER_CHANGE) & 0x1f)));
+				(1U << (31-((tmp2 >> SHIFT_PER_CHANGE) & 31)));
 		}
 	} else {
 		/* breakpoint only */
@@ -509,7 +521,7 @@ set_memory24_pieces_stub(word32 addr, word32 val, double *fcycs_ptr,
 
 
 word32
-get_memory_c(word32 addr, int cycs)
+get_memory_c(word32 addr)
 {
 	byte	*stat, *ptr;
 	double	fcycles, fcycles_tmp1, fplus_1, fplus_x_m1;
@@ -526,50 +538,41 @@ get_memory_c(word32 addr, int cycs)
 }
 
 word32
-get_memory16_c(word32 addr, int cycs)
+get_memory16_c(word32 addr)
 {
-	double	fcycs;
-
-	fcycs = 0;
-	return get_memory_c(addr, fcycs) +
-			(get_memory_c(addr+1, fcycs) << 8);
+	return get_memory_c(addr) +
+			(get_memory_c(addr+1) << 8);
 }
 
 word32
-get_memory24_c(word32 addr, int cycs)
+get_memory24_c(word32 addr)
 {
-	double	fcycs;
-
-	fcycs = 0;
-	return get_memory_c(addr, fcycs) +
-			(get_memory_c(addr+1, fcycs) << 8) +
-			(get_memory_c(addr+2, fcycs) << 16);
+	return get_memory_c(addr) +
+			(get_memory_c(addr+1) << 8) +
+			(get_memory_c(addr+2) << 16);
 }
 
 void
-set_memory_c(word32 addr, word32 val, int cycs)
+set_memory_c(word32 addr, word32 val, int do_log)
 {
-	byte	*stat;
-	byte	*ptr;
-	double	fcycles, fcycles_tmp1;
-	double	fplus_1;
-	double	fplus_x_m1;
+	byte	*stat, *ptr;
+	double	fcycles, fcycles_tmp1, fplus_1, fplus_x_m1;
 	word32	wstat;
 
 	fcycles = g_cur_dcycs - g_last_vbl_dcycs;
 	fplus_1 = 0;
 	fplus_x_m1 = 0;
 	SET_MEMORY8(addr, val);
+	if(g_log_pc_enable && do_log) {
+		LOG_DATA_MACRO_ACT(addr, val, 8, stat)
+	}
 }
 
 void
-set_memory16_c(word32 addr, word32 val, int cycs)
+set_memory16_c(word32 addr, word32 val, int do_log)
 {
-	byte	*stat;
-	byte	*ptr;
-	double	fcycles, fcycles_tmp1;
-	double	fplus_1, fplus_2;
-	double	fplus_x_m1;
+	byte	*stat, *ptr;
+	double	fcycles, fcycles_tmp1, fplus_1, fplus_2, fplus_x_m1;
 	word32	wstat;
 
 	fcycles = g_cur_dcycs - g_last_vbl_dcycs;
@@ -577,14 +580,17 @@ set_memory16_c(word32 addr, word32 val, int cycs)
 	fplus_2 = 0;
 	fplus_x_m1 = 0;
 	SET_MEMORY16(addr, val, 0);
+	if(g_log_pc_enable && do_log) {
+		LOG_DATA_MACRO_ACT(addr, val, 16, stat)
+	}
 }
 
 void
-set_memory24_c(word32 addr, word32 val, int cycs)
+set_memory24_c(word32 addr, word32 val)
 {
-	set_memory_c(addr, val, 0);
-	set_memory_c(addr + 1, val >> 8, 0);
-	set_memory_c(addr + 2, val >> 16, 0);
+	set_memory_c(addr, val, 1);
+	set_memory_c(addr + 1, val >> 8, 1);
+	set_memory_c(addr + 2, val >> 16, 1);
 }
 
 word32
@@ -723,7 +729,7 @@ get_itimer()
 	/* asm volatile("rdtsc" : "=%eax"(ret) : : "%edx"); */
 
 	/* GCC bug report 2001-03/msg00786.html used: */
-	/*register word64 dtmp; */
+	/*register dword64 dtmp; */
 	/*asm volatile ("rdtsc" : "=A" (dtmp)); */
 	/*return (word32)dtmp; */
 
@@ -746,7 +752,7 @@ get_itimer()
 	return ret;
 #  else
 #	if defined(__aarch64__)		/* 64-bit ARM architecture */
-		register word64 ret;
+		register dword64 ret;
 		asm volatile("mrs %0,CNTVCT_EL0" : "=r"(ret));
 		return ret;
 #	else
@@ -884,12 +890,15 @@ get_remaining_operands(word32 addr, word32 opcode, word32 psr, Fplus *fplus_ptr)
 
 
 #define ACC8
+#define IS_ACC16	0
 #define ENGINE_TYPE enter_engine_acc8
 #include "engine.h"
 // The above creates enter_engine_acc8
 
 #undef ACC8
+#undef IS_ACC16
 #undef ENGINE_TYPE
+#define IS_ACC16	1
 #define ENGINE_TYPE enter_engine_acc16
 #include "engine.h"
 // The above creates enter_engine_acc16
@@ -906,8 +915,8 @@ get_remaining_operands(word32 addr, word32 opcode, word32 psr, Fplus *fplus_ptr)
 		tmp_pc_ptr->dcycs = fcycles + g_last_vbl_dcycs - fplus_2;
 
 #define LOG_PC_MACRO2()						\
-		tmp_pc_ptr->psr_acc = ((psr & ~(0x82)) << 16) + acc +	\
-			(neg << 23) + ((!zero) << 17);			\
+		tmp_pc_ptr->psr_acc = ((psr & ~(0x82)) << 16) | acc |	\
+			((neg7 & 0x80) << 16) | ((!zero) << 17);	\
 		tmp_pc_ptr->xreg_yreg = (xreg << 16) + yreg;		\
 		tmp_pc_ptr->stack_direct = (stack << 16) + direct;	\
 		tmp_pc_ptr++;						\
@@ -917,25 +926,21 @@ get_remaining_operands(word32 addr, word32 opcode, word32 psr, Fplus *fplus_ptr)
 		g_log_pc_ptr = tmp_pc_ptr;
 
 #define LOG_DATA_MACRO(in_addr, in_val, in_size, in_stat)		\
-		g_log_data_ptr->dcycs = fcycles + g_last_vbl_dcycs;	\
-		g_log_data_ptr->stat = in_stat;				\
-		g_log_data_ptr->addr = in_addr;				\
-		g_log_data_ptr->val = in_val;				\
-		g_log_data_ptr->size = in_size;				\
-		g_log_data_ptr++;					\
-		if(g_log_data_ptr >= g_log_data_end_ptr) {		\
-			g_log_data_ptr = g_log_data_start_ptr;		\
-		}
+		LOG_DATA_MACRO_ACT(in_addr, in_val, in_size, in_stat)
 
 #undef ACC8
+#undef IS_ACC16
 #undef ENGINE_TYPE
 #define ACC8
+#define IS_ACC16	0
 #define ENGINE_TYPE enter_engine_acc8_log
 #include "engine.h"
 // The above creates enter_engine_acc8_log
 
 #undef ACC8
+#undef IS_ACC16
 #undef ENGINE_TYPE
+#define IS_ACC16	1
 #define ENGINE_TYPE enter_engine_acc16_log
 #include "engine.h"
 // The above creates enter_engine_acc16_log

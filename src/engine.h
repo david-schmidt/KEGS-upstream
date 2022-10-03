@@ -1,8 +1,8 @@
-// "@(#)$KmKId: engine.h,v 1.3 2020-12-11 19:30:59+00 kentd Exp $"
+// "@(#)$KmKId: engine.h,v 1.6 2021-08-17 00:08:36+00 kentd Exp $"
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2020 by Kent Dickey		*/
+/*			Copyright 2002-2021 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -21,7 +21,7 @@ ENGINE_TYPE (Engine_reg *engine_ptr)
 	Fplus	*fplus_ptr;
 	byte	*stat;
 	double	fcycles, fplus_1, fplus_2, fplus_3, fplus_x_m1, fcycles_tmp1;
-	register word32	kpc, acc, xreg, yreg, direct, psr, zero, neg, addr;
+	register word32	kpc, acc, xreg, yreg, direct, psr, zero, neg7, addr;
 	word32	wstat, arg, stack, dbank, opcode, addr_latch, tmp1, tmp2;
 	word32	getmem_tmp, save_addr, pull_tmp, tmp_bytes;
 
@@ -40,7 +40,7 @@ ENGINE_TYPE (Engine_reg *engine_ptr)
 	fcycles = engine_ptr->fcycles;
 	fplus_ptr = engine_ptr->fplus_ptr;
 	zero = !(psr & 2);
-	neg = (psr >> 7) & 1;
+	neg7 = psr;
 
 	fplus_1 = fplus_ptr->plus_1;
 	fplus_2 = fplus_ptr->plus_2;
@@ -78,7 +78,7 @@ ENGINE_TYPE (Engine_reg *engine_ptr)
 	engine_ptr->fcycles = fcycles;
 
 	psr = psr & (~0x82);
-	psr |= (neg << 7);
+	psr |= (neg7 & 0x80);
 	psr |= ((!zero) << 1);
 
 	engine_ptr->psr = psr;

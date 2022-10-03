@@ -1,8 +1,8 @@
-const char rcsid_adb_c[] = "@(#)$KmKId: adb.c,v 1.88 2021-01-23 22:44:35+00 kentd Exp $";
+const char rcsid_adb_c[] = "@(#)$KmKId: adb.c,v 1.98 2021-08-17 00:08:36+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2019 by Kent Dickey		*/
+/*			Copyright 2002-2021 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -21,7 +21,7 @@ extern word32 g_vbl_count;
 extern int g_num_lines_prev_superhires640;
 extern int g_num_lines_prev_superhires;
 extern int g_rom_version;
-extern int g_fast_disk_emul;
+extern int g_fast_disk_emul_en;
 extern int g_limit_speed;
 extern int g_irq_pending;
 extern int g_swap_paddles;
@@ -656,6 +656,9 @@ adb_set_config(word32 val0, word32 val1, word32 val2)
 		g_kbd_ctl_addr = new_kbd;
 	}
 
+	if(val1) {
+		// Do nothing
+	}
 
 	tmp1 = val2 >> 4;
 	if(tmp1 == 4) {
@@ -1495,7 +1498,7 @@ mouse_read_c024(double dcycs)
 		}
 	}
 
-	em_active = 0;		// HACK!
+	//em_active = 0;		// HACK!
 	a2_x = g_mouse_a2_x;
 	a2_y = g_mouse_a2_y;
 
@@ -1674,7 +1677,7 @@ adb_key_event(int a2code, int is_up)
 
 	pos = 1;
 	ascii = g_a2_key_to_ascii[a2code][1];
-	if(CAPS_LOCK_DOWN && (ascii >= 'a' && ascii <= 'z')) {
+	if(CAPS_LOCK_DOWN && (ascii >= 'a') && (ascii <= 'z')) {
 		pos = 2;
 		if(SHIFT_DOWN && (g_adb_mode & 0x40)) {
 			/* xor shift mode--capslock and shift == lowercase */
@@ -1844,11 +1847,88 @@ adb_increment_speed()
 	printf("Toggling g_limit_speed to %d%s\n", g_limit_speed, str);
 }
 
-void
-adb_physical_key_update(Kimage *kimage_ptr, int a2code, int is_up,
-			int shift_down, int ctrl_down, int lock_down)
+int
+adb_ascii_to_a2code(int unicode_c, int a2code, int *shift_down_ptr)
 {
-	int	autopoll, special, ascii_and_type, ascii;
+	int	i;
+
+	switch(unicode_c) {
+	case 0x00a3:		// British pound
+		unicode_c = '#';
+		break;
+	case 0x00e0:		// a with left accent
+		unicode_c = '@';
+		break;
+	case 0x00b0:		// degrees (French)
+	case 0x00c4:		// A with umlaut (German, Swedish)
+	case 0x00a1:		// ! upside down (Spanish)
+	case 0x00c6:		// AE (Danish)
+		unicode_c = '[';
+		break;
+	case 0x00e7:		// c with tail (French/Italian)
+	case 0x00d1:		// N with ~ (Spanish)
+	case 0x00d6:		// O with umlaut (German, Swedish)
+	case 0x00d8:		// O with slash (Danish)
+		unicode_c = '\\';
+		break;
+	case 0x00a7:		// ss like thing (French)
+	case 0x00dc:		// U with umlaut
+	case 0x00bf:		// ? upside down (Spanish)
+	case 0x00c5:		// A with circle (Danish)
+	//case 0x00e9:		// e with right accent (Italian)
+		unicode_c = ']';
+		break;
+	//case 0x0000:		// u with left accent (Italian)
+	//	unicode_c = '`';
+	//	break;
+	case 0x00e4:		// a with umlaut (german)
+	case 0x00e9:		// e with accent (french)
+	case 0x0000:		// ae (Danish)
+		unicode_c = '{';
+		break;
+	case 0x00f6:		// o with umlaut (German/Swedish)
+	case 0x00f9:		// u with left accent (French)
+	case 0x00f8:		// o with slash (Danish)
+	case 0x00f1:		// n with ~ (Spanish)
+	case 0x00f2:		// o with ` (Italian)
+		unicode_c = '|';
+		break;
+	case 0x00e8:		// e with ` (French, Italian)
+	case 0x00fc:		// u with umlaut (German)
+	case 0x00e5:		// a with circle (Danish/Swedish)
+		unicode_c = '}';
+		break;
+	case 0x00a8:		// two high dots (French)
+	case 0x00ec:		// i with ` (Italian)
+	case 0x00df:		// german B thing (German)
+		unicode_c = '~';
+		break;
+	}
+
+	if(unicode_c > 0x7f) {
+		return a2code;			// Use a2code instead
+	}
+
+	for(i = 0; i < 128; i++) {
+		if(g_a2_key_to_ascii[i][1] == unicode_c) {	// Not-shifted
+			*shift_down_ptr = 0;
+			return g_a2_key_to_ascii[i][0];
+		}
+		if(g_a2_key_to_ascii[i][2] == unicode_c) {	// Shifted
+			*shift_down_ptr = 1;
+			return g_a2_key_to_ascii[i][0];
+		}
+	}
+
+	return a2code;		// Not found, use default a2code
+}
+
+void
+adb_physical_key_update(Kimage *kimage_ptr, int a2code, word32 unicode_c,
+		int is_up, int shift_down, int ctrl_down, int lock_down)
+{
+	word32	restore_c025_val;
+	int	autopoll, special, ascii_and_type, ascii, new_shift;
 
 	/* this routine called by xdriver to pass raw codes--handle */
 	/*  ucontroller and ADB bus protocol issues here */
@@ -1860,6 +1940,17 @@ adb_physical_key_update(Kimage *kimage_ptr, int a2code, int is_up,
 	if(a2code < 0 || a2code > 0x7f) {
 		halt_printf("a2code: %04x!\n", a2code);
 		return;
+	}
+	restore_c025_val = 0;
+	if(unicode_c > 0) {
+		// To enable international keyboards, ignore a2code, look up
+		//  what U.S. keycode would be and return that
+		new_shift = g_c025_val & 1;
+		a2code = adb_ascii_to_a2code(unicode_c, a2code, &new_shift);
+		if(a2code && (g_c025_val & 1) != new_shift) {
+			restore_c025_val = g_c025_val | 0x100;
+			g_c025_val = (g_c025_val & -2) | new_shift;
+		}
 	}
 
 	/* Remap 0x7b-0x7e to 0x3b-0x3e (arrow keys on new mac keyboards) */
@@ -1896,7 +1987,7 @@ adb_physical_key_update(Kimage *kimage_ptr, int a2code, int is_up,
 	}
 
 	/* Only process reset requests here */
-	if(is_up == 0 && a2code == 0x7f && CTRL_DOWN) {
+	if((is_up == 0) && (a2code == 0x7f) && CTRL_DOWN) {
 		/* Reset pressed! */
 		printf("Reset pressed since CTRL_DOWN: %d\n", CTRL_DOWN);
 		do_reset();
@@ -1921,9 +2012,10 @@ adb_physical_key_update(Kimage *kimage_ptr, int a2code, int is_up,
 			break;
 		case 0x07: /* F7 - toggle debugger window, SHIFT:fast disk */
 			if(SHIFT_DOWN) {
-				g_fast_disk_emul = !g_fast_disk_emul;
-				printf("g_fast_disk_emul is now %d\n",
-							g_fast_disk_emul);
+				g_fast_disk_emul_en = !g_fast_disk_emul_en;
+				iwm_update_fast_disk_emul(g_fast_disk_emul_en);
+				printf("g_fast_disk_emul_en is now %d\n",
+							g_fast_disk_emul_en);
 			} else {
 				video_set_active(&g_debugwin_kimage,
 						!g_debugwin_kimage.active);
@@ -2019,6 +2111,10 @@ adb_physical_key_update(Kimage *kimage_ptr, int a2code, int is_up,
 			/* was up, now down */
 			adb_virtual_key_update(a2code, is_up);
 		}
+	}
+
+	if(restore_c025_val) {
+		g_c025_val = restore_c025_val & 0xff;		// Restore shift
 	}
 }
 

@@ -1,11 +1,11 @@
 
-KEGS: Kent's Emulated GS version 0.91
+KEGS: Kent's Emulated GS version 1.07
 http://kegs.sourceforge.net/
 
 What is this?
 -------------
 
-KEGS is an Apple IIgs emulator for Mac OS X, Linux, and Win32.
+KEGS is an Apple IIgs emulator for Mac OS X and Linux.
 The Apple IIgs was the most powerful computer in the Apple II line.
 It first was sold in 1986.  An Apple IIgs has the capability to run almost all
 Apple II, Apple IIe, and Apple IIc programs.
@@ -13,7 +13,7 @@ Apple II, Apple IIe, and Apple IIc programs.
 KEGS supports all Apple IIgs graphics modes (which include all Apple //e
 modes), plus plays all Apple IIgs sounds accurately.  It supports
 serial port emulation through TCP/IP connections, or can use real
-serial ports on Windows and Mac OS X.
+serial ports on Linux and Mac OS X.
 
 The ROMs and GS/OS (the Apple IIgs operating system) are not included
 with KEGS since they are not freely distributable.  KEGS is a little
@@ -21,18 +21,14 @@ user-hostile now, so if something doesn't work, let me know what went
 wrong, and I'll try to help you out.  See my email address at the end of
 this file.
 
-I'd like to thank Chea Chee Keong who created KEGS32, the first Windows
-port of KEGS.  That version, which has a better Windows-interface but which
-is based on older core code, is at http://www.geocities.com/akilgard/kegs2.
-
 KEGS features:
 -------------
 
 Fast 65816 emulation:
-	About 80MHz on a Pentium 4 1.7GHz or a Mac G4 1GHz.
+	About 500-600MHz on a modern Mac Intel machines.  1GHz on Mac M1.
 Emulates low-level 5.25" and 3.5" drive accesses (even nibble-copiers work!).
 Emulates classic Apple II sound and 32-voice Ensoniq sound.
-	All sound is played in 16-bit stereo at 48KHz (44100 on a Mac).
+	All sound is played in 16-bit stereo at 48KHz.
 Emulates all Apple IIgs and Apple II graphics modes, including border effects.
 	Can handle display changes at any time (superhires at the top, lores
 	at the bottom).  Always does 60 full screen video updates per second.
@@ -51,7 +47,8 @@ the Configuration Panel.
 
 KEGS is so accurate, even the built-in ROM selftests pass (you must be in
 2.8MHz speed mode to pass the self-tests and you must set the Configuration
-Panel entry "Enable Text Page 2 shadow" to "Disabled on ROM 01" for ROM 01).
+Panel entry "Enable Text Page 2 shadow" to "Disabled on ROM 01" for ROM 01.
+Otherwise, the selftests will fail with code 040000).
 
 Release info:
 ------------
@@ -82,8 +79,8 @@ You need to provide:
 		(or in your home directory).  It can be either from a ROM 01
 		(131072 bytes long) or from a ROM 03 machine (262144 bytes
 		long.)
-	3) A disk image to boot.  This can be either "raw" format or 2IMG.
-		See discussion below.  GS/OS would be best.
+	3) A disk image to boot.  This can be either "raw" format, 2IMG, or
+		Woz.  See discussion below.
 
 Getting ROMs
 ------------
@@ -91,13 +88,16 @@ Getting ROMs
 You need a copy of the memory from fe/0000 - ff/ffff from a ROM 01 GS
 or fc/0000 - ff/ffff from a ROM 03 GS, and put that in a file called
 "ROM".  I'll eventually write detailed instructions on how to do this.
+There are links to download ROM 01 and ROM 03 at
+https://www.whatisthe2gs.apple2.org.za.
+
 
 Running KEGS:
 ------------
 
 The distribution comes with the full source code for all platforms in
-the src/ directory, the Windows executable as kegswin.exe, and the Mac OS X
-executable as KEGSMAC.
+the src/ directory, the Linux executable as xkegs, and the Mac OS X
+executable as KEGSMAC.app.
 
 See the README.compile.txt file for more info about compiling for Linux.
 
@@ -159,12 +159,13 @@ only have partitions on direct devices you mount (or on a Mac, of .dmg
 images of CDs).  For instance, on a Mac, /dev/disk1 can sometimes be the
 CDROM drive.
 
-KEGS can handle "raw", .dsk, .po, 2IMG, 5.25" ".nib" images, most Mac
-Diskcopy images and partitioned images.  The .dsk and .po formats you often
-find on the web are really "raw" formats, and so they work fine.  KEGS uses
-the host file permissions to encode the read/write status of the image.
-KEGS can open any image file compressed with gzip (with the extension ".gz")
-automatically as a read-only disk image.
+KEGS can handle "raw", .dsk, .po, 2IMG, 5.25" ".nib" images, most Mac Diskcopy
+images and partitioned images, .zip files, .sdk archives, and .woz files.  The
+.dsk and .po formats you often find on the web are really "raw" formats, and
+so they work fine.  KEGS uses the host file permissions to encode the
+read/write status of the image.  KEGS can open any image file compressed with
+gzip (with the extension ".gz") or inside a .zip archive automatically as a
+read-only disk image.
 
 An image is the representation of an Apple IIgs disk, but in a file on
 your computer.  For 3.5" disks, for example, a raw image would be exactly
@@ -172,12 +173,8 @@ your computer.  For 3.5" disks, for example, a raw image would be exactly
 the image, and does the correct reads and writes of the Unix file instead.
 
 To do "useful" things with KEGS, you need to get a bootable disk image.
-You can go to http://www.info.apple.com/support/oldersoftwarelist.html and
-get Apple IIgs System 6.  Unfortunately, Apple now only has .sea files which
-are executable files for Macintosh only.  You need a macintosh to execute
-those programs, which creates Disk Copy image files with no special extensions
-(and with spaces in the names).  Once you get those files back to your
-host machine, you can use them by selecting them from the Configuration Panel.
+You can go to: https://archive.org/details/softwarelibrary_apple2gs
+to download GS/OS 6.0.1 (the last official Apple release).
 
 You can also get Apple II programs in ".dsk" format from a variety of
 sites on the internet, and these should all work on KEGS as well.
@@ -186,19 +183,16 @@ KEGS also supports partitioned devices.  For instance, if you have a CD-ROM
 on your computer, just pop an Apple II CD in, and KEGS can mount it, if
 you have a Unix-based system (Linux, any Unix, and Mac OS X).
 
-If you're on a Mac, be careful letting KEGS use your HFS partitions--
-GSOS has many HFS bugs when it is writing.  Also avoid having KEGS access
-an image which have mounted on your Mac at the same time (always unmount
-it from your Mac before letting KEGS access it)!
+Avoid having KEGS access a writeable image which have mounted on your Mac
+at the same time (always unmount it from your Mac before letting KEGS
+access it)!
 
 If you do not have any disk mounted in s7d1, KEGS will jump into the monitor.
 To boot slot 6 (or slot 5), use the Apple IIgs Control Panel by pressing
 Ctrl-Command-ESC.
 
-Support for 5.25" nibblized images is read-only for now (since the
-format is kinda simplistic, it's tricky for KEGS to write to it since KEGS
-has more information than fits in that format).  Just select your image,
-like "disk.nib" in the kegs_conf file like any .dsk or .po image.
+Support for 5.25" Woz nibblized images is limited to using provided images--
+KEGS cannot create new images currently.
 
 In addition to changing disks, you can also just "eject" and image by
 moving the cursor to select that slot/drive and then press "E".  The
@@ -238,10 +232,7 @@ Using KEGS:
 The host computer mouse is the Apple IIgs mouse and joystick by default.
 By default, the host pointer is not constrained inside the window and
 remains visible.  Press F8 to hide the cursor and constrain the mouse.  F8
-again toggles out of constrain mode.  When the GSOS desktop is running,
-KEGS hides the host cursor automatically and enables special tracking
-which forces the emulated cursor to follow the host cursor.  If this doesn't
-work right under some program, just press F8 for better compatibility.
+again toggles out of constrain mode.
 
 The middle mouse button or Shift-F6 causes KEGS to stop emulation, and enter
 the debugger.  You can continue with "g" then return in the debug window.
@@ -354,7 +345,7 @@ running.  (Now I know why Appleworks GS always seemed to crash!).
 
 KEGS divides buggy programs into two severities: Code Yellow and Code Red.
 The status is displayed in words in the text area under the emulation window.
-If nothing's wrong, nothing is printed.
+If nothing is wrong, nothing is printed.
 
 A Yellow bug is a mild bug where an Apple IIgs program merely read an
 invalid location.  Although completely harmless, it indicates the potential
@@ -371,44 +362,53 @@ save work immediately (to new files) and restart KEGS if you get into the
 Red mode.
 
 KEGS also supports breakpoints and watchpoints.  In the debug window, you
-set a breakpoint at an address by typing the address, followed by a 'B'
-(it must be in caps).  To set a breakpoint on the interrupt jump point,
-type:
+set a breakpoint at an address by typing 'bp' and then the address.
+To set a breakpoint on the interrupt jump point, type:
 
-e1/0010B
+bp e10010
 
-The format is "bank/address" then "B", where the B must be in caps and
-the address must use lower-case hex.  For Apple IIe programs, just use a
-bank of 0.
+To list all breakpoints, just type 'bp' with no number after it.
+To delete a breakpoint, enter 'bp clear" and then the address:
 
-To list all breakpoints, just type 'B' with no number in front of it.
-To delete a breakpoint, enter its address followed by 'D', so
+bp clear e10010
 
-e1/0010D
+deletes the above breakpoint.  You can also break on a range of addresses:
 
-deletes the above breakpoint.  The addresses work like the IIgs monitor:
-once you change banks, you can use shortcut addresses:
+bp e10400-e107ff
 
-e1/0010B
-14B
+You can erase all breakpoints with:
 
-will add breakpoints at e1/0010 and e1/0014.
+bp clear all
 
 This is a "transparent" breakpoint--memory is not changed.  But any
-read or write to that address will cause KEGS to halt.  So you can
+read (including instruction fetch) or write to that address will cause KEGS to
+halt right after the access occurs.  So you can
 set breakpoints on I/O addresses, or ROM, or whatever.  Setting a breakpoint
 slows KEGS down somewhat, but only on accesses to the 256 byte "page"
 the breakpoint is on. Breakpoints are not just instruction breakpoints,
 they also cause KEGS to halt on any data access, too (usually called
 watchpoints).
 
-Frederic Devernay has written a nice help screen available in the
-debugger when you type "h".
+You can get more debugger window help with "help" and "help bp".
 
 Useful locations for setting breakpoints:
-0/3f0B		- Break handler
-0/c000B		- Keyboard latch, programs read keys from this address
+bp 3f0		- Break handler
+bp c000		- Keyboard latch, programs read keys from this address
 
+For debug, KEGS can log the instruction executed, saving the last 2 million
+instructions.  Enable logging with (in the debug window, press F7):
+
+logpc on
+
+Then run whatever you want, and stop KEGS (Shift-F6, middle mouse, or hitting
+a breakpoint).  Then in the debug window do:
+
+logpc save
+
+This will create the text file "logpc_out" which you can look at.
+
+You can start KEGS with "logpc on" by passing in the "-logpc" option to
+KEGS when you start it.
 
 
 KEGS command-line option summary:
@@ -431,6 +431,7 @@ set them so they are no longer listed here.
 -dhr140: Will use the old Double-hires color algorithm that results in
 	exactly 140 colors across the screen, as opposed to the blending
 	being done by default.
+-logpc: Turn on PC logging.  Useful for debugging early startup problems.
 
 X-Windows/Linux options
 -15:	KEGS will only look for a 15-bit X-Window display.
@@ -446,12 +447,15 @@ X-Windows/Linux options
 	default by specifying a -skip explicitly.
 
 
-
 Apple IIgs Control Panel:
 ------------------------
 
 You can get to the Apple IIgs control panel (unless some application
 has locked it out) using Ctrl-Command-ESC.
+
+Important things to do here: Change the speed to 1MHz (for Apple II
+compatibility), change the boot device (so you can boot s6d1 directly),
+and change Slot 4 to Your Card to enable Mockingboard.
 
 
 How to use "to_pro":
@@ -532,33 +536,37 @@ KEGS, by default, runs the IWM (3.5" and 5.25" disks) emulation in an
 emulates the hardware "faster" than real, meaning the data the code
 being emulated expects is made available much faster than on a real
 Apple IIgs, providing a nice speed boost.  For instance, the 5.25"
-drives run 10x the real speed usually.  Almost everything will work
+drives run 100x the real speed usually.  Almost everything will work
 except for nibble copiers, which don't like the data coming this fast.
-(Meaning, unless you're using a nibble copier, you shouldn't run into an
-issue.  All games/demos/etc run fine in this mode).  To make nibble
-copiers work, Press F7.
+Also, formatting new 5.25" disks doesn't work will in fast_disk_emul mode.
+(Meaning, unless you're using a nibble copier or formatting a disk, you
+shouldn't run into an issue.  Almost all games/demos/etc run fine in this
+mode).  To make nibble copiers work, Press Shift-F7.
 
-KEGS can read in the ".nib" nibblized disk format, but as read-only mode.  If
-the emulated image is no longer ProDOS or DOS 3.3 standard, KEGS will
-automatically treat the image as "Not-write-through-to-Image" from then
-on.  This mode means KEGS will continue to emulate the disk properly in
-memory, but it cannot encode the changes in the standard .dsk or .nib
-image format.  It prints a message saying it has done so.  However,
-the "disk" in emulation is fully useable as long as KEGS is running.  A
-standard reformatting will not cause an image to flip to not-write-
-through-to-Image, but running things like a "drive-speed" test will cause
-further changes not to propagate to the Unix file.  You will need
-to "eject" the image and re-insert it before writes will take effect.
+If you start with a .dsk or other raw image, and do writes to it that are no
+longer ProDOS or DOS 3.3 standard, KEGS will automatically treat the image as
+"Not-write-through-to-Image" from then on.  This mode means KEGS will continue
+to emulate the disk properly in memory, but it cannot encode the changes in
+the standard .dsk or .po image format.  It prints a message saying it has done
+so.  However, the "disk" in emulation is fully useable as long as KEGS is
+running.  A standard reformatting will not cause an image to flip to
+not-write- through-to-Image, but running things like a "drive-speed" test will
+cause further changes not to propagate to the Unix file.  You will need to
+"eject" the image and re-insert it before writes will take effect.
 
 In full accuracy mode (i.e., not fast_disk_emul), 5.25" drive accesses
 force KEGS to run at 1MHz, and 3.5" drive accesses force KEGS to run at
 2.5MHz.
 
+KEGS supports WOZ version 1 and version 2 images.  These are fully read/write,
+but most Woz images are marked read-only in the header.  When accessing a
+Woz image, KEGS automatically acts as if fast_disk_emul is disabled.
+
 KEGS Timing:
 -----------
 
 KEGS supports running at four speeds:  1MHz, 2.8MHz, 8.0MHz, and Unlimited.
-Pressing the middle mouse button cycles between these modes.  The 1MHz
+Pressing the the F6 key cycles between these modes.  The 1MHz
 and 2.8MHz speeds force KEGS to run at exactly those speeds, providing
 accurate reproduction of a real Apple IIgs.
 
@@ -567,37 +575,37 @@ it will extend the emulated time to maintain the illusion of running
 at 1MHz.  That is, it may do just 40 screen refreshes per real second,
 instead of the usual 60.  This happens rarely.
 
+(There's a Mac OS X bug in recent releases after 10.13 which can cause KEGS
+to draw VERY slowly to the screen, such that KEGS falls below 1MHz.  On your
+Mac, go to the Apple Menu->System Prefernces, then select Displays.  Select
+the "Color" tab.  Change to a different setting, usually one with "RGB" in
+the name.  See if KEGS now easily exceeds 1MHz).
+
 If you force KEGS to run at 1MHz, it will strive to run at exactly
-1MHz (well, really 1.024MHz).  If it is running faster (almost always),
+1MHz (well, really 1.022MHz).  If it is running faster (almost always),
 it will pause briefly several times a second to maintain the 1MHz speed.  It
 does this in a friendly way that makes time available to other tasks.
 This makes older Apple II games very playable just like a
 real Apple IIgs on slow speed.  KEGS is running at exactly the same
 speed as an Apple //e when in 1MHz mode.  The 1MHz mode you set
-through the right mouse button overrides the "fast" mode you can access
+through the F6 key overrides the "fast" mode you can access
 through the control panel.  But, 3.5" accesses will "speed up" to 2.8MHz
 to enable that code to operate correctly while the 3.5" disk is being
 accessed.
 
 If you force KEGS to run at 2.8MHz, KEGS tries to run at exactly 2.8MHz.  But
-like a real unaccelerated Apple IIgs, if you set the control panel to
-"slow", it will really be running at 1MHz.  Accesses to 5.25" disk
-automatically slow down to 1MHz, when running the IWM in accurate
-mode (F7).  KEGS may not be able to keep up with some programs running
-at 2.8MHz due to video and sound overheads on lower-end machines.  If
-that happens, it effectively runs slower by extending the emulated
-"second", like in the 1MHz mode.  You can tell this is happening
-when Eff MHz in the status area falls below 2.8MHz.  If KEGS is running
-faster than 2.8MHz, it takes small pauses to slow down, just like in
-1MHz.  Many Apple IIgs demos must be run at 2.8MHz.  The built-in
-selftests (cmd-option-ctrl-Reset) must run at 2.8MHz.  Many Apple IIgs
-action games are more playable at 2.8MHz.
+like a real unaccelerated Apple IIgs, if you set the control panel to "slow",
+it will really be running at 1MHz.  Accesses to 5.25" disk automatically slow
+down to 1MHz, when running the IWM in accurate mode (F7) or when accessing a
+Woz image.  Many Apple IIgs demos must be run at 2.8MHz.  The built-in
+selftests (cmd-option-ctrl-Reset) must run at 2.8MHz.  Many Apple IIgs action
+games are more playable at 2.8MHz.
 
-The 8.0MHz setting means follow the ZipGS-selected speed, but don't go
-faster than 8.0MHz.  If your host computer cannot keep up, then the
-emulated second will be extended.  You can use the ZipGS control panel,
-or ZIPPY.GS on the sample disk image to set the emulated ZipGS speed to
-anything from 1MHz to 8MHz in .5MHz increments.
+The 8.0MHz setting means follow the ZipGS-selected speed, but don't go faster
+than 8.0MHz.  If your host computer cannot keep up, then the emulated second
+will be extended, and KEGS will have choppy audio and video.  You can use the
+ZipGS control panel, or ZIPPY.GS on the sample disk image to set the emulated
+ZipGS speed to anything from 1MHz to 8MHz in .5MHz increments.
 
 The Unlimited setting means run as fast as possible, whatever speed that
 is (but always above 1MHz).  Eff MHz gives you the current Apple IIgs
@@ -782,6 +790,14 @@ in the debug window.
 
 If your display is not using shared memory, audio defaults to off unless
 you override it with "-audio 1".
+
+Mockingboard emulation is just for the AY8913 sound chip, not for the
+SC01 speech chip.  To use the Mockingboard, you must do Ctrl-Cmd-ESC to
+get to the IIgs control panel, select Control Panel, then Slots, then
+set slot 4 to "Your card".  Make sure you press return.  Then get out,
+and then do Ctrl-Cmd-Reset to restart KEGS (and make the change take
+effect).
+
 
 SCC (Serial Port) emulation:
 ---------------------------

@@ -1,8 +1,8 @@
-const char rcsid_joystick_driver_c[] = "@(#)$KmKId: joystick_driver.c,v 1.14 2020-06-16 22:26:47+00 kentd Exp $";
+const char rcsid_joystick_driver_c[] = "@(#)$KmKId: joystick_driver.c,v 1.16 2021-08-17 00:08:36+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2020 by Kent Dickey		*/
+/*			Copyright 2002-2021 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -249,6 +249,9 @@ joystick_update(double dcycs)
 {
 	int	i;
 
+	if(dcycs) {
+		// Avoid unused parameter warnings
+	}
 	for(i = 0; i < 4; i++) {
 		g_paddle_val[i] = 32767;
 	}

@@ -1,8 +1,8 @@
-const char rcsid_unshk_c[] = "@(#)$KmKId: unshk.c,v 1.10 2020-09-13 23:03:10+00 kentd Exp $";
+const char rcsid_unshk_c[] = "@(#)$KmKId: unshk.c,v 1.12 2021-06-30 02:04:16+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2020 by Kent Dickey		*/
+/*			Copyright 2002-2021 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -69,8 +69,8 @@ int
 unshk_unrle(byte *cptr, int len, word32 rle_delim, byte *ucptr)
 {
 	byte	*start_ucptr;
-	word32	c, count;
-	int	outlen;
+	word32	c;
+	int	outlen, count;
 	int	i;
 
 	// RLE is 3 bytes: { 0xdb, char, count}, where count==0 means output
@@ -99,7 +99,7 @@ unshk_unrle(byte *cptr, int len, word32 rle_delim, byte *ucptr)
 }
 
 void
-unshk_lzw_clear(Lzw_state *lzw_ptr, word32 thread_format)
+unshk_lzw_clear(Lzw_state *lzw_ptr)
 {
 	int	i;
 
@@ -114,8 +114,7 @@ unshk_lzw_clear(Lzw_state *lzw_ptr, word32 thread_format)
 // LZW Table format in 32-bit word: { depth[11:0], finalc[7:0], code[11:0] }
 
 byte *
-unshk_unlzw(byte *cptr, Lzw_state *lzw_ptr, byte *ucptr, word32 uclen,
-						word32 thread_format)
+unshk_unlzw(byte *cptr, Lzw_state *lzw_ptr, byte *ucptr, word32 uclen)
 {
 	byte	*end_ucptr, *bptr;
 	word32	mask, val, entry, newcode, finalc_code;
@@ -238,7 +237,7 @@ unshk_data(Disk *dsk, byte *cptr, word32 compr_size, byte *ucptr,
 	dsk->vol_num = cptr[0];		// LZW/1
 	rle_delim = cptr[1];
 	cptr += 2;
-	unshk_lzw_clear(&lzw_state, thread_format);
+	unshk_lzw_clear(&lzw_state);
 
 	// printf("vol_num:%02x, rle_delim:%02x\n", dsk->vol_num, rle_delim);
 
@@ -290,8 +289,7 @@ unshk_data(Disk *dsk, byte *cptr, word32 compr_size, byte *ucptr,
 				//  and then UnRLE down to ucptr;
 				rle_inptr = ucptr + 0x1000;
 			}
-			cptr = unshk_unlzw(cptr, &lzw_state, rle_inptr, len,
-							thread_format);
+			cptr = unshk_unlzw(cptr, &lzw_state, rle_inptr, len);
 			if(cptr == 0) {
 				printf("Bad LZW stream\n");
 				return;
@@ -405,7 +403,7 @@ unshk_parse_header(Disk *dsk, byte *cptr, int compr_size, byte *base_cptr)
 		// Each thread is 16 bytes, so the data is at +16*total_threads
 		// The data is in the same order as the header for the threads
 		// We ignore anything other than a data thread for SDK
-	for(i = 0; i < total_threads; i++) {
+	for(i = 0; i < (int)total_threads; i++) {
 		if((dptr >= cptr_end) || (cptr >= cptr_end)) {
 			return;
 		}
@@ -448,7 +446,7 @@ unshk_parse_header(Disk *dsk, byte *cptr, int compr_size, byte *base_cptr)
 				free(ucptr);
 			} else {
 				// Real success, set raw_size
-				dsk->raw_size = thread_eof;
+				dsk->raw_dsize = thread_eof;
 				dsk->raw_data = ucptr;
 				return;
 			}

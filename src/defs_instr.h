@@ -1,8 +1,8 @@
-// $KmKId: defs_instr.h,v 1.60 2020-09-06 15:48:18+00 kentd Exp $
+// $KmKId: defs_instr.h,v 1.64 2021-08-17 00:08:26+00 kentd Exp $
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2020 by Kent Dickey		*/
+/*			Copyright 2002-2021 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -306,11 +306,11 @@
 
 #define SET_NEG_ZERO16(val)	\
 	zero = val;		\
-	neg = (val) >> 15;
+	neg7 = (val) >> 8;
 
 #define SET_NEG_ZERO8(val)	\
 	zero = val;		\
-	neg = (val) >> 7;
+	neg7 = val;
 
 #define SET_CARRY8(val)		\
 	psr = (psr & ~1) + (((val) >> 8) & 1);
@@ -397,14 +397,14 @@
 	acc = (acc & 0xff00) + (tmp1 & 0xff);			\
 	psr = (tmp1 >> 16);					\
 	zero = !(psr & 0x2);					\
-	neg = (psr >> 7) & 1;
+	neg7 = psr;
 #else
 # define ADC_INST()						\
 	tmp1 = do_adc_sbc16(acc, arg & 0xffff, psr, 0);		\
 	acc = (tmp1 & 0xffff);					\
 	psr = (tmp1 >> 16);					\
 	zero = !(psr & 0x2);					\
-	neg = (psr >> 7) & 1;
+	neg7 = psr;
 #endif
 
 #undef SBC_INST
@@ -415,14 +415,14 @@
 	acc = (acc & 0xff00) + (tmp1 & 0xff);			\
 	psr = (tmp1 >> 16);					\
 	zero = !(psr & 0x2);					\
-	neg = (psr >> 7) & 1;
+	neg7 = psr;
 #else
 # define SBC_INST()						\
 	tmp1 = do_adc_sbc16(acc, arg & 0xffff, psr, 1);		\
 	acc = (tmp1 & 0xffff);					\
 	psr = (tmp1 >> 16);					\
 	zero = !(psr & 0x2);					\
-	neg = (psr >> 7) & 1;
+	neg7 = psr;
 #endif
 
 
@@ -446,12 +446,12 @@
 
 #ifdef ACC8
 # define BIT_INST()				\
-	neg = arg >> 7;				\
+	neg7 = arg;				\
 	zero = (acc & arg & 0xff);		\
 	psr = (psr & (~0x40)) | (arg & 0x40);
 #else
 # define BIT_INST()				\
-	neg = arg >> 15;			\
+	neg7 = arg >> 8;			\
 	zero = (acc & arg & 0xffff);		\
 	psr = (psr & (~0x40)) | ((arg >> 8) & 0x40);
 #endif

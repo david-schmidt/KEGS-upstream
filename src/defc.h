@@ -1,5 +1,5 @@
 #ifdef INCLUDE_RCSID_C
-const char rcsid_defc_h[] = "@(#)$KmKId: defc.h,v 1.121 2021-01-06 01:38:27+00 kentd Exp $";
+const char rcsid_defc_h[] = "@(#)$KmKId: defc.h,v 1.126 2021-07-14 00:14:12+00 kentd Exp $";
 #endif
 
 /************************************************************************/
@@ -16,15 +16,15 @@ const char rcsid_defc_h[] = "@(#)$KmKId: defc.h,v 1.121 2021-01-06 01:38:27+00 k
 
 #include "defcomm.h"
 
-#define STRUCT(a) typedef struct _ ## a a; struct _ ## a
+#define STRUCT(a) typedef struct a ## _st a; struct a ## _st
 
 typedef unsigned char byte;
 typedef unsigned short word16;
 typedef unsigned int word32;
 #if _MSC_VER
-typedef unsigned __int64 word64;
+typedef unsigned __int64 dword64;
 #else
-typedef unsigned long long word64;
+typedef unsigned long long dword64;
 #endif
 
 /* 28MHz crystal, plus every 65th 1MHz cycle is stretched 140ns */
@@ -78,6 +78,11 @@ typedef unsigned long long word64;
 #endif
 
 #define MAX_CHANGE_RECTS	20
+
+#ifdef __GNUC__
+int dbg_printf(const char *fmt, ...) __attribute__ ((
+						__format__(printf, 1, 2)));
+#endif
 
 STRUCT(Pc_log) {
 	double	dcycs;
@@ -175,13 +180,14 @@ STRUCT(Cfg_menu) {
 STRUCT(Cfg_dirent) {
 	char	*name;
 	int	is_dir;
-	int	size;
-	int	image_start;
 	int	part_num;
+	dword64	dsize;
+	dword64	dimage_start;
+	dword64	compr_dsize;
 };
 
 STRUCT(Cfg_listhdr) {
-	Cfg_dirent	*direntptr;
+	Cfg_dirent *direntptr;
 	int	max;
 	int	last;
 	int	invalid;
@@ -260,7 +266,8 @@ STRUCT(Lzw_state) {
 #define IRQ_PENDING_ADB_DATA		0x02000
 #define IRQ_PENDING_ADB_MOUSE		0x04000
 #define IRQ_PENDING_DOC			0x08000
-#define IRQ_PENDING_MOCKINGBOARD	0x10000
+#define IRQ_PENDING_MOCKINGBOARDA	0x10000
+#define IRQ_PENDING_MOCKINGBOARDB	0x20000		/* must be BOARDA*2 */
 
 
 #define EXTRU(val, pos, len)					\

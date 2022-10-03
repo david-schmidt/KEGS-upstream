@@ -1,4 +1,4 @@
-# $Id: README.a2.compatibility.txt,v 1.5 2020/12/11 05:12:17 kentd Exp $
+# $Id: README.a2.compatibility.txt,v 1.6 2021/06/26 16:54:23 kentd Exp $
 
 Bard's Tale II GS: Problem: Doesn't recognize any save disk as a ProDOS disk.
 	It's detecting a "ProDOS" disk by checking for a string on block
@@ -32,6 +32,13 @@ Caverns of Callisto: Requires old C600 ROM in slot 6 (Slot 6==Your Card).
 
 Championship Loderunner: Requires disk to be writeable or else it starts
 	the level and then jumps immediately back to the title page.
+
+Copy II+ 8.1: When doing a bit-copy, if the pattern at $5c13-$5c1b is detected
+	($d5,$aa,$96,xx,xx,xx,xx,$aa,$aa, which is DOS 3.3 sector $00) at the
+	start of the track, then it writes $5c21-$5c24 out just before it:
+	$d5,$ab,$cd,$df when doing bit copies.  This may be either a serial
+	number code, or just a way to detect bit-copied disks.  5.25" bit
+	copies always seem to write 9-bit sync bytes, which is wasteful.
 
 Drol: Needs slot 6 set to "Your Card" from the IIgs control panel
 	(Ctrl-Cmd-ESC, then choose "Slots").
@@ -75,6 +82,9 @@ Flobynoid: Must disable Fast Disk Emul (hit F7 to toggle it off) since
 Jeopardy: Disk must be writeable or else it displays "DISK ERROR" and
 	then crashes into the monitor.
 
+mb-audit v0.7: You must run KEGS at 2.8MHz, but in the IIgs control panel
+	(Ctrl-Cmd-ESC) set the speed to slow.  Ensure slot 4 is "Your Card".
+
 Microbe: Crashes upon booting.
 	Code at $599E tries to pull a return address off of a location
 	beneath the stack pointer and jump to it, but it doesn't add 1
@@ -112,6 +122,11 @@ Moon Patrol: Crashes into the monitor after completing checkpoint E.
 	which is a NOP on 6502, but is a COP instruction to 65816.  The
 	COP instruction acts like BRK and will crash.  The patch just
 	makes it a real NOP.
+
+Planetfall.woz: Do not start it by booting DOS/ProDOS and then doing PR#6.
+	It doesn't reset the output vector value at $36/$37, so as soon as
+	it tries to do any output, it reboots!  Oops!  You can boot it from
+	ProDOS/DOS 3.3 by:  call -151  then  c600g
 
 Robotron 2084:
 Robot Battle:

@@ -1,8 +1,8 @@
-const char rcsid_scc_c[] = "@(#)$KmKId: scc.c,v 1.50 2020-12-11 21:07:12+00 kentd Exp $";
+const char rcsid_scc_c[] = "@(#)$KmKId: scc.c,v 1.52 2021-08-17 00:08:36+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2020 by Kent Dickey		*/
+/*			Copyright 2002-2021 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -295,7 +295,7 @@ scc_regen_clocks(int port)
 		scc_serial_win_change_params(port);
 #endif
 	} else {
-		scc_socket_change_params(port);
+		// scc_socket_change_params(port);
 	}
 }
 
@@ -423,7 +423,7 @@ do_scc_event(int type, double dcycs)
 	} else if(type == SCC_TX_EVENT) {
 		scc_ptr->tx_event_pending = 0;
 		scc_ptr->tx_buf_empty = 1;
-		scc_handle_tx_event(port, dcycs);
+		scc_handle_tx_event(port);
 	} else if(type == SCC_RX_EVENT) {
 		scc_ptr->rx_event_pending = 0;
 		scc_maybe_rx_event(port, dcycs);
@@ -934,7 +934,6 @@ scc_evaluate_ints(int port)
 	}
 }
 
-
 void
 scc_maybe_rx_event(int port, double dcycs)
 {
@@ -966,14 +965,14 @@ scc_maybe_rx_event(int port, double dcycs)
 	scc_ptr->rx_queue[depth] = scc_ptr->in_buf[in_rdptr];
 	scc_ptr->in_rdptr = (in_rdptr + 1) & (SCC_INBUF_SIZE - 1);
 	scc_ptr->rx_queue_depth = depth + 1;
-	scc_maybe_rx_int(port, dcycs);
+	scc_maybe_rx_int(port);
 	rx_dcycs = scc_ptr->rx_dcycs;
 	scc_ptr->rx_event_pending = 1;
 	add_event_scc(dcycs + rx_dcycs, SCC_MAKE_EVENT(port, SCC_RX_EVENT));
 }
 
 void
-scc_maybe_rx_int(int port, double dcycs)
+scc_maybe_rx_int(int port)
 {
 	Scc	*scc_ptr;
 	int	depth;
@@ -1002,7 +1001,7 @@ scc_clr_rx_int(int port)
 }
 
 void
-scc_handle_tx_event(int port, double dcycs)
+scc_handle_tx_event(int port)
 {
 	Scc	*scc_ptr;
 	int	tx_int_mode;
@@ -1120,7 +1119,7 @@ scc_add_to_readbufv(int port, double dcycs, const char *fmt, ...)
 }
 
 void
-scc_transmit(int port, word32 val, double dcycs)
+scc_transmit(int port, word32 val)
 {
 	Scc	*scc_ptr;
 	int	out_wrptr;
@@ -1156,11 +1155,11 @@ scc_transmit(int port, word32 val, double dcycs)
 		val = val & 0x7f;
 	}
 
-	scc_add_to_writebuf(port, val, dcycs);
+	scc_add_to_writebuf(port, val);
 }
 
 void
-scc_add_to_writebuf(int port, word32 val, double dcycs)
+scc_add_to_writebuf(int port, word32 val)
 {
 	Scc	*scc_ptr;
 	int	out_wrptr;
@@ -1219,7 +1218,7 @@ scc_read_data(int port, double dcycs)
 		}
 		scc_ptr->rx_queue_depth = depth - 1;
 		scc_maybe_rx_event(port, dcycs);
-		scc_maybe_rx_int(port, dcycs);
+		scc_maybe_rx_int(port);
 	}
 
 	scc_printf("SCC read %04x: ret %02x, depth:%d\n", 0xc03b-port, ret,
@@ -1244,7 +1243,7 @@ scc_write_data(int port, word32 val, double dcycs)
 		/* local loopback! */
 		scc_add_to_readbuf(port, val, dcycs);
 	} else {
-		scc_transmit(port, val, dcycs);
+		scc_transmit(port, val);
 	}
 	scc_try_to_empty_writebuf(port, dcycs);
 

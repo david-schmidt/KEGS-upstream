@@ -1,4 +1,4 @@
-# $KmKId: makefile,v 1.40 2021-01-10 20:20:19+00 kentd Exp $
+# $KmKId: makefile,v 1.41 2021-08-15 15:18:18+00 kentd Exp $
 
 XOPTS_WIN = -Wall -fomit-frame-pointer -march=pentium
 
@@ -79,13 +79,6 @@ MainView.o: MainView.swift
 
 win32.o: win32.rc
 	windres -o win32.o win32.rc
-
-partls: partls.c
-	cc $(CCOPTS) $(XOPTS) $(OPTS) -o partls partls.c
-
-to_pro: prodos.h prodos_protos.h to_pro.c
-	cc $(CCOPTS) $(XOPTS) $(OPTS) -o to_pro to_pro.c
-
 
 .c.proto:
 	$(KMKROOT)/bin/kmkproto $(XOPTS) $*.c > $*.proto

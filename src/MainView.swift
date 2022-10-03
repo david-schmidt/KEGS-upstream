@@ -1,4 +1,4 @@
-// $KmKId: MainView.swift,v 1.25 2021-01-24 23:24:56+00 kentd Exp $
+// $KmKId: MainView.swift,v 1.30 2021-08-09 01:52:45+00 kentd Exp $
 //  Copyright 2019-2021 by Kent Dickey
 //
 
@@ -41,6 +41,7 @@ class MainView: NSView {
 	override func performKeyEquivalent(with event: NSEvent) -> Bool {
 		let keycode = event.keyCode
 		let is_repeat = event.isARepeat
+		let unicode_key = get_unicode_key_from_event(event)
 		// print(".performKeyEquiv keycode: \(keycode), is_repeat: " +
 		//					"\(is_repeat)")
 		if(((current_flags & is_cmd) == 0) || is_repeat) {
@@ -48,11 +49,13 @@ class MainView: NSView {
 			return false
 		}
 		// Otherwise, manually do down, then up, for this key
-		adb_physical_key_update(kimage_ptr, Int32(keycode), 0,
+		adb_physical_key_update(kimage_ptr, Int32(keycode),
+			UInt32(unicode_key), 0,
 			Int32(current_flags & is_shift),
 			Int32(current_flags & is_control),
 			Int32(current_flags & is_capslock))
-		adb_physical_key_update(kimage_ptr, Int32(keycode), 1,
+		adb_physical_key_update(kimage_ptr, Int32(keycode),
+			UInt32(unicode_key), 1,
 			Int32(current_flags & is_shift),
 			Int32(current_flags & is_control),
 			Int32(current_flags & is_capslock))
@@ -62,17 +65,37 @@ class MainView: NSView {
 	override var acceptsFirstResponder: Bool {
 		return true
 	}
+
+	func get_unicode_key_from_event(_ event: NSEvent) -> UInt32 {
+		var unicode_key = UInt32(0);
+		if let str = event.charactersIgnoringModifiers {
+			//print(" keydown unmod str: \(str), " +
+			//		"code:\(event.keyCode)")
+			let arr_chars = Array(str.unicodeScalars)
+			//print(" arr_chars: \(arr_chars)")
+			if(arr_chars.count == 1) {
+				unicode_key = UInt32(arr_chars[0]);
+				//print("key1:\(unicode_key)")
+			}
+		}
+		return unicode_key
+	}
 	override func keyDown(with event: NSEvent) {
 		let keycode = event.keyCode
 		let is_repeat = event.isARepeat;
 		// print(".keyDown code: \(keycode), repeat: \(is_repeat)")
+		//if let str = event.characters {
+		//	print(" keydown str: \(str), code:\(keycode)")
+		//}
+		let unicode_key = get_unicode_key_from_event(event)
 		if(is_repeat) {
 			// If we do CMD-E, then we never get a down for the E,
 			//  but we will get repeat events for that E.  Let's
 			//  ignore those
 			return
 		}
-		adb_physical_key_update(kimage_ptr, Int32(keycode), 0,
+		adb_physical_key_update(kimage_ptr, Int32(keycode),
+			UInt32(unicode_key), 0,
 			Int32(current_flags & is_shift),
 			Int32(current_flags & is_control),
 			Int32(current_flags & is_capslock))
@@ -82,7 +105,9 @@ class MainView: NSView {
 		let keycode = event.keyCode
 		// let is_repeat = event.isARepeat;
 		// print(".keyUp code: \(keycode), repeat: \(is_repeat)")
-		adb_physical_key_update(kimage_ptr, Int32(keycode), 1,
+		let unicode_key = get_unicode_key_from_event(event)
+		adb_physical_key_update(kimage_ptr, Int32(keycode),
+			UInt32(unicode_key), 1,
 			Int32(current_flags & is_shift),
 			Int32(current_flags & is_control),
 			Int32(current_flags & is_capslock))
@@ -98,36 +123,41 @@ class MainView: NSView {
 		let caps_down = Int32(flags & is_capslock)
 		if((flags_xor & is_control) != 0) {
 			let is_up = ((flags & is_control) == 0) ? 1 : 0
-			adb_physical_key_update(kimage_ptr, 0x36, Int32(is_up),
+			adb_physical_key_update(kimage_ptr, 0x36,
+				0, Int32(is_up),
 				shift_down, control_down, caps_down)
 			// print("control 0x35, is_up:\(is_up)")
 		}
 		if((flags_xor & is_capslock) != 0) {
 			let is_up = ((flags & is_capslock) == 0) ? 1 : 0
-			adb_physical_key_update(kimage_ptr, 0x39, Int32(is_up),
+			adb_physical_key_update(kimage_ptr, 0x39,
+				0, Int32(is_up),
 				shift_down, control_down, caps_down)
 			// print("capslock 0x39, is_up:\(is_up)")
 		}
 		if((flags_xor & is_shift) != 0) {
 			let is_up = ((flags & is_shift) == 0) ? 1 : 0
-			adb_physical_key_update(kimage_ptr, 0x38, Int32(is_up),
+			adb_physical_key_update(kimage_ptr, 0x38,
+				0, Int32(is_up),
 				shift_down, control_down, caps_down)
 			// print("shift 0x38, is_up:\(is_up)")
 		}
 		if((flags_xor & is_cmd) != 0) {
 			let is_up = ((flags & is_cmd) == 0) ? 1 : 0
-			adb_physical_key_update(kimage_ptr, 0x37, Int32(is_up),
+			adb_physical_key_update(kimage_ptr, 0x37,
+				0, Int32(is_up),
 				shift_down, control_down, caps_down)
 			// print("command 0x37, is_up:\(is_up)")
 		}
 		if((flags_xor & is_option) != 0) {
 			let is_up = ((flags & is_option) == 0) ? 1 : 0
-			adb_physical_key_update(kimage_ptr, 0x3a, Int32(is_up),
+			adb_physical_key_update(kimage_ptr, 0x3a,
+				0, Int32(is_up),
 				shift_down, control_down, caps_down)
 			// print("option 0x3a, is_up:\(is_up)")
 		}
 		current_flags = flags
-		// print("flagsChanged: \(flags) and keycode: \(event.keyCode)")
+		//print("flagsChanged: \(flags) and keycode: \(event.keyCode)")
 	}
 	override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
 		// This is to let the first click when changing to this window
@@ -331,13 +361,13 @@ class MainView: NSView {
 		// Create a "virtual" F4 press
 		//print("do_config")
 		// Create a keydown for the F4 key (keycode:0x76)
-		adb_physical_key_update(kimage_ptr, Int32(0x76), 0,
+		adb_physical_key_update(kimage_ptr, Int32(0x76), 0, 0,
 			Int32(current_flags & is_shift),
 			Int32(current_flags & is_control),
 			Int32(current_flags & is_capslock))
 
 		// and create a keyup for the F4 key (keycode:0x76)
-		adb_physical_key_update(kimage_ptr, Int32(0x76), 1,
+		adb_physical_key_update(kimage_ptr, Int32(0x76), 0, 1,
 			Int32(current_flags & is_shift),
 			Int32(current_flags & is_control),
 			Int32(current_flags & is_capslock))

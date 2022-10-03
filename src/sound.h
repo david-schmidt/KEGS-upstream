@@ -1,10 +1,10 @@
 #ifdef INCLUDE_RCSID_C
-const char rcsid_sound_h[] = "@(#)$KmKId: sound.h,v 1.28 2020-10-03 22:13:32+00 kentd Exp $";
+const char rcsid_sound_h[] = "@(#)$KmKId: sound.h,v 1.29 2021-04-16 03:25:33+00 kentd Exp $";
 #endif
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2020 by Kent Dickey		*/
+/*			Copyright 2002-2021 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -74,7 +74,7 @@ STRUCT(Ay8913) {
 	word32	tone_samp[3];
 	word32	noise_val;
 	word32	noise_samp;
-	word64	env_dsamp;
+	dword64	env_dsamp;
 };
 
 STRUCT(Mock_pair) {

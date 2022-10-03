@@ -1,4 +1,4 @@
-# KEGS configuration file version 1.03
+# KEGS configuration file version 1.07
 
 s5d1 = XMAS_DEMO.gz
 s5d2 =
@@ -8,4 +8,5 @@ s6d2 =
 
 s7d1 = NUCLEUS03.gz
 
+g_limit_speed = 2
 

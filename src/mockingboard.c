@@ -1,8 +1,8 @@
-const char rcsid_mockingboard_c[] = "@(#)$KmKId: mockingboard.c,v 1.14 2020-12-11 21:06:48+00 kentd Exp $";
+const char rcsid_mockingboard_c[] = "@(#)$KmKId: mockingboard.c,v 1.22 2021-07-03 19:15:20+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2020 by Kent Dickey		*/
+/*			Copyright 2002-2021 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -23,8 +23,8 @@ const char rcsid_mockingboard_c[] = "@(#)$KmKId: mockingboard.c,v 1.14 2020-12-1
 //	5=Reg read; 6=Write reg; 7=Latch reg address
 
 extern Mockingboard g_mockingboard;
-word64	g_mockingboard_last_int_dcycs = 0ULL;
-word64	g_mockingboard_event_int_dcycs = 0ULL;	// 0 -> no event pending
+dword64	g_mockingboard_last_int_dcycs = 0ULL;
+dword64	g_mockingboard_event_int_dcycs = 0ULL;	// 0 -> no event pending
 
 extern int g_irq_pending;
 extern double g_dsamps_per_dcyc;
@@ -35,6 +35,9 @@ mock_ay8913_reset(int pair_num, double dcycs)
 	Ay8913	*ay8913ptr;
 	int	i;
 
+	if(dcycs) {
+		// Avoid unused parameter warning
+	}
 	ay8913ptr = &(g_mockingboard.pair[pair_num].ay8913);
 	ay8913ptr->reg_addr_latch = 0;
 	for(i = 0; i < 16; i++) {
@@ -52,13 +55,28 @@ mock_ay8913_reset(int pair_num, double dcycs)
 void
 mockingboard_reset(double dcycs)
 {
+	word32	timer1_latch;
+
+	timer1_latch = g_mockingboard.pair[0].mos6522.timer1_latch;
 	memset(&g_mockingboard, 0, sizeof(g_mockingboard));
 
-	g_mockingboard_last_int_dcycs = (word64)dcycs;
+	g_mockingboard_last_int_dcycs = (dword64)dcycs;
 	if(g_mockingboard_event_int_dcycs != 0) {
 		(void)remove_event_mockingboard();
 	}
 	g_mockingboard_event_int_dcycs = 0;
+	printf("At reset, timer1_latch: %08x\n", timer1_latch);
+	if((timer1_latch & 0xffff) == 0x234) {			// MB-audit
+		g_mockingboard.pair[0].mos6522.timer1_latch = timer1_latch;
+	} else {
+		g_mockingboard.pair[0].mos6522.timer1_latch = 0xff00;
+	}
+	g_mockingboard.pair[0].mos6522.timer1_counter = 0x2ff00;
+	g_mockingboard.pair[0].mos6522.timer2_counter = 0x2ff00;
+	g_mockingboard.pair[1].mos6522.timer1_latch = 0xff00;
+	g_mockingboard.pair[1].mos6522.timer1_counter = 0x2ff00;
+	g_mockingboard.pair[1].mos6522.timer2_counter = 0x2ff00;
+
 	mock_ay8913_reset(0, dcycs);
 	mock_ay8913_reset(1, dcycs);
 }
@@ -79,16 +97,27 @@ mock_show_pair(int pair_num, double dcycs, const char *str)
 
 }
 
+// Timers work as follows: if written with '10' in cycle 0, on cycle 1 the
+//  counters loads with '10', and counts down to 9 on cycle 2...down to 1
+//  on cycle 10, then 0 on cycle 11, and then signals an interrupt on cycle 12
+// To handle this, timers are "read value + 1" so that timer==0 means the
+//  timer should interrupt right now.  So to write '10' to a timer, the code
+//  needs to write 10+2=12 to the variable, so that on the next cycle, it is
+//  11, which will be returned as 10 to software reading the reg.
+
 void
 mock_update_timers(int doit, double dcycs)
 {
 	Mos6522	*mos6522ptr;
-	word64	dcycs_int, ddiff, dleft, timer1_int_dcycs, timer2_int_dcycs;
-	word64	closest_int_dcycs, event_int_dcycs;
-	word32	timer_val, ier, timer_eff, timer_latch;
+	dword64	dcycs_int, ddiff, dleft, timer1_int_dcycs, timer2_int_dcycs;
+	dword64	closest_int_dcycs, event_int_dcycs;
+	word32	timer_val, ier, timer_eff, timer_latch, log_ifr;
 	int	i;
 
-	dcycs_int = (word64)dcycs;
+	dbg_log_info(dcycs, doit, g_mockingboard.pair[0].mos6522.ifr |
+			(g_mockingboard.pair[0].mos6522.ier << 8), 0xc0);
+
+	dcycs_int = (dword64)dcycs;
 	ddiff = dcycs_int - g_mockingboard_last_int_dcycs;
 	if(!doit && (dcycs_int <= g_mockingboard_last_int_dcycs)) {
 		return;					// Nothing more to do
@@ -106,8 +135,10 @@ mock_update_timers(int doit, double dcycs)
 		ier = mos6522ptr->ier;
 		timer_eff = (timer_val & 0x1ffff);
 		dleft = ddiff;
-		timer_latch = mos6522ptr->timer1_latch + 1;
-		if(dleft <= timer_eff) {
+		timer_latch = mos6522ptr->timer1_latch + 2;
+		dbg_log_info(dcycs, dleft, timer_val, 0xcb);
+		dbg_log_info(dcycs, ier, timer_latch, 0xcb);
+		if(dleft < timer_eff) {
 			// Move ahead only a little, no triggering
 			timer_val = timer_val - (word32)dleft;
 			if(ddiff) {
@@ -116,48 +147,53 @@ mock_update_timers(int doit, double dcycs)
 			}
 			if(((mos6522ptr->ifr & 0x40) == 0) && (ier & 0x40)) {
 				// IFR not set yet, prepare an event
-				timer1_int_dcycs = dcycs_int + 1 +
+				timer1_int_dcycs = dcycs_int +
 							(timer_val & 0x1ffff);
+				dbg_log_info(dcycs, timer1_int_dcycs,
+							timer_val, 0xcd);
 				// printf("t1_int_dcycs: %016llx\n",
 				//			timer1_int_dcycs);
 			}
-		} else if(mos6522ptr->acr & 0x40) {
-			// ACR6 = 1: Free running mode
-			// Set interrupt: Ensure IFR | 0x40 is set
-			mos6522ptr->ifr = mock_6522_new_ifr(
+		} else {
+			// Timer1 has triggered now (maybe rolled over more
+			//  than once).
+			log_ifr = 0;
+			if((timer_val & 0x20000) == 0) {
+				// Either free-running, or not one-shot already
+				//  triggered
+				// Set interrupt: Ensure IFR | 0x40 is set
+				mos6522ptr->ifr = mock_6522_new_ifr(dcycs, i,
 						mos6522ptr->ifr | 0x40, ier);
+				log_ifr = 1;
+			}
 			dleft -= timer_eff;
-			timer_eff = timer_latch;
 			if(dleft >= timer_latch) {
 				// It's rolled over several times, remove those
 				dleft = dleft % timer_latch;
+				dbg_log_info(dcycs, dleft, timer_latch, 0xcc);
+			}
+			if(dleft == 0) {
+				dleft = timer_latch;
 			}
 			timer_val = (timer_latch - dleft) & 0x1ffff;
-			if(ddiff) {
-				// printf("ACR6=1 timer1_val:%05x, dleft:"
-				//	"%08llx\n", timer_val, dleft);
+			if((mos6522ptr->acr & 0x40) == 0) {
+				// ACR6=0: One shot mode, mark it as triggered
+				timer_val |= 0x20000;
 			}
-		} else if(timer_val & 0x20000) {	// ACR6=0: One-shot mode
-			// And already triggered once, just update count
-			timer_val = ((timer_eff - dleft) & 0xffff) | 0x20000;
-			if(ddiff) {
-				//printf("Alread timer1_val:%05x, dleft:"
-				//	"%08llx\n", timer_val, dleft);
-			}
-		} else {				// ACR6=0: One-shot mode
-			// Has not triggered once yet, but it will now
-			mock_6522_new_ifr(mos6522ptr->ifr | 0x40, ier);
-			timer_val = ((timer_val - dleft) & 0xffff) | 0x20000;
-			if(ddiff) {
-				//printf("Trig timer1_val:%05x, dleft:%08llx\n",
-				//		timer_val, dleft);
+			if(log_ifr) {
+				dbg_log_info(dcycs,
+					mos6522ptr->ifr | (ier << 8),
+					timer_val, 0xc3);
 			}
 		}
 
-		//printf("ch%d timer1 was %05x, now %05x\n", i,
-		//			mos6522ptr->timer1_counter, timer_val);
+#if 0
+		printf("%lf ch%d timer1 was %05x, now %05x\n", dcycs, i,
+					mos6522ptr->timer1_counter, timer_val);
+#endif
 
 		mos6522ptr->timer1_counter = timer_val;
+		dbg_log_info(dcycs, timer_val, timer_latch, 0xce);
 
 		// Handle timer2
 		timer2_int_dcycs = 0;
@@ -168,13 +204,12 @@ mock_update_timers(int doit, double dcycs)
 			// Count pulses mode.  Just don't count
 			dleft = 0;
 		}
-		timer_latch = mos6522ptr->timer2_latch + 1;
-		if(dleft <= timer_eff) {
+		if(dleft < timer_eff) {
 			// Move ahead only a little, no triggering
 			timer_val = timer_val - (word32)dleft;
 			if(((mos6522ptr->ifr & 0x20) == 0) && (ier & 0x20)) {
 				// IFR not set yet, prepare an event
-				timer2_int_dcycs = dcycs_int + 1 +
+				timer2_int_dcycs = dcycs_int +
 							(timer_val & 0x1ffff);
 				//printf("t2_int_dcycs: %016llx\n",
 				//			timer1_int_dcycs);
@@ -184,8 +219,11 @@ mock_update_timers(int doit, double dcycs)
 			timer_val = ((timer_eff - dleft) & 0xffff) | 0x20000;
 		} else {
 			// Has not triggered once yet, but it will now
-			mock_6522_new_ifr(mos6522ptr->ifr | 0x20, ier);
+			mos6522ptr->ifr = mock_6522_new_ifr(dcycs, i,
+						mos6522ptr->ifr | 0x20, ier);
 			timer_val = ((timer_val - dleft) & 0xffff) | 0x20000;
+			dbg_log_info(dcycs, mos6522ptr->ifr | (ier << 8),
+					timer_val, 0xc4);
 		}
 
 		// printf("ch%d timer2 was %05x, now %05x\n", i,
@@ -224,6 +262,7 @@ mock_update_timers(int doit, double dcycs)
 			//	closest_int_dcycs, closest_int_dcycs);
 			add_event_mockingboard((double)closest_int_dcycs);
 			g_mockingboard_event_int_dcycs = closest_int_dcycs;
+			dbg_log_info(dcycs, closest_int_dcycs - dcycs, 0, 0xc1);
 		}
 	}
 }
@@ -234,6 +273,7 @@ mockingboard_event(double dcycs)
 	// Received an event--we believe we may need to set an IRQ now.
 	// Event was already removed from the event queue
 	// printf("Mockingboard_event received at %lf\n", dcycs);
+	dbg_log_info(dcycs, 0, 0, 0xc2);
 	g_mockingboard_event_int_dcycs = 0;
 	mock_update_timers(1, dcycs);
 }
@@ -284,14 +324,16 @@ mock_6522_read(int pair_num, word32 loc, double dcycs)
 		val = mos6522ptr->ddra;
 		break;
 	case 0x4:		// T1C-L (timer[0])
-		mock_update_timers(0, dcycs);
+		mock_update_timers(1, dcycs);
 		val = (mos6522ptr->timer1_counter - 1) & 0xff;
-		mos6522ptr->ifr = mock_6522_new_ifr(mos6522ptr->ifr & (~0x40),
-					mos6522ptr->ier);	// Clear Bit 6
+		mos6522ptr->ifr = mock_6522_new_ifr(dcycs, pair_num,
+				mos6522ptr->ifr & (~0x40), mos6522ptr->ier);
+			// Clear Bit 6
 		mock_update_timers(1, dcycs);	// Prepare another int (maybe)
+		dbg_log_info(dcycs, mos6522ptr->ifr, val, 0xc5);
 		break;
 	case 0x5:		// T1C-H
-		mock_update_timers(0, dcycs);
+		mock_update_timers(1, dcycs);
 		val = ((mos6522ptr->timer1_counter - 1) >> 8) & 0xff;
 		break;
 	case 0x6:		// T1L-L
@@ -301,19 +343,21 @@ mock_6522_read(int pair_num, word32 loc, double dcycs)
 		val = (mos6522ptr->timer1_latch >> 8) & 0xff;
 		break;
 	case 0x8:		// T2C-L
-		mock_update_timers(0, dcycs);
+		mock_update_timers(1, dcycs);
 		val = (mos6522ptr->timer2_counter - 1) & 0xff;
-		mos6522ptr->ifr = mock_6522_new_ifr(mos6522ptr->ifr & (~0x20),
-					mos6522ptr->ier);	// Clear Bit 5
+		mos6522ptr->ifr = mock_6522_new_ifr(dcycs, pair_num,
+			mos6522ptr->ifr & (~0x20), mos6522ptr->ier);
+			// Clear Bit 5
 		mock_update_timers(1, dcycs);	// Prepare another int (maybe)
+		dbg_log_info(dcycs, mos6522ptr->ifr, val, 0xc6);
 		break;
 	case 0x9:		// T2C-H
-		mock_update_timers(0, dcycs);
+		mock_update_timers(1, dcycs);
 		val = ((mos6522ptr->timer2_counter - 1) >> 8) & 0xff;
 		break;
 	case 0xa:		// SR
 		val = mos6522ptr->sr;
-		halt_printf("Reading SR %d %02x\n", pair_num, val);
+		//halt_printf("Reading SR %d %02x\n", pair_num, val);
 		break;
 	case 0xb:		// ACR
 		val = mos6522ptr->acr;
@@ -322,12 +366,12 @@ mock_6522_read(int pair_num, word32 loc, double dcycs)
 		val = mos6522ptr->pcr;
 		break;
 	case 0xd:		// IFR
-		mock_update_timers(0, dcycs);
+		mock_update_timers(1, dcycs);
 		val = mos6522ptr->ifr;
 		break;
 	case 0xe:		// IER
-		val = mos6522ptr->ier;
-		break;
+		val = mos6522ptr->ier | 0x80;		// Despite MOS6522
+		break;					//  datasheet, bit 7 = 1
 	}
 	// printf("6522 %d loc:%x ret:%02x\n", pair_num, loc, val);
 	return val;
@@ -385,15 +429,19 @@ mock_6522_write(int pair_num, word32 loc, word32 val, double dcycs)
 		//				mos6522ptr->timer1_latch);
 		break;
 	case 0x5:		// T1C-H
-		mock_update_timers(0, dcycs);
+		mock_update_timers(1, dcycs);
 		val = (mos6522ptr->timer1_latch & 0xff) | (val << 8);
 		mos6522ptr->timer1_latch = val;
-		mos6522ptr->timer1_counter = val + 1;
+		mos6522ptr->timer1_counter = val + 2;
+			// The actual timer1_counter update happens next cycle,
+			//  so we want val+1, plus another 1
 		// printf("Set T1C-H, timer1_latch=%05x\n",
 		//				mos6522ptr->timer1_latch);
-		mos6522ptr->ifr = mock_6522_new_ifr(mos6522ptr->ifr & (~0x40),
-					mos6522ptr->ier);	// Clear Bit 6
+		mos6522ptr->ifr = mock_6522_new_ifr(dcycs, pair_num,
+			mos6522ptr->ifr & (~0x40), mos6522ptr->ier);
+			// Clear Bit 6
 		mock_update_timers(1, dcycs);
+		dbg_log_info(dcycs, mos6522ptr->ifr, val, 0xc7);
 		break;
 	case 0x6:		// T1L-L
 		mock_update_timers(0, dcycs);
@@ -401,25 +449,28 @@ mock_6522_write(int pair_num, word32 loc, word32 val, double dcycs)
 				(mos6522ptr->timer1_latch & 0x1ff00) | val;
 		break;
 	case 0x7:		// T1L-H
-		mock_update_timers(0, dcycs);
+		mock_update_timers(1, dcycs);
 		val = (mos6522ptr->timer1_latch & 0xff) | (val << 8);
 		mos6522ptr->timer1_latch = val;
-		mos6522ptr->ifr = mock_6522_new_ifr(mos6522ptr->ifr & (~0x40),
-					mos6522ptr->ier);	// Clear Bit 6
+		mos6522ptr->ifr = mock_6522_new_ifr(dcycs, pair_num,
+			mos6522ptr->ifr & (~0x40), mos6522ptr->ier);
+			// Clear Bit 6
 		mock_update_timers(1, dcycs);
 		// mock_show_pair(pair_num, dcycs, "Wrote T1L-H");
+		dbg_log_info(dcycs, mos6522ptr->ifr, val, 0xc8);
 		break;
 	case 0x8:		// T2C-L
 		mos6522ptr->timer2_latch = (mos6522ptr->timer2_latch & 0xff00) |
 									val;
 		break;
 	case 0x9:		// T2C-H
-		mock_update_timers(0, dcycs);
+		mock_update_timers(1, dcycs);
 		val = (mos6522ptr->timer2_latch & 0xff) | (val << 8);
 		mos6522ptr->timer2_latch = val;
-		mos6522ptr->timer2_counter = val + 1;
-		mos6522ptr->ifr = mock_6522_new_ifr(mos6522ptr->ifr & (~0x20),
-					mos6522ptr->ier);	// Clear bit 5
+		mos6522ptr->timer2_counter = val + 2;
+		mos6522ptr->ifr = mock_6522_new_ifr(dcycs, pair_num,
+			mos6522ptr->ifr & (~0x20), mos6522ptr->ier);
+			// Clear bit 5
 		mock_update_timers(1, dcycs);
 		break;
 	case 0xa:		// SR
@@ -435,12 +486,15 @@ mock_6522_write(int pair_num, word32 loc, word32 val, double dcycs)
 		mos6522ptr->pcr = val;
 		break;
 	case 0xd:		// IFR
-		mos6522ptr->ifr = mock_6522_new_ifr(mos6522ptr->ifr & (~val),
-							mos6522ptr->ier);
 		mock_update_timers(1, dcycs);
+		mos6522ptr->ifr = mock_6522_new_ifr(dcycs, pair_num,
+				mos6522ptr->ifr & (~val), mos6522ptr->ier);
+		mock_update_timers(1, dcycs);
+		dbg_log_info(dcycs, mos6522ptr->ifr, val, 0xc9);
 		break;
 	case 0xe:		// IER
 		// Recalculate effective IFR with new IER
+		mock_update_timers(1, dcycs);
 		if(val & 0x80) {			// Set EIR bits
 			val = mos6522ptr->ier | val;
 		} else {				// Clear EIR bits
@@ -448,43 +502,44 @@ mock_6522_write(int pair_num, word32 loc, word32 val, double dcycs)
 		}
 		val = val & 0x7f;
 		mos6522ptr->ier = val;
-		mos6522ptr->ifr = mock_6522_new_ifr(mos6522ptr->ifr, val);
+		mos6522ptr->ifr = mock_6522_new_ifr(dcycs, pair_num,
+							mos6522ptr->ifr, val);
 		mock_update_timers(1, dcycs);
 		// mock_show_pair(pair_num, dcycs, "Wrote IER");
+		dbg_log_info(dcycs, mos6522ptr->ifr, val, 0xca);
 		break;
 	}
 }
 
 word32
-mock_6522_new_ifr(word32 ifr, word32 ier)
+mock_6522_new_ifr(double dcycs, int pair_num, word32 ifr, word32 ier)
 {
+	word32	irq_mask;
+
 	// Determine if there are any interrupts pending now
+	irq_mask = IRQ_PENDING_MOCKINGBOARDA << pair_num;
 	if((ifr & ier & 0x7f) == 0) {
 		// No IRQ pending anymore
 		ifr = ifr & 0x7f;		// Clear bit 7
-		if(g_irq_pending & IRQ_PENDING_MOCKINGBOARD) {
+		if(g_irq_pending & irq_mask) {
 			// printf("MOCK INT OFF\n");
 		}
-		remove_irq(IRQ_PENDING_MOCKINGBOARD);
+		remove_irq(irq_mask);
+		dbg_log_info(dcycs, (ier << 8) | ifr, g_irq_pending, 0xcf);
 	} else {
 		// IRQ is pending
 		ifr = ifr | 0x80;		// Set bit 7
-		if(!(g_irq_pending & IRQ_PENDING_MOCKINGBOARD)) {
+		if(!(g_irq_pending & irq_mask)) {
 			// printf("MOCK INT ON\n");
 		}
-		add_irq(IRQ_PENDING_MOCKINGBOARD);
+		add_irq(irq_mask);
+		dbg_log_info(dcycs, (ier << 8) | ifr, g_irq_pending, 0xcf);
 	}
 	return ifr;
 }
 
-word32
-mock_ay8913_read(int pair_num, double dcycs)
-{
-	return 0;
-}
-
 void
-mock_ay8913_reg_read(int pair_num, double dcycs)
+mock_ay8913_reg_read(int pair_num)
 {
 	Mos6522	*mos6522ptr;
 	Ay8913	*ay8913ptr;
@@ -587,7 +642,7 @@ mock_ay8913_control_update(int pair_num, word32 new_val, word32 prev_val,
 		mock_ay8913_reg_write(pair_num, dcycs);
 	}
 	if(new_val == 5) {
-		mock_ay8913_reg_read(pair_num, dcycs);
+		mock_ay8913_reg_read(pair_num);
 	}
 }
 

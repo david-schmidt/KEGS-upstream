@@ -1,51 +1,93 @@
+// $Id: INTERNALS.iwm.txt,v 1.2 2021/06/26 17:30:40 kentd Exp $
 
 KEGS's Apple //gs IWM emulation routines.
 
 The IWM code does 5.25" and 3.5" reads & writes, and updates the Unix disk
-image on writes.  It is also nearly cycle-accurate--Let me know if you
-have a program which can detect it's not a real Apple II.  There are
-a few 5.25" features missing (No 1/4 or 1/2 tracks, no support for Unix nibble
-images, limited disk switching), but what's there is pretty accurate.
-The low-level code support 1/4 and 1/2 tracks--it's the arm movement
-and image-handling routines which don't.  And lack of Unix nibble images
-are also due to lack of higher-level routines to make those features work.
+image on writes.  All 5.25" and 3.5" disks are always emulated internally in a
+low-level format that is compatible with WOZ disk images.  Support for
+WOZ images is very good, but it's not complete yet.
 
-How my disk emulation works: The routines have a nibblized image of each
+How the disk emulation works: The routines have a nibblized image of each
 track of each drive (two 5.25" and two 3.5" drives are supported) in memory.
-The nibble images are declared as arrays, but it could be made to use
-more dynamic memory allocation.
 
-Each track's data format is a series of two-byte pairs.  The first byte
-of the pair is the number of bits in this disk byte, and the second byte
-is the value.  So a size of 8 is normal.  A size of 10 means that there
-are 2 sync bits written before this byte on the disk.  So for 5.25" disk
-accesses, 40 cycles need to pass in the simulator before providing a
-valid nibble.  Partial nibbles are correctly formed if a read happens
-too early (this actually makes things slower, but is required if you
-want to make nibble copiers work).  Similarly, writing to the disk
-watches timing carefully to write out the correct number of bits per
-disk byte.  These routines will definitely test out your emulator's cycle
-counting ability.
+Each track's data is stored as an array of bytes of the raw disk bits.
+This is basically the raw data from WOZ images for that track.  A second
+array for the track, of the same length, is allocated to calculate the sync
+bit positions.  For each byte, the sync byte indicates the nearest
+synchronized MSB from the LSB of the same disk byte.
 
-If a long delay occurs between a read (or a write) the routines skips
-the correct number of bits to return the correctly formed disk byte.
-After a long delay, for efficiency, I always return a full disk byte,
-instead of a partial one, even if the timing would put it in the middle
-of a disk byte.
+With this encoding, if a disk read is done, and then 1000 cycles pass,
+the code can quickly index to the proper disk byte, and then use the sync
+information to return the correct data.  It is just as much work for 4 cycles
+to pass as 5000 cycles.
 
-The arm stepping is really lame.  I will clean it up soon.
+Several levels of emulation accuracy are provided.  By default, KEGS
+defaults to Fast Disk Emulation, where the following changes are done:
+
+- KEGS does not slow down to 1MHz (or 2.8MHz for 3.5" accesses) for reads.
+- KEGS always slows down to 1MHz for 5.25" writes.
+- Each read of IWM data from $C0EC will return the next aligned disk nibble.
+- No matter how much time passes, the read position does not move.
+
+When accessing a WOZ image, or if Fast Disk Emulation is toggled off
+(using Shift-F6), or if a write is being done, then:
+
+- KEGS slows to 1MHz (2.8MHz for 3.5" accesses) when the drive motor is on.
+- Exact timing is maintained--a valid disk nibble is held in the read latch
+	for 7 clock cycles if the next disk nibble has no sync bits.
+
+The arm stepping code is pretty dumb, it does not support 1/4 tracks since
+I have no mechanism to test them.  I'll look for a WOZ image with 1/4 tracks
+and then implement it properly.
 
 Smartport support is sufficient to claim that there are no smartport
 devices.  This is necessary since the ROM tries to see if there are
 smartport devices at power-on.
 
-I tested my 5.25" drive routines on EDD, which could correctly measure
-drive speed and other disk factors.  I also nibble-copied some disks,
-which also worked fine.  I tested the 3.5" routines using Copy II+,
-which successfully nibble-copied several disks.
+I used Copy II+ to nibble copy some disks, and it worked fine.  Note:
+KEGS does not support writing to "empty" WOZ images.  This is on the TO-DO
+list.
+
+IWM description:
+
+The IWM in the IIgs supports 3.5" and 5.25" disks, as well as Smartport
+devices (KEGS does not support real Smartport devices, but it does cheat
+and make large images available on slot 7).
+
+The IWM has several modes:
+
+- Motor off.  Accesses go to internal Mode register and Status register.
+- Motor on ($C0E9 is on; touch $C0E8 to turn motor off).
+	- $C031 enables 3.5" (bit 6 is set)
+		- The disk phases $C0E0-$C0E7 + $C031 bit 7 provide a 4-bit
+			command code to the 3.5" controller, and can be used
+			to move the disk arm, eject a disk, etc.
+			The action is triggered by phase 3 going on.
+			Note the actual 3.5" motor is not controlled by $C0E9,
+			but a special command must be given through this
+			phase-3-latch mechanism to turn the motor on and off.
+		- Phases 0,1,2 and $C031 bit 7 select a status bit to return
+			when Q7=0,Q6=1 is read (the Status Register).
+		-If phase 0 and 2 are enabled, this resets the IWM.
+		-If phase 1 and 3 are enabled, this enables accessing the
+			Smartport Bus.  KEGS supports this enough to indicate
+			to the ROM that there are no Smartport devices.
+			This is called ENABLE2 mode.
+	- $C031 disables 3.5" (bit 6 is clear):
+		- The disk phases $C0E0-$C0E7 move the disk arm.
+		- Reading any even address returns:
+			Q7=0,Q6=0: The data register (byte from the drive)
+			Q7=0,Q6=1: Status register (write protect)
+			Q7=1,Q6=0: Handshake register (not used by software)
+
+The 3.5" IWM modes provide for much faster emulation--the controller returns
+a status when the head has stepped a track, when the motor is up to speed,
+etc., and KEGS returns "it's ready now" always to make the accesses faster.
+With Fast Disk Emulation, an entire 800K disk can be read in under 2 seconds,
+and an entire 140K disk can be read in well under a second.
 
 
-Code description:
+Code description (this information is old and has not been updated):
 
 Most code is in iwm.c, with some defines in iwm.h, and some stuff in
 iwm_35_525.h.
@@ -56,8 +98,8 @@ mechanism to tell it an image is prodos-order yet.  :-)
 
 Iwm state is encoded in the Iwm structure.
 
-	drive525[2]: Disk structure for each 5.25" disk
-	drive35[2]: Disk structure for each 3.5" disk
+	drive525[2]: Disk structure for each 5.25" disk in slot 6
+	drive35[2]: Disk structure for each 3.5" disk in slot 5
 	smarport[32]: Disk structure for each "smartport" device emulated
 		via slot 7 (this code not included)
 	motor_on:  True if IWM motor_on signal (c0e9) is asserted.  Some
@@ -237,3 +279,4 @@ algorithm.  The code is not well written--it's basically hand-translated
 
 Much of the code is not well-optimized.  I'll get to that someday, but
 the speed has been adequate for me so far.
+
