@@ -26,4 +26,5 @@ dyna_filt.o: dyna_filt.c defc.h defcomm.h iwm.h protos.h protos_base.h
 dyna_validate.o: dyna_validate.c defc.h defcomm.h iwm.h protos.h protos_base.h
 applesingle.o: applesingle.c defc.h defcomm.h iwm.h protos.h protos_base.h
 video.o: video.c defc.h defcomm.h iwm.h protos.h protos_base.h kegsfont.h
+voc.o: voc.c defc.h defcomm.h iwm.h protos.h protos_base.h
 macsnd_driver.o: macsnd_driver.c defc.h defcomm.h iwm.h protos.h protos_base.h sound.h

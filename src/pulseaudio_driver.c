@@ -1,4 +1,4 @@
-const char rcsid_pulseaudio_driver_c[] = "@(#)$KmKId: pulseaudio_driver.c,v 1.9 2021-09-26 03:27:53+00 kentd Exp $";
+const char rcsid_pulseaudio_driver_c[] = "@(#)$KmKId: pulseaudio_driver.c,v 1.10 2021-12-16 22:41:59+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -11,6 +11,9 @@ const char rcsid_pulseaudio_driver_c[] = "@(#)$KmKId: pulseaudio_driver.c,v 1.9 
 /*	The KEGS web page is kegs.sourceforge.net			*/
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
+
+#ifdef PULSE_AUDIO
+// Ignore entire file if PULSE_AUDIO is not defined!
 
 // Some ideas from Sample code:
 //  https://github.com/gavv/snippets/blob/master/pa/pa_play_async_poll.c
@@ -361,3 +364,5 @@ pulse_audio_shutdown()
 {
 	printf("pulse_audio_shutdown\n");
 }
+
+#endif		/* PULSE_AUDIO */

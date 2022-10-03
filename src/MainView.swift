@@ -1,6 +1,6 @@
-// $KmKId: MainView.swift,v 1.31 2021-08-22 16:23:47+00 kentd Exp $
+// $KmKId: MainView.swift,v 1.33 2022-01-16 04:52:20+00 kentd Exp $
 
-//	Copyright 2019-2021 by Kent Dickey
+//	Copyright 2019-2022 by Kent Dickey
 //	This code is covered by the GNU GPL v3
 //	See the file COPYING.txt or https://www.gnu.org/licenses/
 //
@@ -295,8 +295,9 @@ class MainView: NSView {
 	func initialize() {
 		//let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)
 		print("Initialize view called")
-		let width = Int(frame.size.width)
-		let height = Int(frame.size.height)
+		// Get width,height from video.c to handle toggling status lines
+		let width = Int(video_get_a2_width(kimage_ptr))
+		let height = Int(video_get_a2_height(kimage_ptr))
 		//if let screen = NSScreen.main {
 		//	let rect = screen.frame
 		//	width = Int(rect.size.width)
@@ -304,8 +305,8 @@ class MainView: NSView {
 		//}
 		pixels_per_line = width
 		max_height = height
-		print("pixels_per_line: \(pixels_per_line), " +
-				"max_height: \(max_height)")
+		//print("pixels_per_line: \(pixels_per_line), " +
+		//		"max_height: \(max_height)")
 
 		let color_space = CGDisplayCopyColorSpace(CGMainDisplayID())
 		//let colorSpace = CGColorSpaceCreateDeviceRGB()
@@ -439,6 +440,8 @@ class MainView: NSView {
 				//  there's no mechanism to just redraw part
 				// The coordinates would need transformation
 				//  (since Mac 0,0 is the lower left corner)
+			//print("bounds: w:\(bounds.size.width) " +
+			//			"h:\(bounds.size.height)\n")
 			//self.setNeedsDisplay(dirty_rect)
 		}
 	}

@@ -1,4 +1,4 @@
-const char rcsid_debugger_c[] = "@(#)$KmKId: debugger.c,v 1.40 2021-08-30 04:32:33+00 kentd Exp $";
+const char rcsid_debugger_c[] = "@(#)$KmKId: debugger.c,v 1.42 2021-12-19 20:45:11+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -122,11 +122,8 @@ debugger_run_16ms()
 }
 
 void
-dbg_log_info(double dcycs, word32 info1, word32 info2, int type)
+dbg_log_info(double dcycs, word32 info1, word32 info2, word32 type)
 {
-	if(dcycs == 0) {
-		dcycs = 1.0/32768.0;
-	}
 	g_log_data_ptr->dcycs = dcycs;
 	g_log_data_ptr->stat = 0;
 	g_log_data_ptr->addr = info1;
@@ -943,7 +940,7 @@ debug_logpc(const char *str)
 		// Dummy use of argument
 	}
 	dbg_printf("logpc enable:%d, cur offset:%08lx\n", g_log_pc_enable,
-			g_log_pc_ptr - g_log_pc_start_ptr);
+			(long)(g_log_pc_ptr - g_log_pc_start_ptr));
 }
 
 void

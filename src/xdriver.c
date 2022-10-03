@@ -1,8 +1,8 @@
-const char rcsid_xdriver_c[] = "@(#)$KmKId: xdriver.c,v 1.229 2021-08-04 21:53:19+00 kentd Exp $";
+const char rcsid_xdriver_c[] = "@(#)$KmKId: xdriver.c,v 1.232 2022-01-24 02:39:04+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -286,7 +286,7 @@ void
 x_try_xset_r()
 {
 	/* attempt "xset r" */
-	system("xset r");
+	(void)system("xset r");
 	xdriver_end();
 	exit(5);
 }
@@ -558,9 +558,6 @@ x_create_window(Window_info *win_info_ptr)
 {
 	XGCValues new_gc;
 	XSetWindowAttributes win_attr;
-	XSizeHints my_winSizeHints;
-	XClassHint my_winClassHint;
-	XTextProperty my_winText;
 	Window	x_win;
 	GC	x_winGC;
 	word32	create_win_list;
@@ -599,8 +596,6 @@ x_create_window(Window_info *win_info_ptr)
 	video_set_active(win_info_ptr->kimage_ptr, 1);
 
 	x_allocate_window_data(win_info_ptr);
-	video_update_scale(win_info_ptr->kimage_ptr, win_info_ptr->width_req,
-						win_info_ptr->main_height);
 
 	if(!win_info_ptr->x_use_shmem) {
 		printf("Not using shared memory, setting skip_amt = 2, "
@@ -609,24 +604,8 @@ x_create_window(Window_info *win_info_ptr)
 		g_audio_enable = 0;
 	}
 
-	XStringListToTextProperty(&(win_info_ptr->name_str), 1, &my_winText);
+	x_set_size_hints(win_info_ptr);
 
-	my_winSizeHints.flags = PSize | PMinSize | PMaxSize | PAspect;
-	my_winSizeHints.width = width;
-	my_winSizeHints.height = height;
-	my_winSizeHints.min_width = width;
-	my_winSizeHints.min_height = height;
-	my_winSizeHints.max_width = g_x_max_width;
-	my_winSizeHints.max_height = g_x_max_height;
-	my_winSizeHints.min_aspect.x = width - 1;
-	my_winSizeHints.min_aspect.y = height;
-	my_winSizeHints.max_aspect.x = width + 1;
-	my_winSizeHints.max_aspect.y = height;
-	my_winClassHint.res_name = win_info_ptr->name_str;
-	my_winClassHint.res_class = win_info_ptr->name_str;
-
-	XSetWMProperties(g_display, x_win, &my_winText, &my_winText, 0,
-		0, &my_winSizeHints, 0, &my_winClassHint);
 	XMapRaised(g_display, x_win);
 
 	if(win_info_ptr != &g_mainwin_info) {
@@ -813,13 +792,76 @@ get_ximage(Window_info *win_info_ptr)
 }
 
 void
+x_set_size_hints(Window_info *win_info_ptr)
+{
+	XSizeHints my_winSizeHints;
+	XClassHint my_winClassHint;
+	XTextProperty my_winText;
+	Kimage	*kimage_ptr;
+	int	width, height, a2_width, a2_height;
+
+	width = win_info_ptr->width_req;
+	height = win_info_ptr->main_height;
+	kimage_ptr = win_info_ptr->kimage_ptr;
+	video_update_scale(kimage_ptr, width, height);
+
+	a2_width = video_get_a2_width(kimage_ptr);
+	a2_height = video_get_a2_height(kimage_ptr);
+
+	XStringListToTextProperty(&(win_info_ptr->name_str), 1, &my_winText);
+
+	my_winSizeHints.flags = PSize | PMinSize | PMaxSize | PAspect;
+	my_winSizeHints.width = width;
+	my_winSizeHints.height = height;
+	my_winSizeHints.min_width = a2_width;
+	my_winSizeHints.min_height = a2_height;
+	my_winSizeHints.max_width = g_x_max_width;
+	my_winSizeHints.max_height = g_x_max_height;
+	my_winSizeHints.min_aspect.x = a2_width - 1;
+	my_winSizeHints.min_aspect.y = a2_height;
+	my_winSizeHints.max_aspect.x = a2_width + 1;
+	my_winSizeHints.max_aspect.y = a2_height;
+	my_winClassHint.res_name = win_info_ptr->name_str;
+	my_winClassHint.res_class = win_info_ptr->name_str;
+
+	XSetWMProperties(g_display, win_info_ptr->x_win, &my_winText,
+		&my_winText, 0, 0, &my_winSizeHints, 0, &my_winClassHint);
+}
+
+void
+x_resize_window(Window_info *win_info_ptr)
+{
+	Kimage	*kimage_ptr;
+	int	x_width, x_height, ret;
+
+	kimage_ptr = win_info_ptr->kimage_ptr;
+	x_width = video_get_x_width(kimage_ptr);
+	x_height = video_get_x_height(kimage_ptr);
+
+	win_info_ptr->main_height = MY_MIN(x_height, g_x_max_height);
+	win_info_ptr->width_req = MY_MIN(x_width, g_x_max_width);
+
+	x_set_size_hints(win_info_ptr);
+
+	ret = XResizeWindow(g_display, win_info_ptr->x_win, x_width, x_height);
+	if(0) {
+		printf("XResizeWindow ret:%d, w:%d, h:%d\n", ret, x_width,
+								x_height);
+	}
+}
+
+void
 x_update_display(Window_info *win_info_ptr)
 {
 	Change_rect rect;
-	int	did_copy, valid, x_active, a2_active;
+	int	did_copy, valid, x_active, a2_active, x_height;
 	int	i;
 
 	// Update active state
+	x_height = video_get_x_height(win_info_ptr->kimage_ptr);
+	if(x_height != win_info_ptr->main_height) {
+		x_resize_window(win_info_ptr);
+	}
 	a2_active = video_get_active(win_info_ptr->kimage_ptr);
 	x_active = win_info_ptr->active;
 	if(x_active && !a2_active) {

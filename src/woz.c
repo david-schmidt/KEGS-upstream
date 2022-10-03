@@ -1,8 +1,8 @@
-const char rcsid_woz_c[] = "@(#)$KmKId: woz.c,v 1.8 2021-06-30 02:03:59+00 kentd Exp $";
+const char rcsid_woz_c[] = "@(#)$KmKId: woz.c,v 1.9 2022-01-20 16:23:59+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -110,7 +110,7 @@ woz_parse_tmap(Disk *dsk, byte *bptr, int size)
 	}
 	wozinfo_ptr->tmap_bptr = bptr;
 	printf("TMAP field, %d bytes\n", size);
-	for(i = 0; i < 36; i++) {
+	for(i = 0; i < 39; i++) {
 		printf("Track %2d.00: %02x, %2d.25:%02x %2d.50:%02x %2d.75:"
 			"%02x\n", i, bptr[0], i, bptr[1],
 			i, bptr[2], i, bptr[3]);
@@ -305,6 +305,13 @@ woz_parse_header(Disk *dsk, byte *wozptr, word32 woz_size, double dcycs)
 	tmap_bptr = wozinfo_ptr->tmap_bptr;
 	dsk->cur_qbit_pos = 0;
 	num_tracks = 4*35;
+	for(i = num_tracks; i < 160; i += 2) {
+		// See what the largest track is, go to track 39.50
+		if(tmap_bptr[i] != 0xff) {
+			num_tracks = i + 1;
+			//printf("Will set num_tracks=%d\n", num_tracks);
+		}
+	}
 	if(!dsk->disk_525) {
 		num_tracks = 160;
 	}

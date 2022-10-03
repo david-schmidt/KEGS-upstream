@@ -1,5 +1,5 @@
 #ifdef INCLUDE_RCSID_C
-const char rcsid_iwm_h[] = "@(#)$KmKId: iwm.h,v 1.32 2021-11-14 20:52:13+00 kentd Exp $";
+const char rcsid_iwm_h[] = "@(#)$KmKId: iwm.h,v 1.33 2021-12-17 22:53:42+00 kentd Exp $";
 #endif
 
 /************************************************************************/
@@ -94,7 +94,7 @@ STRUCT(Disk) {
 	char	*partition_name;
 	int	partition_num;
 	int	fd;
-	int	dynapro_size;
+	word32	dynapro_blocks;
 	dword64	raw_dsize;
 	dword64	dimage_start;
 	dword64	dimage_size;

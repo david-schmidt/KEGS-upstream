@@ -1,8 +1,8 @@
-const char rcsid_dyna_validate_c[] = "@(#)$KmKId: dyna_validate.c,v 1.4 2021-09-23 04:27:39+00 kentd Exp $";
+const char rcsid_dyna_validate_c[] = "@(#)$KmKId: dyna_validate.c,v 1.5 2022-01-23 18:38:33+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2021 by Kent Dickey			*/
+/*			Copyright 2021-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -401,8 +401,7 @@ dynapro_validate_disk(Disk *dsk)
 
 	num_blocks = dsk->dimage_size >> 9;
 	printf("******************************\n");
-	printf("Validate disk: %s, blocks:%05x\n",
-			dsk->dynapro_info_ptr->root_path, num_blocks);
+	printf("Validate disk: %s, blocks:%05x\n", dsk->name_ptr, num_blocks);
 	dynapro_validate_init_freeblks(&freeblks[0], num_blocks);
 
 	// Validate starting at directory in block 2
@@ -425,5 +424,37 @@ dynapro_validate_disk(Disk *dsk)
 		}
 	}
 	return 1;
+}
+
+void
+dynapro_validate_any_image(Disk *dsk)
+{
+	byte	*bufptr;
+	dword64	dsize;
+	int	ret;
+
+	// If dsk->raw_data already set, just use it.  Otherwise, we need to
+	//  temporarily read in entire image, set it, do validate, and then
+	//  free it
+
+	if(dsk->fd < 0) {
+		return;		// No disk
+	}
+	if(dsk->wozinfo_ptr) {
+		return;
+	}
+	dsize = dsk->dimage_size;
+	bufptr = 0;
+	if(dsk->raw_data == 0) {
+		bufptr = malloc(dsize);
+		dsk->raw_data = bufptr;
+		cfg_read_from_fd(dsk->fd, bufptr, 0, dsize);
+		ret = dynapro_validate_disk(dsk);
+		dsk->raw_data = 0;
+		free(bufptr);
+	} else {
+		ret = dynapro_validate_disk(dsk);
+	}
+	printf("validate_disk returned is_good: %d (0 is bad)\n", ret);
 }
 

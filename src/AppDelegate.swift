@@ -1,5 +1,5 @@
-// $KmKId: AppDelegate.swift,v 1.19 2021-10-07 01:01:02+00 kentd Exp $
-//	Copyright 2019-2021 by Kent Dickey
+// $KmKId: AppDelegate.swift,v 1.23 2022-01-15 15:34:35+00 kentd Exp $
+//	Copyright 2019-2022 by Kent Dickey
 //	This code is covered by the GNU GPL v3
 //	See the file COPYING.txt or https://www.gnu.org/licenses/
 //
@@ -20,6 +20,7 @@ class Window_info {
 	var kimage_ptr : UnsafeMutablePointer<Kimage>! = nil
 	var title : String = ""
 	var app_delegate : AppDelegate! = nil
+	var mac_a2_height : Int = 0
 
 //	init(_ new_is_main: Bool) {
 //		is_main = new_is_main
@@ -63,19 +64,25 @@ class Window_info {
 		window.title = title
 		window.showsToolbarButton = true
 		window.contentAspectRatio = NSSize(width: width, height: height)
+
 		video_set_active(kimage_ptr, Int32(1))
 		video_update_scale(kimage_ptr, Int32(width), Int32(height))
 
 		x_win = window
 		mac_view = view
+		mac_a2_height = height;
 		window.makeKey()
 	}
 
 	func update() {
 		// Decide if window should be opened/closed (if it's the
 		//  debugger window), and call mac_update_display() to update
+		let new_height = Int(video_get_a2_height(kimage_ptr))
 		let a2_active = video_get_active(kimage_ptr)
 		if let view = mac_view {
+			if(new_height != mac_a2_height) {
+				mac_resize_window()
+			}
 			if(a2_active == 0 && !view.closed) {
 				print("a2_active 0 on \(title), calling close")
 				x_win!.orderOut(x_win)
@@ -94,6 +101,26 @@ class Window_info {
 				create_window()
 			}
 		}
+	}
+	func mac_resize_window() {
+		let a2_height = Int(video_get_a2_height(kimage_ptr))
+		let a2_width = Int(video_get_a2_width(kimage_ptr))
+		let ratio = CGFloat(a2_height) / CGFloat(a2_width)
+
+		let cur_width = x_win!.frame.size.width
+		let new_height = cur_width * ratio	// CGFloat
+		var newframe = x_win!.frame		// NSRect
+		mac_a2_height = a2_height
+		newframe.size.height = new_height
+		x_win!.contentAspectRatio = NSSize(width: a2_width,
+							height: a2_height)
+		x_win!.setFrame(newframe, display: true, animate: true)
+		mac_view!.initialize()
+		//video_update_scale(kimage_ptr, x_width, x_height)
+		//print("Did mac_resize window to \(a2_width), \(a2_height)" +
+		//	"  frame:\(x_win!.frame.width), " +
+		//				"\(x_win!.frame.height)" +
+		//	" ratio:\(ratio)\n")
 	}
 
 	func update_window_size(width: Int, height: Int) {
@@ -133,6 +160,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 		return true
 	}
 	func windowDidBecomeKey(_ notification: Notification) {
+		if let w = notification.object as? NSWindow {
+			if(w == mainwin_info.x_win) {
+				adb_mainwin_focus(Int32(1));
+				//print("Main window became KEY")
+			}
+		}
 		//print("DidbecomeKey")
 		// If window focus is changing, turn off key repeat
 		adb_kbd_repeat_off()
@@ -140,6 +173,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 	func windowDidResignKey(_ notification: Notification) {
 		//print("DidResignKey")
 		adb_kbd_repeat_off()
+		adb_mainwin_focus(Int32(0))
+		CGDisplayShowCursor(CGMainDisplayID())
 	}
 
 	func windowWillResize(_ window: NSWindow, to frameSize: NSSize)

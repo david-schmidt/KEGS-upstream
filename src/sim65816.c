@@ -1,4 +1,4 @@
-const char rcsid_sim65816_c[] = "@(#)$KmKId: sim65816.c,v 1.432 2021-11-11 22:45:55+00 kentd Exp $";
+const char rcsid_sim65816_c[] = "@(#)$KmKId: sim65816.c,v 1.436 2021-12-20 18:33:08+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -88,12 +88,10 @@ int	g_serial_out_masking = 0;
 int	g_serial_modem[2] = { 0, 1 };
 
 int	g_config_iwm_vbl_count = 0;
-const char g_kegs_version_str[] = "1.14";
+const char g_kegs_version_str[] = "1.16";
 
-#define START_DCYCS	(0.0)
-
-double	g_last_vbl_dcycs = START_DCYCS;
-double	g_cur_dcycs = START_DCYCS;
+double	g_last_vbl_dcycs = 0.0;
+double	g_cur_dcycs = 0.0001;
 
 double	g_last_vbl_dadjcycs = 0.0;
 double	g_dadjcycs = 0.0;
@@ -134,7 +132,7 @@ word32 g_mem_size_base = 256*1024;	/* size of motherboard memory */
 word32 g_mem_size_exp = 8*1024*1024;	/* size of expansion RAM card */
 word32 g_mem_size_total = 256*1024;	/* Total contiguous RAM from 0 */
 
-extern word32 slow_mem_changed[];
+extern word32 g_slow_mem_changed[];
 
 byte *g_slow_memory_ptr = 0;
 byte *g_memory_ptr = 0;
@@ -1899,6 +1897,10 @@ handle_action(word32 ret)
 		break;
 	case RET_STP:
 		do_stp();
+		break;
+	case RET_TOOLTRACE:
+		dbg_log_info(g_cur_dcycs, engine.kpc, engine.xreg,
+						(engine.stack << 16) | 0xe100);
 		break;
 	default:
 		halt_printf("Unknown special action: %08x!\n", ret);

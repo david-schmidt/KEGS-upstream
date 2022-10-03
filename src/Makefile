@@ -1,4 +1,4 @@
-# $KmKId: makefile,v 1.42 2021-09-26 12:31:31+00 kentd Exp $
+# $KmKId: makefile,v 1.43 2021-12-14 04:44:38+00 kentd Exp $
 
 XOPTS_WIN = -Wall -fomit-frame-pointer -march=pentium
 
@@ -25,9 +25,9 @@ clean:
 
 
 # Mac builds:
-kegsmac: $(OBJECTS) compile_time.o $(SWIFTOBJS)
-	clang $(CCOPTS) $(LDOPTS) $(OBJECTS) $(SWIFTOBJS) compile_time.o \
-		$(LDFLAGS) -o kegsmac $(EXTRA_LIBS) \
+kegsmac: $(OBJECTS) $(OBJECTS1) compile_time.o $(SWIFTOBJS)
+	clang $(CCOPTS) $(LDOPTS) $(OBJECTS) $(OBJECTS1) $(SWIFTOBJS) \
+		compile_time.o $(LDFLAGS) -o kegsmac $(EXTRA_LIBS) \
 		-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk \
 		-Xlinker -rpath -Xlinker @executable_path/../Frameworks \
 		-Xlinker -rpath -Xlinker /usr/lib/swift \
@@ -48,18 +48,24 @@ kegsmac: $(OBJECTS) compile_time.o $(SWIFTOBJS)
 	#touch '../KEGSMAC.app/Icon?'
 
 # Linux for X builds:
-xkegs: $(OBJECTS) compile_time.o
-	$(CC) $(CCOPTS) $(LDOPTS) $(OBJECTS) compile_time.o $(LDFLAGS) -o $(NAME)$(SUFFIX) $(XLIBS) $(EXTRA_LIBS) -lX11 -lXext
+xkegs: $(OBJECTS) $(OBJECTS1) compile_time.o
+	$(CC) $(CCOPTS) $(LDOPTS) $(OBJECTS) $(OBJECTS1) compile_time.o \
+		$(LDFLAGS) -o $(NAME)$(SUFFIX) $(XLIBS) $(EXTRA_LIBS) \
+		-lX11 -lXext
 	mv xkegs ..
 
 # Cygwin for X builds:
-kegs.exe: $(OBJECTS) compile_time.o
-	$(CC) $(CCOPTS) $(LDOPTS) $(OBJECTS) compile_time.o $(LDFLAGS) -o $(NAME)$(SUFFIX) $(XLIBS) $(EXTRA_LIBS) -lXext -lX11 -lm
+kegs.exe: $(OBJECTS) $(OBJECTS1) compile_time.o
+	$(CC) $(CCOPTS) $(LDOPTS) $(OBJECTS) $(OBJECTS1) compile_time.o \
+		$(LDFLAGS) -o $(NAME)$(SUFFIX) $(XLIBS) $(EXTRA_LIBS) \
+		-lXext -lX11 -lm
 	mv kegs.exe ..
 
 # Mingw32 (native windows) builds: (broken, doesn't work currently)
-kegswin.exe: $(OBJECTS) compile_time.o
-	$(CC) $(CCOPTS) $(LDOPTS) $(OBJECTS) compile_time.o $(LDFLAGS) -o $(NAME)$(SUFFIX) $(EXTRA_LIBS) -lwinmm -lgdi32 -ldsound -lcomctl32 -lws2_32
+kegswin.exe: $(OBJECTS) $(OBJECTS1) compile_time.o
+	$(CC) $(CCOPTS) $(LDOPTS) $(OBJECTS) $(OBJECTS1) compile_time.o \
+		$(LDFLAGS) -o $(NAME)$(SUFFIX) $(EXTRA_LIBS) \
+		-lwinmm -lgdi32 -ldsound -lcomctl32 -lws2_32
 	mv $(NAME)$(SUFFIX) ..
 
 
@@ -120,7 +126,7 @@ $(PROTO_OUT_pulseaudio_driver): $(PROTO_FILE_LIST_pulseaudio_driver) ldvars
 	cp -f $(PROTO_OUT_pulseaudio_driver) ..
 
 
-compile_time.o: $(OBJECTS)
+compile_time.o: $(OBJECTS) $(OBJECTS1)
 
 include dependency
 

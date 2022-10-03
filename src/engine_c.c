@@ -1,4 +1,4 @@
-const char rcsid_engine_c_c[] = "@(#)$KmKId: engine_c.c,v 1.84 2021-08-17 00:04:28+00 kentd Exp $";
+const char rcsid_engine_c_c[] = "@(#)$KmKId: engine_c.c,v 1.87 2021-12-19 22:44:49+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -61,6 +61,8 @@ extern Data_log *g_log_data_ptr;
 extern Data_log *g_log_data_start_ptr;
 extern Data_log *g_log_data_end_ptr;
 
+int	g_ret1 = 0;
+
 int size_tab[] = {
 #include "size_c.h"
 };
@@ -122,7 +124,7 @@ int bogus[] = {
 	}
 
 extern Page_info page_info_rd_wr[];
-extern word32 slow_mem_changed[];
+extern word32 g_slow_mem_changed[];
 
 #define GET_MEMORY8(addr,dest)					\
 	addr_latch = (addr);					\
@@ -327,7 +329,7 @@ extern word32 slow_mem_changed[];
 	}
 
 void
-check_breakpoints(word32 addr)
+check_breakpoints(word32 addr, double *fcycs_ptr, word32 type)
 {
 	int	count;
 	int	i;
@@ -336,8 +338,14 @@ check_breakpoints(word32 addr)
 	for(i = 0; i < count; i++) {
 		if((addr >= (g_break_pts[i].start_addr & 0xffffff)) &&
 			(addr <= (g_break_pts[i].end_addr & 0xffffff))) {
+			dbg_log_info(g_last_vbl_dcycs + *fcycs_ptr, addr, i,
+								0x6270);
 			halt2_printf("Hit breakpoint at %06x\n", addr);
 		}
+	}
+
+	if((type == 4) && ((addr == 0xe10000) || (addr == 0xe10004))) {
+		FINISH(RET_TOOLTRACE, 0);
 	}
 }
 
@@ -351,7 +359,7 @@ get_memory8_io_stub(word32 addr, byte *stat, double *fcycs_ptr,
 
 	wstat = PTR2WORD(stat) & 0xff;
 	if(wstat & BANK_BREAK) {
-		check_breakpoints(addr);
+		check_breakpoints(addr, fcycs_ptr, 1);
 	}
 	fcycles = *fcycs_ptr;
 	if(wstat & BANK_IO2_TMP) {
@@ -429,9 +437,9 @@ set_memory8_io_stub(word32 addr, word32 val, byte *stat, double *fcycs_ptr,
 
 	wstat = PTR2WORD(stat) & 0xff;
 	if(wstat & (1 << (31 - BANK_BREAK_BIT))) {
-		check_breakpoints(addr);
+		check_breakpoints(addr, fcycs_ptr, 2);
 	}
-	ptr = stat - wstat + ((addr) & 0xff);				\
+	ptr = stat - wstat + ((addr) & 0xff);
 	fcycles = *fcycs_ptr;
 	if(wstat & (1 << (31 - BANK_IO2_BIT))) {
 		FCYCLES_ROUND;
@@ -442,10 +450,10 @@ set_memory8_io_stub(word32 addr, word32 val, byte *stat, double *fcycs_ptr,
 		tmp1 = (addr & 0xffff);
 		setmem_tmp1 = g_slow_memory_ptr[tmp1];
 		*ptr = val;
+		g_slow_memory_ptr[tmp1] = val;
 		if(setmem_tmp1 != ((val) & 0xff)) {
-			g_slow_memory_ptr[tmp1] = val;
-			slow_mem_changed[tmp1 >> CHANGE_SHIFT] |=
-				(1U << (31-((tmp1 >> SHIFT_PER_CHANGE) & 31)));
+			g_slow_mem_changed[tmp1 >> CHANGE_SHIFT] |=
+				(1U << ((tmp1 >> SHIFT_PER_CHANGE) & 31));
 		}
 	} else if(wstat & (1 << (31 - BANK_SHADOW2_BIT))) {
 		FCYCS_PTR_FCYCLES_ROUND_SLOW;
@@ -453,10 +461,10 @@ set_memory8_io_stub(word32 addr, word32 val, byte *stat, double *fcycs_ptr,
 		tmp1 = 0x10000 + tmp2;
 		setmem_tmp1 = g_slow_memory_ptr[tmp1];
 		*ptr = val;
+		g_slow_memory_ptr[tmp1] = val;
 		if(setmem_tmp1 != ((val) & 0xff)) {
-			g_slow_memory_ptr[tmp1] = val;
-			slow_mem_changed[tmp2 >>CHANGE_SHIFT] |=
-				(1U << (31-((tmp2 >> SHIFT_PER_CHANGE) & 31)));
+			g_slow_mem_changed[tmp1 >> CHANGE_SHIFT] |=
+				(1U << ((tmp1 >> SHIFT_PER_CHANGE) & 31));
 		}
 	} else {
 		/* breakpoint only */
@@ -693,9 +701,6 @@ do_adc_sbc16(word32 in1, word32 in2, word32 psr, int sub)
 	return (psr << 16) + (sum & 0xffff);
 }
 
-int	g_ret1 = 0;
-
-
 void
 fixed_memory_ptrs_init()
 {
@@ -796,7 +801,8 @@ clr_halt_act()
 }
 
 word32
-get_remaining_operands(word32 addr, word32 opcode, word32 psr, Fplus *fplus_ptr)
+get_remaining_operands(word32 addr, word32 opcode, word32 psr, double *cyc_ptr,
+							Fplus *fplus_ptr)
 {
 	byte	*stat;
 	byte	*ptr;
@@ -804,11 +810,11 @@ get_remaining_operands(word32 addr, word32 opcode, word32 psr, Fplus *fplus_ptr)
 	word32	addr_latch, wstat, save_addr, arg, addrp1;
 	int	size;
 
-	fcycles = 0;
-	fplus_1 = 0;
-	fplus_2 = 0;
-	fplus_3 = 0;
-	fplus_x_m1 = 0;
+	fcycles = *cyc_ptr;
+	fplus_1 = fplus_ptr->plus_1;
+	fplus_2 = fplus_ptr->plus_2;
+	fplus_3 = fplus_ptr->plus_3;
+	fplus_x_m1 = fplus_ptr->plus_x_minus_1;
 	addr_latch = 0;
 	if(addr_latch != 0) {	// "Use" addr_latch to avoid warning
 	}
@@ -822,25 +828,32 @@ get_remaining_operands(word32 addr, word32 opcode, word32 psr, Fplus *fplus_ptr)
 		break;
 	case 1:
 		GET_MEMORY8(addrp1, arg);
+		fcycles -= fplus_1;
 		break;		/* 1 arg, already done */
 	case 2:
 		GET_MEMORY16(addrp1, arg, 1);
+		fcycles -= fplus_2;
 		break;
 	case 3:
 		GET_MEMORY24(addrp1, arg, 1);
+		fcycles -= fplus_3;
 		break;
 	case 4:
 		if(psr & 0x20) {
 			GET_MEMORY8(addrp1, arg);
+			fcycles -= fplus_1;
 		} else {
 			GET_MEMORY16(addrp1, arg, 1);
+			fcycles -= fplus_2;
 		}
 		break;
 	case 5:
 		if(psr & 0x10) {
 			GET_MEMORY8(addrp1, arg);
+			fcycles -= fplus_1;
 		} else {
 			GET_MEMORY16(addrp1, arg, 1);
+			fcycles -= fplus_2;
 		}
 		break;
 	default:
@@ -848,6 +861,7 @@ get_remaining_operands(word32 addr, word32 opcode, word32 psr, Fplus *fplus_ptr)
 		arg = 0;
 		exit(-2);
 	}
+	*cyc_ptr = fcycles;
 
 	return arg;
 }
@@ -862,7 +876,8 @@ get_remaining_operands(word32 addr, word32 opcode, word32 psr, Fplus *fplus_ptr)
 	opcode = *ptr;							\
 	if((wstat & (1 << (31-BANK_IO_BIT))) || ((addr & 0xff) > 0xfc)) {\
 		if(wstat & BANK_BREAK) {				\
-			check_breakpoints(addr);			\
+			fcycles_tmp1 = fcycles;				\
+			check_breakpoints(addr, &fcycles_tmp1, 4);	\
 		}							\
 		if((addr & 0xfffff0) == 0x00c700) {			\
 			if(addr == 0xc700) {				\
@@ -881,7 +896,10 @@ get_remaining_operands(word32 addr, word32 opcode, word32 psr, Fplus *fplus_ptr)
 		} else {						\
 			opcode = *ptr;					\
 		}							\
-		arg = get_remaining_operands(addr, opcode, psr, fplus_ptr);\
+		fcycles_tmp1 = fcycles;					\
+		arg = get_remaining_operands(addr, opcode, psr,		\
+					&fcycles_tmp1, fplus_ptr);	\
+		fcycles = fcycles_tmp1;					\
 		arg_ptr = (byte *)&tmp_bytes;				\
 		arg_ptr[1] = arg;					\
 		arg_ptr[2] = arg >> 8;					\

@@ -26,6 +26,12 @@ gunzip < ~/Downloads/kegs.1.xx.tar.gz | tar xvf -
 
 You will now have a directory names kegs.1.xx and in that, KEGSMACK.app/.
 
+If you've let Safari or the Finder unpack KEGS, then you can do this command
+from the Terminal in the directory you unpacked KEGSMAC to remove the
+quarantine:
+
+xattr -r -d com.apple.quarantine KEGSMAC.app
+
 Usage:
 -----
 
@@ -44,6 +50,16 @@ To quit, either click the window close box, or select Quit from the menu.
 To go full screen, click the Maximize button in the window.  You can
 resize the window to any size you like.
 
+Mac OS X now has "quarantine" and Disk Access Permissions, which can be a
+pain for users of KEGSMAC.  You must remove Quarantine or it won't work at
+all, but the disk access permissions are used to protect special Folders like
+Documents and Downloads.  System Preferences->Security&Privacy->Files and
+Folders should let you add permissions to KEGS--but it doesn't seem to
+always stick.  I'm not sure why this is.  A simple workaround is to
+place your ROMs and disk images in a directory like "Apple2" or something
+similar in your home directory.  Then KEGSMAC won't need access to Desktop
+or Downloads and should work better.  If you have code development
+suggestions on how to have KEGSMAC work better, please let me know.
 
 Compile directions
 ------------------

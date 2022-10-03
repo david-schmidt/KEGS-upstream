@@ -1,5 +1,5 @@
 #ifdef INCLUDE_RCSID_C
-const char rcsdif_defcomm_h[] = "@(#)$KmKId: defcomm.h,v 1.100 2020-12-13 17:42:09+00 kentd Exp $";
+const char rcsdif_defcomm_h[] = "@(#)$KmKId: defcomm.h,v 1.103 2021-12-20 02:57:05+00 kentd Exp $";
 #endif
 
 /************************************************************************/
@@ -21,7 +21,7 @@ const char rcsdif_defcomm_h[] = "@(#)$KmKId: defcomm.h,v 1.100 2020-12-13 17:42:
 #define SHIFT_PER_CHANGE	3
 #define CHANGE_SHIFT		(5 + SHIFT_PER_CHANGE)
 
-#define SLOW_MEM_CH_SIZE	(0x10000 >> CHANGE_SHIFT)
+#define SLOW_MEM_CH_SIZE	(0x20000 >> CHANGE_SHIFT)
 
 #define MAXNUM_HEX_PER_LINE	32
 
@@ -95,6 +95,7 @@ const char rcsdif_defcomm_h[] = "@(#)$KmKId: defcomm.h,v 1.100 2020-12-13 17:42:
 #define RET_C700	0x8
 #define RET_C70A	0x9
 #define RET_C70D	0xa
+#define RET_TOOLTRACE	0xb
 
 
 #define MODE_BORDER		0
@@ -119,6 +120,7 @@ const char rcsdif_defcomm_h[] = "@(#)$KmKId: defcomm.h,v 1.100 2020-12-13 17:42:
 #define BIT_ALL_STAT_TEXT_COLOR		16	/* 4 bits */
 						/* Text must be just above */
 						/* bg to match c022 reg */
+#define BIT_ALL_STAT_VOC_INTERLACE	20
 
 #define ALL_STAT_SUPER_HIRES		(1 << (BIT_ALL_STAT_SUPER_HIRES))
 #define ALL_STAT_TEXT			(1 << (BIT_ALL_STAT_TEXT))
@@ -134,6 +136,7 @@ const char rcsdif_defcomm_h[] = "@(#)$KmKId: defcomm.h,v 1.100 2020-12-13 17:42:
 #define ALL_STAT_BG_COLOR		(0xf << (BIT_ALL_STAT_BG_COLOR))
 #define ALL_STAT_ALTCHARSET		(1 << (BIT_ALL_STAT_ALTCHARSET))
 #define ALL_STAT_FLASH_STATE		(1 << (BIT_ALL_STAT_FLASH_STATE))
+#define ALL_STAT_VOC_INTERLACE		(1 << (BIT_ALL_STAT_VOC_INTERLACE))
 
 #define BORDER_WIDTH		32
 

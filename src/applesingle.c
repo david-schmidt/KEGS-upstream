@@ -1,4 +1,4 @@
-const char rcsid_applesing_c[] = "@(#)$KmKId: applesingle.c,v 1.3 2021-08-30 04:03:52+00 kentd Exp $";
+const char rcsid_applesing_c[] = "@(#)$KmKId: applesingle.c,v 1.5 2021-12-19 04:14:31+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -58,8 +58,10 @@ applesingle_map_from_prodos(Disk *dsk, Dynapro_file *fileptr, int do_file_data)
 	int	level;
 	int	i, j;
 
+#if 0
 	printf("applesingle_map_from_prodos: %s do_file_data:%d\n",
 					fileptr->unix_path, do_file_data);
+#endif
 
 	// First, handle mini directory describing the forks
 	key_block = fileptr->key_block;
@@ -93,9 +95,11 @@ applesingle_map_from_prodos(Disk *dsk, Dynapro_file *fileptr, int do_file_data)
 	fptr = 0;
 	if(do_file_data) {
 		fptr = calloc(1, max_size + 0x200);
+#if 0
 		printf(" fptr:%p, max_size:%08x, res:%08x, data:%08x\n",
 			fptr, max_size, rounded_resource_size,
 			rounded_data_size);
+#endif
 	}
 
 	// From now on, errors cannot return without free'ing fptr
@@ -174,18 +178,19 @@ applesingle_map_from_prodos(Disk *dsk, Dynapro_file *fileptr, int do_file_data)
 			good = 0;
 		}
 
-		// Then do resource fork
-		if(resource_size) {
-			applesingle_set_be32(&fptr[hdr_pos + 0], 2);	// Rsrc
-			applesingle_set_be32(&fptr[hdr_pos + 4], 256);
-			applesingle_set_be32(&fptr[hdr_pos + 8], resource_size);
-			hdr_pos += 12;
-		}
+		// First, do data fork
 		if(data_size) {
 			applesingle_set_be32(&fptr[hdr_pos + 0], 1);	// Data
 			applesingle_set_be32(&fptr[hdr_pos + 4],
 						256 + rounded_resource_size);
 			applesingle_set_be32(&fptr[hdr_pos + 8], data_size);
+			hdr_pos += 12;
+		}
+		// Then do resource fork
+		if(resource_size) {
+			applesingle_set_be32(&fptr[hdr_pos + 0], 2);	// Rsrc
+			applesingle_set_be32(&fptr[hdr_pos + 4], 256);
+			applesingle_set_be32(&fptr[hdr_pos + 8], resource_size);
 			hdr_pos += 12;
 		}
 		if(hdr_pos > 192) {
@@ -203,7 +208,7 @@ applesingle_map_from_prodos(Disk *dsk, Dynapro_file *fileptr, int do_file_data)
 		free(fptr);
 	}
 
-	printf("applesingle_map_from_prodos done, good:%d\n", good);
+	// printf("applesingle_map_from_prodos done, good:%d\n", good);
 	return good;
 }
 
@@ -220,8 +225,10 @@ applesingle_from_unix(Disk *dsk, Dynapro_file *fileptr, byte *fptr,
 	// Return 0 if anything is wrong with the .applesingle file
 	// Otherwise, return (blocks_used << 16) | (key_block & 0xffff)
 
+#if 0
 	printf("applesingle_from_unix %s, size:%08llx\n", fileptr->unix_path,
 								dsize);
+#endif
 
 	key_block = fileptr->key_block;
 	bptr = &(dsk->raw_data[key_block << 9]);
@@ -241,7 +248,7 @@ applesingle_from_unix(Disk *dsk, Dynapro_file *fileptr, byte *fptr,
 	hdr_pos = 26;
 	blocks_used = 1;
 	did_fork = 0;
-	printf(" num_entries:%d\n", num_entries);
+	// printf(" num_entries:%d\n", num_entries);
 	for(i = 0; i < num_entries; i++) {
 		if((hdr_pos + 24) > dsize) {
 			printf("Applesingle header exceeds file size i:%d of "
@@ -252,8 +259,10 @@ applesingle_from_unix(Disk *dsk, Dynapro_file *fileptr, byte *fptr,
 		entry_id = applesingle_get_be32(&fptr[hdr_pos + 0]);
 		offset = applesingle_get_be32(&fptr[hdr_pos + 4]);
 		length = applesingle_get_be32(&fptr[hdr_pos + 8]);
+#if 0
 		printf(" header[%d] at +%04x: id:%d, offset:%08x, len:%08x\n",
 			i, hdr_pos, entry_id, offset, length);
+#endif
 		if((offset + length) > dsize) {
 			printf("Applesingle entry_id:%d exceeds file size\n",
 				entry_id);
@@ -266,8 +275,10 @@ applesingle_from_unix(Disk *dsk, Dynapro_file *fileptr, byte *fptr,
 			if(entry_id == 2) {		// Resource fork
 				tptr += 0x100;
 			}
+#if 0
 			printf(" for entry_id %d, offset:%08x, length:%08x, "
 				"fptr:%p\n", entry_id, offset, length, fptr);
+#endif
 			if(did_fork & (1 << entry_id)) {
 				printf("fork %d repeated!\n", entry_id);
 				return 0;
@@ -328,8 +339,10 @@ applesingle_make_prodos_fork(Disk *dsk, byte *fptr, byte *tptr, word32 length)
 {
 	word32	block, blocks_out, storage_type;
 
+#if 0
 	printf("applesingle_make_prodos_fork: fptr:%p, tptr:%p, length:%08x\n",
 			fptr, tptr, length);
+#endif
 
 	// Handle creating either a resource or data fork
 	block = dynapro_find_free_block(dsk);
@@ -339,8 +352,8 @@ applesingle_make_prodos_fork(Disk *dsk, byte *fptr, byte *tptr, word32 length)
 	blocks_out = dynapro_fork_from_unix(dsk, fptr, &storage_type, block,
 								length);
 
-	printf(" dynapro_fork_from_unix ret: %08x, storage:%02x\n", blocks_out,
-							storage_type);
+	// printf(" dynapro_fork_from_unix ret: %08x, storage:%02x\n",
+	//					blocks_out, storage_type);
 	tptr[0] = storage_type >> 4;
 	tptr[1] = blocks_out & 0xff;		// key_block lo
 	tptr[2] = (blocks_out >> 8) & 0xff;	// key_block hi

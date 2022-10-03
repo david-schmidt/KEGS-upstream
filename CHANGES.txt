@@ -1,4 +1,18 @@
 
+Changes in KEGS v1.16 since v1.14 (01/23/22)
+- Better cursor focus tracking, less likely to have an invisible cursor
+	when KEGS is no longer the active window.
+- F5 now toggles the status display at the bottom on/off.  This state can
+	be saved in config.kegs.
+- Added Dynapro image support--mount a host directory as a ProDOS image of
+	up to 32MB, to allow easy moving of files to/from emulation.
+	See README.dynapro.txt.
+- Add limited Video Overlay Card (VOC) support to add new SHR mode of 640x400
+	(interlaced).
+- You can "D"uplicate any disk image to a new file, and "V"erify any ProDOS
+	image.
+
+
 Changes in KEGS v1.14 since v1.13 (11/14/21)
 - Better support for disk images inside .zip files.
 - Linux sound fixes to make PULSE_AUDIO work a little better.

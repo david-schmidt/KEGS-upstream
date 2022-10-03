@@ -1,8 +1,8 @@
-const char rcsid_iwm_c[] = "@(#)$KmKId: iwm.c,v 1.161 2021-09-28 03:18:31+00 kentd Exp $";
+const char rcsid_iwm_c[] = "@(#)$KmKId: iwm.c,v 1.165 2022-01-23 18:38:27+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -114,7 +114,7 @@ iwm_init_drive(Disk *dsk, int smartport, int drive, int disk_525)
 	dsk->partition_name = 0;
 	dsk->partition_num = -1;
 	dsk->fd = -1;
-	dsk->dynapro_size = 0;
+	dsk->dynapro_blocks = 0;
 	dsk->raw_dsize = 0;
 	dsk->dimage_start = 0;
 	dsk->dimage_size = 0;
@@ -637,11 +637,6 @@ iwm525_phase_change(int drive, int phase, double dcycs)
 	if(qtr_track < 0) {
 		printf("GRIND...GRIND...GRIND\n");
 		qtr_track = 0;
-		last_phase = 0;
-	}
-	if(qtr_track > 4*34) {
-		printf("Disk arm moved past track 34, moving it back\n");
-		qtr_track = 4*34;
 		last_phase = 0;
 	}
 
@@ -1743,7 +1738,7 @@ iwm_recalc_sync_from(Disk *dsk, word32 qbit_pos, double dcycs)
 				val |= mask;		// Just force this bit
 				sync_ptr[byte_pos - 1] |= 0x10;
 			}
-			if(val2 & (mask - 1)) {
+			if((val2 & (mask - 1)) || (mask <= 1)) {
 				// These 0's would interfere with this nibble
 				sync_0_mask |= 0x10;
 			}

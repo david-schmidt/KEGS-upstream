@@ -1,6 +1,6 @@
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -11,12 +11,16 @@
 /************************************************************************/
 
 #ifdef INCLUDE_RCSID_C
-const char rcsid_protos_base_h[] = "@(#)$KmKId: protos_base.h,v 1.90 2021-11-11 20:06:57+00 kentd Exp $";
+const char rcsid_protos_base_h[] = "@(#)$KmKId: protos_base.h,v 1.101 2022-01-23 18:38:50+00 kentd Exp $";
 #endif
 
 #ifdef __GNUC__
 void halt_printf(const char *fmt, ...) __attribute__ ((
 						__format__(printf, 1, 2)));
+void cfg_err_printf(const char *pre_str, const char *fmt, ...) __attribute__ ((
+						__format__(printf, 2, 3)));
+void dynapro_error(Disk *dsk, const char *fmt, ...) __attribute__ ((
+						__format__(printf, 2, 3)));
 #endif
 
 /* xdriver.c and macdriver.c and windriver.c */
@@ -86,10 +90,11 @@ int adb_ascii_to_a2code(int unicode_c, int a2code, int *shift_down_ptr);
 void adb_physical_key_update(Kimage *kimage_ptr, int a2code, word32 unicode_c, int is_up, int shift_down, int ctrl_down, int lock_down);
 void adb_virtual_key_update(int a2code, int is_up);
 void adb_kbd_repeat_off(void);
+void adb_mainwin_focus(int has_focus);
 
 
 /* engine_c.c */
-void check_breakpoints(word32 addr);
+void check_breakpoints(word32 addr, double *fcycs_ptr, word32 type);
 word32 get_memory8_io_stub(word32 addr, byte *stat, double *fcycs_ptr, double fplus_x_m1);
 word32 get_memory16_pieces_stub(word32 addr, byte *stat, double *fcycs_ptr, Fplus *fplus_ptr, int in_bank);
 word32 get_memory24_pieces_stub(word32 addr, byte *stat, double *fcycs_ptr, Fplus *fplus_ptr, int in_bank);
@@ -109,7 +114,7 @@ word32 get_itimer(void);
 void engine_recalc_events(void);
 void set_halt_act(int val);
 void clr_halt_act(void);
-word32 get_remaining_operands(word32 addr, word32 opcode, word32 psr, Fplus *fplus_ptr);
+word32 get_remaining_operands(word32 addr, word32 opcode, word32 psr, double *cyc_ptr, Fplus *fplus_ptr);
 int enter_engine(Engine_reg *engine_ptr);
 
 
@@ -136,6 +141,8 @@ void config_init(void);
 int config_setup_kegs_file(char *outname, int maxlen, const char **name_ptr);
 int config_expand_path(char *out_ptr, const char *in_ptr, int maxlen);
 void cfg_exit(void);
+void cfg_err_vprintf(const char *pre_str, const char *fmt, va_list ap);
+void cfg_err_printf(const char *pre_str, const char *fmt, ...);
 void cfg_toggle_config_panel(void);
 void cfg_set_config_panel(int panel);
 void cfg_text_screen_dump(void);
@@ -148,7 +155,7 @@ void config_load_roms(void);
 void config_parse_config_kegs_file(void);
 void config_generate_config_kegs_name(char *outstr, int maxlen, Disk *dsk, int with_extras);
 void config_write_config_kegs_file(void);
-void insert_disk(int slot, int drive, const char *name, int ejected, const char *partition_name, int part_num, word32 dynamic_size);
+void insert_disk(int slot, int drive, const char *name, int ejected, const char *partition_name, int part_num, word32 dynamic_blocks);
 dword64 cfg_get_fd_size(int fd);
 word32 cfg_read_from_fd(int fd, byte *bufptr, dword64 dpos, word32 size);
 word32 cfg_write_to_fd(int fd, byte *bufptr, dword64 dpos, word32 size);
@@ -178,7 +185,10 @@ int cfg_get_disk_name(char *outstr, int maxlen, int type_ext, int with_extras);
 void cfg_parse_menu(Cfg_menu *menuptr, int menu_pos, int highlight_pos, int change);
 void cfg_get_base_path(char *pathptr, const char *inptr, int go_up);
 void cfg_name_new_image(void);
-int cfg_create_new_image_act(const char *str, int type, int size_kb);
+void cfg_dup_existing_image(word32 slotdrive);
+void cfg_dup_image_selected(void);
+void cfg_validate_image(word32 slotdrive);
+int cfg_create_new_image_act(const char *str, int type, int size_blocks);
 void cfg_create_new_image(void);
 void cfg_file_init(void);
 void cfg_free_alldirents(Cfg_listhdr *listhdrptr);
@@ -199,14 +209,15 @@ void cfg_file_update_ptr(char *str, int need_update);
 void cfg_file_selected(void);
 void cfg_file_handle_key(int key);
 void cfg_draw_menu(void);
-void cfg_newdisk_pick_menu(int slotdrive);
+void cfg_newdisk_pick_menu(word32 slotdrive);
 int cfg_control_panel_update(void);
+int cfg_control_panel_update1(void);
 
 
 /* debugger.c */
 void debugger_init(void);
 int debugger_run_16ms(void);
-void dbg_log_info(double dcycs, word32 info1, word32 info2, int type);
+void dbg_log_info(double dcycs, word32 info1, word32 info2, word32 type);
 void debugger_update_list_kpc(void);
 void debugger_key_event(int a2code, int is_up, int shift_down, int ctrl_down, int lock_down);
 void debugger_page_updown(int isup);
@@ -625,6 +636,7 @@ word32 dynapro_get_word16(byte *bptr);
 void dynapro_set_word24(byte *bptr, word32 val);
 void dynapro_set_word32(byte *bptr, word32 val);
 void dynapro_set_word16(byte *bptr, word32 val);
+void dynapro_error(Disk *dsk, const char *fmt, ...);
 Dynapro_file *dynapro_alloc_file(void);
 void dynapro_free_file(Dynapro_file *fileptr, int check_map);
 void dynapro_free_recursive_file(Dynapro_file *fileptr, int check_map);
@@ -692,6 +704,7 @@ word32 dynapro_validate_file(Disk *dsk, byte *freeblks_ptr, word32 block_num, wo
 word32 dynapro_validate_forked_file(Disk *dsk, byte *freeblks_ptr, word32 block_num, word32 eof);
 word32 dynapro_validate_dir(Disk *dsk, byte *freeblks_ptr, word32 dir_byte, word32 parent_dir_byte, word32 exp_blocks_used);
 int dynapro_validate_disk(Disk *dsk);
+void dynapro_validate_any_image(Disk *dsk);
 
 
 /* applesingle.c */
@@ -730,14 +743,16 @@ void update_border_info(void);
 void update_border_line(int st_line_offset, int end_line_offset, int color);
 void video_border_pixel_write(Kimage *kimage_ptr, int starty, int num_lines, int color, int st_off, int end_off);
 void redraw_changed_text(int start_offset, int start_line, int reparse, word32 *in_wptr, int altcharset, word32 bg_pixel, word32 fg_pixel, int pixels_per_line, int dbl);
-void redraw_changed_string(byte *bptr, int start_line, word32 ch_mask, word32 *in_wptr, word32 bg_pixel, word32 fg_pixel, int pixels_per_line, int dbl);
+void redraw_changed_string(const byte *bptr, int start_line, word32 ch_mask, word32 *in_wptr, word32 bg_pixel, word32 fg_pixel, int pixels_per_line, int dbl);
 void redraw_changed_gr(int start_offset, int start_line, int reparse, word32 *in_wptr, int pixels_per_line, int dbl);
 void video_hgr_line_segment(byte *slow_mem_ptr, word32 *wptr, int x1, int monochrome, int dbl, int pixels_per_line);
 void redraw_changed_hgr(int start_offset, int start_line, int reparse, word32 *in_wptr, int pixels_per_line, int monochrome, int dbl);
-int video_rebuild_super_hires_palette(word32 scan_info, int line, int reparse);
-word32 redraw_changed_super_hires_oneline(word32 *in_wptr, int pixels_per_line, int y, int scan, word32 ch_mask);
-void redraw_changed_super_hires(int start_line, int reparse, word32 *wptr, int pixels_per_line);
+int video_rebuild_super_hires_palette(int bank, word32 scan_info, int line, int reparse);
+word32 redraw_changed_super_hires_oneline(int bank, word32 *in_wptr, int pixels_per_line, int y, int scan, word32 ch_mask);
+void redraw_changed_super_hires_bank(int bank, int start_line, int reparse, word32 *wptr, int pixels_per_line);
+void redraw_changed_super_hires(int voc_interlace, int start_line, int reparse, word32 *wptr, int pixels_per_line);
 void video_update_event_line(int line);
+void video_force_reparse(void);
 void video_update_through_line(int line);
 void video_refresh_line(int line, int must_reparse);
 void prepare_a2_font(void);
@@ -746,7 +761,10 @@ void video_add_rect(Kimage *kimage_ptr, int x, int y, int width, int height);
 void video_add_a2_rect(int start_line, int end_line, int left_pix, int right_pix);
 void video_form_change_rects(void);
 int video_get_a2_width(Kimage *kimage_ptr);
+int video_get_x_width(Kimage *kimage_ptr);
 int video_get_a2_height(Kimage *kimage_ptr);
+int video_get_x_height(Kimage *kimage_ptr);
+void video_update_status_enable(Kimage *kimage_ptr);
 int video_out_query(Kimage *kimage_ptr);
 void video_out_done(Kimage *kimage_ptr);
 int video_out_data(void *vptr, Kimage *kimage_ptr, int out_width_act, Change_rect *rectptr, int pos);
@@ -758,8 +776,18 @@ int video_scale_mouse_x(Kimage *kimage_ptr, int raw_x, int x_width);
 int video_scale_mouse_y(Kimage *kimage_ptr, int raw_y, int y_height);
 int video_unscale_mouse_x(Kimage *kimage_ptr, int a2_x, int x_width);
 int video_unscale_mouse_y(Kimage *kimage_ptr, int a2_y, int y_height);
-void video_update_color_raw(int col_num, int a2_color);
+void video_update_color_raw(int bank, int col_num, int a2_color);
 void video_update_status_line(int line, const char *string);
+void video_draw_a2_string(int line, const byte *bptr);
 void video_show_debug_info(void);
 word32 float_bus(double dcycs);
+
+
+/* voc.c */
+word32 voc_devsel_read(word32 loc, double dcycs);
+void voc_devsel_write(word32 loc, word32 val, double dcycs);
+void voc_iosel_c300_write(word32 loc, word32 val, double dcycs);
+void voc_reset(void);
+word32 voc_read_reg0(double dcycs);
+void voc_update_interlace(double dcycs);
 

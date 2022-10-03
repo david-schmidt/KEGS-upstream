@@ -1,5 +1,5 @@
 
-KEGS: Kent's Emulated GS version 1.14
+KEGS: Kent's Emulated GS version 1.16
 http://kegs.sourceforge.net/
 
 What is this?
@@ -41,6 +41,10 @@ Limited SCC (serial port) emulation to enable PR#1/2 IN#1/2 and Virtual
 Mockingboard A support.  Set slot 4 to "Your card" in the IIgs control panel.
 	Note that the mouse doesn't work in GS/OS on ROM01 if slot 4 is
 	set to "Your card".
+Dynapro: You can mount host directories as volumes for ProDOS 8 and GS/OS,
+	allowing easy transfer of data to/from KEGS emulation.  Changes to
+	files inside KEGS emulation are immediately made to the files
+	visible in the host directory.
 
 KEGS by default emulates a 8MB Apple IIgs, but you can change this from
 the Configuration Panel.
@@ -210,6 +214,7 @@ F1:	Alias of Command
 F2:	Alias of Option
 F3:	Alias of ESC for OS/2 compatibility.
 F4:	Configuration Panel
+F5:	Toggle status lines on/off
 F6:	Toggle through the 4 speeds: Unlimited, 1MHz, 2.8MHz, 8.0MHz
 Shift-F6: Enter KEGS debugger
 F7:	Toggle debugger window

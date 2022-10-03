@@ -1,4 +1,4 @@
-const char rcsid_moremem_c[] = "@(#)$KmKId: moremem.c,v 1.272 2021-08-17 00:01:39+00 kentd Exp $";
+const char rcsid_moremem_c[] = "@(#)$KmKId: moremem.c,v 1.275 2021-12-19 22:44:39+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -22,7 +22,7 @@ extern byte *g_slow_memory_ptr;
 extern byte *g_rom_fc_ff_ptr;
 extern byte *g_rom_cards_ptr;
 
-extern word32 slow_mem_changed[];
+extern word32 g_slow_mem_changed[];
 
 extern int g_num_breakpoints;
 extern Break_point g_break_pts[];
@@ -1132,13 +1132,13 @@ io_read(word32 loc, double *cyc_ptr)
 			return IOR(RAMWRT);
 		case 0x15: /* c015 = RDCXROM = INTCX */
 			return IOR(g_c068_statereg & 1);
-		case 0x16: /* c016: ALTZP */
+		case 0x16: /* c016: Read ALTZP, 0 = Read Main ZP; 1 = Alt ZP */
 			return IOR(ALTZP);
 		case 0x17: /* c017: rdc3rom */
 			return IOR(g_c02d_int_crom & (1 << 3));
 		case 0x18: /* c018: rd80c0l */
 			return IOR((g_cur_a2_stat & ALL_STAT_ST80));
-		case 0x19: /* c019: rdvblbar */
+		case 0x19: /* c019: rdvblbar: MSB set if in VBL */
 			tmp = in_vblank(dcycs);
 			return IOR(tmp);
 		case 0x1a: /* c01a: rdtext */
@@ -1472,19 +1472,11 @@ io_read(word32 loc, double *cyc_ptr)
 			/* UNIMPL_READ; */
 
 		/* 0xc0b0 - 0xc0bf */
-		case 0xb0:
-			/* c0b0: female voice tool033 look at this */
-			return 0;
-		case 0xb1: case 0xb2: case 0xb3:
+		case 0xb0: case 0xb1: case 0xb2: case 0xb3:
 		case 0xb4: case 0xb5: case 0xb6: case 0xb7:
-		case 0xb9: case 0xba: case 0xbb:
+		case 0xb8: case 0xb9: case 0xba: case 0xbb:
 		case 0xbc: case 0xbd: case 0xbe: case 0xbf:
-			/* UNIMPL_READ; */
-			return 0;
-		/* c0b8: Second Sight card stuff: return 0 */
-		case 0xb8:
-			return 0;
-			break;
+			return voc_devsel_read(loc, dcycs);
 
 		/* 0xc0c0 - 0xc0cf */
 		case 0xc0: case 0xc1: case 0xc2: case 0xc3:
@@ -1563,28 +1555,28 @@ io_write(word32 loc, int val, double *cyc_ptr)
 	case 0: /* 0xc000 - 0xc0ff */
 		switch(loc & 0xff) {
 		/* 0xc000 - 0xc00f */
-		case 0x00: /* 0xc000 */
+		case 0x00: /* 0xc000: CLR80COL */
 			if(g_cur_a2_stat & ALL_STAT_ST80) {
 				g_cur_a2_stat &= (~ALL_STAT_ST80);
 				fixup_st80col(dcycs);
 			}
 			return;
-		case 0x01: /* 0xc001 */
+		case 0x01: /* 0xc001: SET80COL, enable 80-column store */
 			if((g_cur_a2_stat & ALL_STAT_ST80) == 0) {
 				g_cur_a2_stat |= (ALL_STAT_ST80);
 				fixup_st80col(dcycs);
 			}
 			return;
-		case 0x02: /* 0xc002 */
+		case 0x02: /* 0xc002: Set RDMAINRAM */
 			set_statereg(dcycs, g_c068_statereg & ~0x20);
 			return;
-		case 0x03: /* 0xc003 */
+		case 0x03: /* 0xc003: Set RDCARDRAM (alt) */
 			set_statereg(dcycs, g_c068_statereg | 0x20);
 			return;
-		case 0x04: /* 0xc004 */
+		case 0x04: /* 0xc004: Set WRMAINRAM */
 			set_statereg(dcycs, g_c068_statereg & ~0x10);
 			return;
-		case 0x05: /* 0xc005 */
+		case 0x05: /* 0xc005: Set WRCARDRAM (alt) */
 			set_statereg(dcycs, g_c068_statereg | 0x10);
 			return;
 		case 0x06: /* 0xc006 = SETSLOTCXROM, use slot rom c800 */
@@ -1593,10 +1585,10 @@ io_write(word32 loc, int val, double *cyc_ptr)
 		case 0x07: /* 0xc007 = SETINTXROM, use int rom c800 */
 			set_statereg(dcycs, g_c068_statereg | 0x01);
 			return;
-		case 0x08: /* 0xc008 */
+		case 0x08: /* 0xc008: SETSTDZP (main ZP/LC) */
 			set_statereg(dcycs, g_c068_statereg & ~0x80);
 			return;
-		case 0x09: /* 0xc009 */
+		case 0x09: /* 0xc009: SETALTZP (alt ZP/LC) */
 			set_statereg(dcycs, g_c068_statereg | 0x80);
 			return;
 		case 0x0a: /* 0xc00a = SETINTC3ROM, use internal ROM slot 3*/
@@ -1613,25 +1605,25 @@ io_write(word32 loc, int val, double *cyc_ptr)
 				fixup_intcx();
 			}
 			return;
-		case 0x0c: /* 0xc00c = SETINTC3ROM, use internal rom slot 3*/
+		case 0x0c: /* 0xc00c = CLR80VID, disable 80 col hardware */
 			if(g_cur_a2_stat & ALL_STAT_VID80) {
 				g_cur_a2_stat &= (~ALL_STAT_VID80);
 				change_display_mode(dcycs);
 			}
 			return;
-		case 0x0d: /* 0xc00d */
+		case 0x0d: /* 0xc00d: SET80VID, enable 80 col hardware */
 			if((g_cur_a2_stat & ALL_STAT_VID80) == 0) {
 				g_cur_a2_stat |= (ALL_STAT_VID80);
 				change_display_mode(dcycs);
 			}
 			return;
-		case 0x0e: /* 0xc00e */
+		case 0x0e: /* 0xc00e: CLRALTCHAR */
 			if(g_cur_a2_stat & ALL_STAT_ALTCHARSET) {
 				g_cur_a2_stat &= (~ALL_STAT_ALTCHARSET);
 				change_display_mode(dcycs);
 			}
 			return;
-		case 0x0f: /* 0xc00f */
+		case 0x0f: /* 0xc00f: SETALTCHAR */
 			if((g_cur_a2_stat & ALL_STAT_ALTCHARSET) == 0) {
 				g_cur_a2_stat |= (ALL_STAT_ALTCHARSET);
 				change_display_mode(dcycs);
@@ -1719,7 +1711,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 			return;
 		case 0x2b: /* 0xc02b */
 			g_c02b_val = val;
-			if(val != 0x08 && val != 0x00) {
+			if((val != 0x08) && (val != 0x00)) {
 				printf("Writing c02b with %02x\n", val);
 			}
 			return;
@@ -2000,7 +1992,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 				g_c05x_annuncs |= 4;
 			}
 			return;
-		case 0x5e: /* 0xc05e */
+		case 0x5e: /* 0xc05e: SETAN3, clear AN3, double-hires on */
 			if(g_zipgs_unlock >= 4) {
 				/* Zippy writes 0x80 and 0x00 here... */
 			} else if(g_cur_a2_stat & ALL_STAT_ANNUNC3) {
@@ -2008,7 +2000,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 				change_display_mode(dcycs);
 			}
 			return;
-		case 0x5f: /* 0xc05f */
+		case 0x5f: /* 0xc05f: CLRAN3, set AN3, double-hires off */
 			if(g_zipgs_unlock >= 4) {
 				halt_printf("Wrote ZipGS $c05f: %02x\n", val);
 			} else if((g_cur_a2_stat & ALL_STAT_ANNUNC3) == 0) {
@@ -2125,13 +2117,11 @@ io_write(word32 loc, int val, double *cyc_ptr)
 			return;
 
 		/* 0xc0b0 - 0xc0bf */
-		case 0xb0:
-			/* Second sight stuff--ignore it */
-			return;
-		case 0xb1: case 0xb2: case 0xb3:
+		case 0xb0: case 0xb1: case 0xb2: case 0xb3:
 		case 0xb4: case 0xb5: case 0xb6: case 0xb7:
 		case 0xb8: case 0xb9: case 0xba: case 0xbb:
 		case 0xbc: case 0xbd: case 0xbe: case 0xbf:
+			voc_devsel_write(loc, val, dcycs);
 			return;
 
 		/* 0xc0c0 - 0xc0cf */
@@ -2167,9 +2157,12 @@ io_write(word32 loc, int val, double *cyc_ptr)
 			exit(-300);
 		}
 		break;
-	case 1: case 2: case 3: case 5: case 6: case 7:
-		/* c1000 - c7ff (but not c4xx) */
+	case 1: case 2: case 5: case 6: case 7:
+		/* c1000 - c7ff (but not c3xx,c4xx) */
 		UNIMPL_WRITE;
+	case 3:
+		voc_devsel_write(loc, val, dcycs);
+		return;
 	case 4:
 		if((g_c02d_int_crom & 0x10) && !(g_c068_statereg & 1)) {
 			// Slot 4 is set to Your Card and not INTCX

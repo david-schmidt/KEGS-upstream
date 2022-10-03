@@ -1,8 +1,8 @@
-const char rcsid_smartport_c[] = "@(#)$KmKId: smartport.c,v 1.49 2021-11-14 21:17:20+00 kentd Exp $";
+const char rcsid_smartport_c[] = "@(#)$KmKId: smartport.c,v 1.51 2022-01-23 18:39:20+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -105,9 +105,9 @@ do_c70d(word32 arg0)
 	word32	status_ptr, rts_addr, cmd_list,	cmd_list_lo, cmd_list_mid;
 	word32	cmd_list_hi, status_ptr_lo, status_ptr_mid, status_ptr_hi;
 	word32	rts_lo, rts_hi, buf_ptr_lo, buf_ptr_hi, buf_ptr, mask, cmd;
-	word32	block_lo, block_mid, block_hi, block_hi2, unit;
-	word32	ctl_ptr_lo, ctl_ptr_hi, ctl_ptr;
-	int	param_cnt, block, status_code, ctl_code, stat_val, ret, ext;
+	word32	block_lo, block_mid, block_hi, block_hi2, unit, ctl_code;
+	word32	ctl_ptr_lo, ctl_ptr_hi, ctl_ptr, block, stat_val;
+	int	param_cnt, ret, ext;
 	int	i;
 
 	set_memory_c(0x7f8, 0xc7, 1);
@@ -132,8 +132,9 @@ do_c70d(word32 arg0)
 	cmd_list_mid = get_memory_c((rts_addr + 2) & 0xffff);
 	cmd_list_hi = 0;
 	mask = 0xffff;
+	ext = 0;
 	if(cmd & 0x40) {
-		/* extended */
+		ext = 2;
 		mask = 0xffffff;
 		cmd_list_hi = get_memory_c((rts_addr + 3) & 0xffff);
 	}
@@ -143,11 +144,7 @@ do_c70d(word32 arg0)
 	disk_printf("cmd: %02x, cmd_list: %06x\n", cmd, cmd_list);
 	param_cnt = get_memory_c(cmd_list);
 	unit = get_memory_c((cmd_list + 1) & mask);
-
-	ext = 0;
-	if(cmd & 0x40) {
-		ext = 2;
-	}
+	ctl_code = get_memory_c((cmd_list + 4 + ext) & mask);
 
 	smartport_log(0xc70d, cmd, rts_addr, cmd_list);
 	dbg_log_info(g_cur_dcycs, (rts_addr << 16) | (unit << 8) | cmd,
@@ -183,19 +180,14 @@ do_c70d(word32 arg0)
 
 		status_ptr = status_ptr_lo + (256*status_ptr_mid) +
 							(65536*status_ptr_hi);
-		if(cmd & 0x40) {
-			status_code = get_memory_c((cmd_list+6) & mask);
-		} else {
-			status_code = get_memory_c((cmd_list+4) & mask);
-		}
 
-		smartport_log(0, unit, status_ptr, status_code);
-		dbg_log_info(g_cur_dcycs, (status_code << 16) | unit,
+		smartport_log(0, unit, status_ptr, ctl_code);
+		dbg_log_info(g_cur_dcycs, (ctl_code << 16) | unit,
 							cmd_list, 0xc700);
 
 		disk_printf("unit: %02x, status_ptr: %06x, code: %02x\n",
-			unit, status_ptr, status_code);
-		if((unit == 0) && (status_code == 0)) {
+			unit, status_ptr, ctl_code);
+		if((unit == 0) && (ctl_code == 0)) {
 			/* Smartport driver status */
 			/* see technotes/smpt/tn-smpt-002 */
 			set_memory_c(status_ptr, MAX_C7_DISKS, 1);
@@ -208,7 +200,7 @@ do_c70d(word32 arg0)
 
 			engine.xreg = 8;
 			engine.yreg = 0;
-		} else if((unit > 0) && (status_code == 0)) {
+		} else if((unit > 0) && (ctl_code == 0)) {
 			/* status for unit x */
 			if((unit > MAX_C7_DISKS) ||
 					(g_iwm.smartport[unit-1].fd < 0)) {
@@ -239,7 +231,7 @@ do_c70d(word32 arg0)
 			}
 			engine.yreg = 0;
 			disk_printf("just finished unit %d, stat 0\n", unit);
-		} else if(status_code == 3) {
+		} else if(ctl_code == 3) {
 			if((unit > MAX_C7_DISKS) ||
 					(g_iwm.smartport[unit-1].fd < 0)) {
 				stat_val = 0x80;
@@ -293,7 +285,7 @@ do_c70d(word32 arg0)
 			}
 		} else {
 			printf("cmd: 00, unknown unit/status code %02x!\n",
-								status_code);
+								ctl_code);
 			ret = 0x21;			// BADCTL
 		}
 		break;
@@ -416,8 +408,6 @@ do_c70d(word32 arg0)
 			cmd_list += 2;
 		}
 
-		ctl_code = get_memory_c((cmd_list + 4) & mask);
-
 		switch(ctl_code) {
 		case 0x00:
 			printf("Performing a reset on unit %d\n", unit);
@@ -435,9 +425,11 @@ do_c70d(word32 arg0)
 		engine.xreg = (rts_addr) & 0xff;
 		engine.yreg = (rts_addr >> 8) & 0xff;
 		ret = 0x01;		// BADCMD error
-		if((cmd != 0x4a) && (cmd != 0x48)) {
-			/* Finder does 0x4a call before formatting disk */
-			/* Many things do 0x48 call to see online drives */
+		if((cmd != 0x4b) && (cmd != 0x48) && (cmd != 0x4a)) {
+			// Finder does 0x4a before dialog for formatting disk
+			// Finder does 0x4b call before formatting disk
+			// Many things do 0x48 call to see online drives
+			// So: ignore those, just return BADCMD
 			halt_printf("Just did smtport cmd:%02x rts_addr:%04x, "
 				"cmdlst:%06x\n", cmd, rts_addr, cmd_list);
 		}
@@ -447,6 +439,8 @@ do_c70d(word32 arg0)
 	engine.psr &= ~1;
 	if(ret) {
 		engine.psr |= 1;
+		printf("Smtport cmd:%02x unit:%02x ctl_code:%02x ret:%02x\n",
+			cmd, unit, ctl_code, ret);
 	}
 	engine.kpc = (rts_addr + 3 + ext) & 0xffff;
 	// printf("   ret:%02x psr_c:%d\n", ret & 0xff, engine.psr & 1);

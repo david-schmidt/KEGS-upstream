@@ -1,8 +1,8 @@
-const char rcsid_adb_c[] = "@(#)$KmKId: adb.c,v 1.99 2021-08-22 16:25:33+00 kentd Exp $";
+const char rcsid_adb_c[] = "@(#)$KmKId: adb.c,v 1.105 2022-01-22 16:30:14+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -28,6 +28,7 @@ extern int g_swap_paddles;
 extern int g_invert_paddles;
 extern int g_joystick_type;
 extern int g_config_control_panel;
+extern int g_status_enable;
 extern double g_cur_dcycs;
 
 extern byte *g_slow_memory_ptr;
@@ -113,6 +114,7 @@ int	g_adb_mouse_coord = 0;
 #define MAX_KBD_BUF		8
 #define MAX_KBD_PASTE_BUF	32768
 
+int	g_adb_mainwin_has_focus = 1;
 int	g_key_down = 0;
 int	g_hard_key_down = 0;
 int	g_a2code_down = 0;
@@ -305,7 +307,7 @@ const int g_a2_key_to_ascii[][4] = {
 int
 adb_get_hide_warp_info(Kimage *kimage_ptr, int *warpptr)
 {
-	if(kimage_ptr == &g_mainwin_kimage) {
+	if((kimage_ptr == &g_mainwin_kimage) && g_adb_mainwin_has_focus) {
 		*warpptr = g_warp_pointer;
 		return g_hide_pointer;
 	}
@@ -1298,7 +1300,7 @@ adb_update_mouse(Kimage *kimage_ptr, int x, int y, int button_states,
 	}
 	dcycs = g_cur_dcycs;
 
-	unhide = 0;
+	unhide = (g_adb_mainwin_has_focus == 0);
 	if((buttons_valid >= 0) && (buttons_valid & 0x1000)) {
 		// x, y are really deltas
 		buttons_valid &= 0xfff;
@@ -2006,8 +2008,9 @@ adb_physical_key_update(Kimage *kimage_ptr, int a2code, word32 unicode_c,
 			cfg_toggle_config_panel();
 			break;
 		case 0x05: /* F5 - Force Refresh */
+			g_status_enable = !g_status_enable;
+			video_update_status_enable(&g_mainwin_kimage);
 			video_set_x_refresh_needed(&g_mainwin_kimage, 1);
-			printf("Set x_refresh_needed=1\n");
 			break;
 		case 0x06: /* F6 - emulator speed */
 			if(SHIFT_DOWN) {
@@ -2180,4 +2183,14 @@ void
 adb_kbd_repeat_off()
 {
 	g_key_down = 0;
+}
+
+void
+adb_mainwin_focus(int has_focus)
+{
+	g_adb_mainwin_has_focus = has_focus;
+	// printf("g_adb_mainwin_has_focus=%d\n", g_adb_mainwin_has_focus);
+	if(!has_focus) {
+		adb_nonmain_check();
+	}
 }
