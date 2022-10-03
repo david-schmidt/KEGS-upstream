@@ -1,11 +1,14 @@
-// $KmKId: AppDelegate.swift,v 1.16 2021-01-24 05:36:13+00 kentd Exp $
-// Copyright 2019-2020 by Kent Dickey
+// $KmKId: AppDelegate.swift,v 1.17 2021-08-22 16:23:59+00 kentd Exp $
+//	Copyright 2019-2021 by Kent Dickey
+//	This code is covered by the GNU GPL v3
+//	See the file COPYING.txt or https://www.gnu.org/licenses/
 //
 // /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/
 //  Developer/SDKs/MacOSX.sdk/System/Library/Frameworks/CoreAudio.framework/
 //  Versions/A/Headers
 
 import Cocoa
+import GameController
 
 let Context_draw = false
 	// Default: use safe draw function.
@@ -104,6 +107,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
 	var mainwin_info = Window_info();
 	var debugwin_info = Window_info();
+	var my_joystick : GCController? = nil;
 
 	func find_win_info(_ window: NSWindow) -> Window_info {
 		if(mainwin_info.x_win == window) {
@@ -226,6 +230,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 			}
 		}
 	}
+	func joystick_update() {
+		if let joy_profile = my_joystick?.extendedGamepad {
+			var buttons : UInt32 = 0;
+			if(joy_profile.rightTrigger.isPressed ||
+					joy_profile.buttonA.isPressed ||
+					joy_profile.buttonB.isPressed) {
+				buttons |= 1;
+			}
+			if(joy_profile.leftTrigger.isPressed ||
+					joy_profile.buttonX.isPressed ||
+					joy_profile.buttonY.isPressed) {
+				buttons |= 2;
+			}
+			let x = joy_profile.leftThumbstick.xAxis.value * 32768
+			let y = joy_profile.leftThumbstick.yAxis.value * 32768
+			joystick_callback_update(buttons, Int32(x), Int32(y))
+			//if(buttons != 0) {
+				//print("buttons: \(buttons), x:\(x), y:\(y)")
+			//}
+		}
+	}
 
 	var mainWindow : NSWindow!
 	var mainwin_view : MainView!
@@ -256,6 +281,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 							delegate: self)
 
 		mainwin_info.create_window()
+		if let joys = GCController.controllers().first {
+			print("joys: \(joys)")
+			my_joystick = joys;
+			joystick_callback_init(Int32(0))
+		}
 		main_run_loop()
 	}
 
@@ -265,6 +295,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 			self.main_run_loop()
 		}
 		run_16ms()
+		joystick_update()
 		mainwin_info.update()
 		debugwin_info.update()
 	}

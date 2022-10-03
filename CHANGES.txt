@@ -1,15 +1,16 @@
 
 Changes in KEGS v1.11 since v1.08 (08/19/21)
-- KEGS should support many international keyboards, converting your local
+- KEGS should support many non-US keyboards, converting your local
 	keys to the US equivalents: [,],|, etc.  Italian works least well,
 	sorry.
 - KEGS can choose character ROMs out of a ROMX-compatible file.  Use F4,
 	"Character ROM Selection", and then pick the file and font.
 	If you pick an unreadable font and cannot undo it for some reason,
-	quit KEGS, and using a text edit, delete g_cfg_charrom_* lines from
+	quit KEGS, and using a text editor, delete g_cfg_charrom_* lines from
 	config.kegs.
 - Taking an IRQ logs the stack accesses in the datalog properly.
 - Fixed BRK and COP exceptions to always pull their vectors from ROM.
+	Bug was found by Applecorn: https://github.com/bobbimanners/Applecorn
 
 
 Changes in KEGS v1.08 since v1.07 (06/29/21)

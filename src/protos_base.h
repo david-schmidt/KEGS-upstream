@@ -11,7 +11,7 @@
 /************************************************************************/
 
 #ifdef INCLUDE_RCSID_C
-const char rcsid_protos_base_h[] = "@(#)$KmKId: protos_base.h,v 1.82 2021-08-19 03:41:26+00 kentd Exp $";
+const char rcsid_protos_base_h[] = "@(#)$KmKId: protos_base.h,v 1.84 2021-08-22 21:04:06+00 kentd Exp $";
 #endif
 
 /* xdriver.c and macdriver.c and windriver.c */
@@ -375,6 +375,8 @@ void dummy2(word32 psr);
 
 
 /* joystick_driver.c */
+void joystick_callback_init(int native_type);
+void joystick_callback_update(word32 buttons, int paddle_x, int paddle_y);
 
 
 /* moremem.c */
@@ -645,7 +647,7 @@ void dynapro_mark_damaged(Disk *dsk, Dynapro_file *fileptr);
 int dynapro_write(Disk *dsk, byte *bufptr, dword64 doffset, word32 size);
 void dynapro_debug_update(Disk *dsk);
 void dynapro_debug_map(Disk *dsk, const char *str);
-void dynapro_debug_recursive_file_map(Dynapro_file *fileptr);
+void dynapro_debug_recursive_file_map(Dynapro_file *fileptr, int start);
 void dynapro_validate_init_freeblks(byte *freeblks_ptr, word32 num_blocks);
 word32 dynapro_validate_freeblk(Disk *dsk, byte *freeblks_ptr, word32 block);
 word32 dynapro_validate_file(Disk *dsk, byte *freeblks_ptr, word32 block_num, int level);

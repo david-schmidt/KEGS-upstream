@@ -1,4 +1,4 @@
-const char rcsid_adb_c[] = "@(#)$KmKId: adb.c,v 1.98 2021-08-17 00:08:36+00 kentd Exp $";
+const char rcsid_adb_c[] = "@(#)$KmKId: adb.c,v 1.99 2021-08-22 16:25:33+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -1907,6 +1907,12 @@ adb_ascii_to_a2code(int unicode_c, int a2code, int *shift_down_ptr)
 
 	if(unicode_c > 0x7f) {
 		return a2code;			// Use a2code instead
+	}
+	if((g_a2_key_to_ascii[a2code][1] & 0xf000) == 0x1000) {	// Keypad
+		// Don't remap keypad keys, we need them for Keypad Joystick
+		if((unicode_c >= '0') && (unicode_c <= '9')) {
+			return a2code;
+		}
 	}
 
 	for(i = 0; i < 128; i++) {

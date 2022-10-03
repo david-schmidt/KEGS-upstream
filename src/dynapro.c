@@ -1,4 +1,4 @@
-const char rcsid_dynapro_c[] = "@(#)$KmKId: dynapro.c,v 1.25 2021-08-19 04:30:05+00 kentd Exp $";
+const char rcsid_dynapro_c[] = "@(#)$KmKId: dynapro.c,v 1.27 2021-08-22 21:03:46+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -24,6 +24,75 @@ const char rcsid_dynapro_c[] = "@(#)$KmKId: dynapro.c,v 1.25 2021-08-19 04:30:05
 char g_dynapro_path_buf[DYNAPRO_PATH_MAX];
 
 extern int g_vbl_count, g_iwm_dynapro_last_vbl_count;
+
+byte g_prodos_block0[512] = {
+	// From Beagle Bros Pro-Byter disk
+	0x01, 0x38, 0xb0, 0x03, 0x4c, 0x32, 0xa1, 0x86,	// 0x000
+	0x43, 0xc9, 0x03, 0x08, 0x8a, 0x29, 0x70, 0x4a,
+	0x4a, 0x4a, 0x4a, 0x09, 0xc0, 0x85, 0x49, 0xa0,	// 0x010
+	0xff, 0x84, 0x48, 0x28, 0xc8, 0xb1, 0x48, 0xd0,
+	0x3a, 0xb0, 0x0e, 0xa9, 0x03, 0x8d, 0x00, 0x08,	// 0x020
+	0xe6, 0x3d, 0xa5, 0x49, 0x48, 0xa9, 0x5b, 0x48,
+	0x60, 0x85, 0x40, 0x85, 0x48, 0xa0, 0x63, 0xb1,	// 0x030
+	0x48, 0x99, 0x94, 0x09, 0xc8, 0xc0, 0xeb, 0xd0,
+	0xf6, 0xa2, 0x06, 0xbc, 0x1d, 0x09, 0xbd, 0x24,	// 0x040
+	0x09, 0x99, 0xf2, 0x09, 0xbd, 0x2b, 0x09, 0x9d,
+	0x7f, 0x0a, 0xca, 0x10, 0xee, 0xa9, 0x09, 0x85,	// 0x050
+	0x49, 0xa9, 0x86, 0xa0, 0x00, 0xc9, 0xf9, 0xb0,
+	0x2f, 0x85, 0x48, 0x84, 0x60, 0x84, 0x4a, 0x84,	// 0x060
+	0x4c, 0x84, 0x4e, 0x84, 0x47, 0xc8, 0x84, 0x42,
+	0xc8, 0x84, 0x46, 0xa9, 0x0c, 0x85, 0x61, 0x85,	// 0x070
+	0x4b, 0x20, 0x12, 0x09, 0xb0, 0x68, 0xe6, 0x61,
+	0xe6, 0x61, 0xe6, 0x46, 0xa5, 0x46, 0xc9, 0x06,	// 0x080
+	0x90, 0xef, 0xad, 0x00, 0x0c, 0x0d, 0x01, 0x0c,
+	0xd0, 0x6d, 0xa9, 0x04, 0xd0, 0x02, 0xa5, 0x4a,	// 0x090
+	0x18, 0x6d, 0x23, 0x0c, 0xa8, 0x90, 0x0d, 0xe6,
+	0x4b, 0xa5, 0x4b, 0x4a, 0xb0, 0x06, 0xc9, 0x0a,	// 0x0a0
+	0xf0, 0x55, 0xa0, 0x04, 0x84, 0x4a, 0xad, 0x02,
+	0x09, 0x29, 0x0f, 0xa8, 0xb1, 0x4a, 0xd9, 0x02,	// 0x0b0
+	0x09, 0xd0, 0xdb, 0x88, 0x10, 0xf6, 0x29, 0xf0,
+	0xc9, 0x20, 0xd0, 0x3b, 0xa0, 0x10, 0xb1, 0x4a,	// 0x0c0
+	0xc9, 0xff, 0xd0, 0x33, 0xc8, 0xb1, 0x4a, 0x85,
+	0x46, 0xc8, 0xb1, 0x4a, 0x85, 0x47, 0xa9, 0x00,	// 0x0d0
+	0x85, 0x4a, 0xa0, 0x1e, 0x84, 0x4b, 0x84, 0x61,
+	0xc8, 0x84, 0x4d, 0x20, 0x12, 0x09, 0xb0, 0x17,	// 0x0e0
+	0xe6, 0x61, 0xe6, 0x61, 0xa4, 0x4e, 0xe6, 0x4e,
+	0xb1, 0x4a, 0x85, 0x46, 0xb1, 0x4c, 0x85, 0x47,	// 0x0f0
+	0x11, 0x4a, 0xd0, 0xe7, 0x4c, 0x00, 0x20, 0x4c,
+
+	0x3f, 0x09, 0x26, 0x50, 0x52, 0x4f, 0x44, 0x4f,	// 0x100
+	0x53, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
+	0x20, 0x20, 0xa5, 0x60, 0x85, 0x44, 0xa5, 0x61,	// 0x110
+	0x85, 0x45, 0x6c, 0x48, 0x00, 0x08, 0x1e, 0x24,
+	0x3f, 0x45, 0x47, 0x76, 0xf4, 0xd7, 0xd1, 0xb6,	// 0x120
+	0x4b, 0xb4, 0xac, 0xa6, 0x2b, 0x18, 0x60, 0x4c,
+	0xbc, 0x09, 0xa9, 0x9f, 0x48, 0xa9, 0xff, 0x48,	// 0x130
+	0xa9, 0x01, 0xa2, 0x00, 0x4c, 0x79, 0xf4, 0x20,
+	0x58, 0xfc, 0xa0, 0x1c, 0xb9, 0x50, 0x09, 0x99,	// 0x140
+	0xae, 0x05, 0x88, 0x10, 0xf7, 0x4c, 0x4d, 0x09,
+	0xaa, 0xaa, 0xaa, 0xa0, 0xd5, 0xce, 0xc1, 0xc2,	// 0x150
+	0xcc, 0xc5, 0xa0, 0xd4, 0xcf, 0xa0, 0xcc, 0xcf,
+	0xc1, 0xc4, 0xa0, 0xd0, 0xd2, 0xcf, 0xc4, 0xcf,	// 0x160
+	0xd3, 0xa0, 0xaa, 0xaa, 0xaa, 0xa5, 0x53, 0x29,
+	0x03, 0x2a, 0x05, 0x2b, 0xaa, 0xbd, 0x80, 0xc0,	// 0x170
+	0xa9, 0x2c, 0xa2, 0x11, 0xca, 0xd0, 0xfd, 0xe9,
+	0x01, 0xd0, 0xf7, 0xa6, 0x2b, 0x60, 0xa5, 0x46,	// 0x180
+	0x29, 0x07, 0xc9, 0x04, 0x29, 0x03, 0x08, 0x0a,
+	0x28, 0x2a, 0x85, 0x3d, 0xa5, 0x47, 0x4a, 0xa5,	// 0x190
+	0x46, 0x6a, 0x4a, 0x4a, 0x85, 0x41, 0x0a, 0x85,
+	0x51, 0xa5, 0x45, 0x85, 0x27, 0xa6, 0x2b, 0xbd,	// 0x1a0
+	0x89, 0xc0, 0x20, 0xbc, 0x09, 0xe6, 0x27, 0xe6,
+	0x3d, 0xe6, 0x3d, 0xb0, 0x03, 0x20, 0xbc, 0x09,	// 0x1b0
+	0xbc, 0x88, 0xc0, 0x60, 0xa5, 0x40, 0x0a, 0x85,
+	0x53, 0xa9, 0x00, 0x85, 0x54, 0xa5, 0x53, 0x85,	// 0x1c0
+	0x50, 0x38, 0xe5, 0x51, 0xf0, 0x14, 0xb0, 0x04,
+	0xe6, 0x53, 0x90, 0x02, 0xc6, 0x53, 0x38, 0x20,	// 0x1d0
+	0x6d, 0x09, 0xa5, 0x50, 0x18, 0x20, 0x6f, 0x09,
+	0xd0, 0xe3, 0xa0, 0x7f, 0x84, 0x52, 0x08, 0x28,	// 0x1e0
+	0x38, 0xc6, 0x52, 0xf0, 0xce, 0x18, 0x08, 0x88,
+	0xf0, 0xf5, 0xbd, 0x8c, 0xc0, 0x10, 0xfb, 0x00,	// 0x1f0
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
 
 word32
 dynapro_get_word32(byte *bptr)
@@ -254,6 +323,10 @@ dynapro_fill_fileptr_from_prodos(Disk *dsk, Dynapro_file *fileptr,
 	fileptr->aux_type = dynapro_get_word16(&bptr[0x1f]);
 	fileptr->lastmod_time = dynapro_get_word32(&bptr[0x21]);
 	fileptr->header_pointer = dynapro_get_word16(&bptr[0x25]);
+	if(dir_byte == 0x404) {			// Volume header
+		fileptr->upper_lower = dynapro_get_word32(&bptr[0x1a]);
+		fileptr->creation_time &= 0xffff;
+	}
 
 	len = (bptr[0] & 0xf) + 1;
 	upper_lower = fileptr->upper_lower;
@@ -598,7 +671,7 @@ dynapro_process_write_dir(Disk *dsk, Dynapro_file *parent_ptr,
 				ret, fileptr, &localfile);
 		if((ret == 7) && !is_header) {	// Entry dramatically changed
 			// Erase this file
-			dynapro_unlink_file(fileptr);
+			dynapro_mark_damaged(dsk, fileptr);
 		}
 		if(ret == 0) {
 			return 0;
@@ -631,6 +704,10 @@ dynapro_process_write_dir(Disk *dsk, Dynapro_file *parent_ptr,
 			}
 			*fileptr = localfile;		// STRUCT copy!
 			printf("Allocated new fileptr:%p\n", fileptr);
+			fileptr->parent_ptr = parent_ptr;
+			if(head_ptr) {
+				fileptr->parent_ptr = head_ptr;
+			}
 		}
 		if((ret == 2) || (ret == 7)) {
 			// New entry, or dramatically changed, update path
@@ -712,7 +789,27 @@ dynapro_handle_write_dir(Disk *dsk, Dynapro_file *parent_ptr,
 				Dynapro_file *head_ptr, word32 dir_byte)
 {
 	Dynapro_file *fileptr;
+	Dynapro_file *save_headptr;
 
+	save_headptr = head_ptr;
+	printf("handle_write_dir parent_ptr:%p, head_ptr:%p, dir_byte:%07x\n",
+			parent_ptr, head_ptr, dir_byte);
+	if(parent_ptr && head_ptr) {
+		printf(" parent:%s head:%s\n", parent_ptr->unix_path,
+							head_ptr->unix_path);
+		if(parent_ptr->subdir_ptr != head_ptr) {
+			printf("parent subdir:%p does not match %p\n",
+				parent_ptr->subdir_ptr, head_ptr);
+			exit(1);
+		}
+	}
+	if(parent_ptr == 0) {
+		if(head_ptr != dsk->dynapro_info_ptr->volume_ptr) {
+			printf("handle_write_dir %p %p %07x\n", parent_ptr,
+						head_ptr, dir_byte);
+			exit(1);
+		}
+	}
 	fileptr = dynapro_process_write_dir(dsk, parent_ptr, &head_ptr,
 								dir_byte);
 	if(fileptr == 0) {
@@ -720,6 +817,8 @@ dynapro_handle_write_dir(Disk *dsk, Dynapro_file *parent_ptr,
 		dynapro_erase_free_dir(dsk, head_ptr);
 		head_ptr = 0;
 	}
+	printf("handle_write_dir, process returned %p (was %p), parent:%p, "
+		"save:%p\n", fileptr, head_ptr, parent_ptr, save_headptr);
 	if(parent_ptr) {
 		parent_ptr->subdir_ptr = head_ptr;
 		if(!fileptr) {
@@ -945,9 +1044,14 @@ dynapro_unlink_file(Dynapro_file *fileptr)
 	int	ret, err;
 
 	// Try to unlink unix_path
-	printf("Unlink %s\n", fileptr->unix_path);
+	printf("Unlink %s (%p)\n", fileptr->unix_path, fileptr);
 	if(fileptr->unix_path == 0) {
 		printf("unix_path of %p is null!\n", fileptr);
+		exit(1);
+	}
+	if(fileptr->subdir_ptr != 0) {
+		printf("unlink_file %s, but subdirptr is valid!\n",
+				fileptr->unix_path);
 		exit(1);
 	}
 
@@ -981,10 +1085,6 @@ dynapro_erase_free_entry(Disk *dsk, Dynapro_file *fileptr)
 	if(!fileptr) {
 		return;
 	}
-	if(fileptr->subdir_ptr) {
-		dynapro_erase_free_dir(dsk, fileptr->subdir_ptr);
-		fileptr->subdir_ptr = 0;
-	}
 	dynapro_mark_damaged(dsk, fileptr);
 
 	fileptr->next_ptr = 0;
@@ -1009,7 +1109,9 @@ dynapro_erase_free_dir(Disk *dsk, Dynapro_file *fileptr)
 	dsk->dynapro_info_ptr->damaged = 1;
 	parent_ptr = fileptr->parent_ptr;
 	if(parent_ptr) {
-		parent_ptr->damaged = 1;
+		if(parent_ptr->subdir_ptr) {
+			parent_ptr->damaged = 1;
+		}
 	}
 	save_fileptr = fileptr;
 	nextptr = fileptr->next_ptr;
@@ -1033,6 +1135,10 @@ dynapro_mark_damaged(Disk *dsk, Dynapro_file *fileptr)
 	fileptr->damaged = 1;
 	dsk->dynapro_info_ptr->damaged = 1;
 	dynapro_unmap_file(dsk, fileptr);
+	if(fileptr->subdir_ptr) {
+		dynapro_erase_free_dir(dsk, fileptr->subdir_ptr);
+		fileptr->subdir_ptr = 0;
+	}
 
 	if((fileptr->prodos_name[0] >= 0xe0) && fileptr->parent_ptr) {
 		// We are a directory header, mark the directory entry of our
@@ -1145,23 +1251,33 @@ dynapro_debug_map(Disk *dsk, const char *str)
 		lastfileptr = fileptr;
 	}
 	printf("Recursive file map:\n");
-	dynapro_debug_recursive_file_map(dsk->dynapro_info_ptr->volume_ptr);
+	dynapro_debug_recursive_file_map(dsk->dynapro_info_ptr->volume_ptr, 1);
 }
 
 void
-dynapro_debug_recursive_file_map(Dynapro_file *fileptr)
+dynapro_debug_recursive_file_map(Dynapro_file *fileptr, int start)
 {
 	if(!fileptr) {
 		return;
 	}
 	while(fileptr) {
-		printf("  file %p %s map_first_block:%05x, storage:%02x\n",
-			fileptr, fileptr->unix_path,
-			fileptr->map_first_block, fileptr->prodos_name[0]);
-		printf("      n:%p, sub:%p, eof:%06x, key:%05x dam:%d\n",
+		printf("  file %p %s map_first_block:%05x, storage:%02x key:"
+			"%04x\n", fileptr, fileptr->unix_path,
+			fileptr->map_first_block, fileptr->prodos_name[0],
+			fileptr->key_block);
+		printf("      n:%p, sub:%p, eof:%06x, parent:%p dam:%d\n",
 			fileptr->next_ptr, fileptr->subdir_ptr,
-			fileptr->eof, fileptr->key_block, fileptr->damaged);
-		dynapro_debug_recursive_file_map(fileptr->subdir_ptr);
+			fileptr->eof, fileptr->parent_ptr, fileptr->damaged);
+		if(fileptr->unix_path == 0) {
+			printf("Filename is invalid, exiting\n");
+			exit(1);
+		}
+		if(!fileptr->parent_ptr && !start) {
+			printf("parent_ptr is 0, exiting\n");
+			exit(1);
+		}
+		dynapro_debug_recursive_file_map(fileptr->subdir_ptr, 0);
+		start = 0;
 		fileptr = fileptr->next_ptr;
 	}
 }
@@ -1600,11 +1716,7 @@ dynapro_create_prodos_name(Dynapro_file *newfileptr, Dynapro_file *matchptr,
 		c = g_dynapro_path_buf[i];
 		if((c >= 'a') && (c <= 'z')) {
 			c = c - 'a' + 'A';
-			if((storage_type == 0xf0) && (i == 0)) {
-				// Always make Volume name an initial capital
-			} else {
-				upper_lower |= 0x8000 | (0x4000 >> i);
-			}
+			upper_lower |= 0x8000 | (0x4000 >> i);
 		}
 		newfileptr->prodos_name[1 + i] = c;
 	}
@@ -1717,7 +1829,6 @@ dynapro_create_dir(Disk *dsk, char *unix_path, Dynapro_file *parent_ptr,
 	head_ptr->file_type = 0x75;			// Directory header type
 	if(storage_type >= 0xf0) {
 		head_ptr->file_type = 0x00;
-		head_ptr->upper_lower = 0;		// GS/OS checks it is 0!
 	}
 	ret = cfg_stat(unix_path, &stat_buf, 0);
 	if(ret != 0) {
@@ -1775,7 +1886,7 @@ dynapro_create_dir(Disk *dsk, char *unix_path, Dynapro_file *parent_ptr,
 			&(g_dynapro_path_buf[0]), is_dir, direntptr->d_name,
 			parent_ptr);
 		fileptr = dynapro_new_unix_file(&(g_dynapro_path_buf[0]),
-			parent_ptr, head_ptr->next_ptr, storage_type);
+			head_ptr, head_ptr->next_ptr, storage_type);
 		if(fileptr == 0) {
 			return 0;
 		}
@@ -1900,6 +2011,8 @@ dynapro_add_file_entry(Disk *dsk, Dynapro_file *fileptr, Dynapro_file *head_ptr,
 		fileptr->lastmod_time = 0x00060000;
 			// low 16 bits: file_count, upper 16 bits: bitmap_block
 		fileptr->header_pointer = dsk->raw_dsize >> 9;	// Total blocks
+		dynapro_set_word16(&bptr[0x1c], 0);
+		dynapro_set_word16(&bptr[0x16], fileptr->upper_lower);
 	} else if(storage_type >= 0xe0) {		// Directory header
 		dynapro_set_word16(&bptr[0x11], 0);
 		parent_ptr = fileptr->parent_ptr;		// subdir entry
@@ -2105,7 +2218,9 @@ dynapro_prep_image(Disk *dsk, const char *dir_path, word32 num_blocks)
 	dsk->raw_dsize = num_blocks * 512LL;
 
 	bptr = &(dsk->raw_data[0]);
-	bptr[0] = 0x01;				// Not sure if this is useful
+	for(i = 0; i < 512; i++) {
+		bptr[i] = g_prodos_block0[i];
+	}
 
 	// Directory is from blocks 2 through 5.  Set up prev and next ptrs
 	bptr = &(dsk->raw_data[2 * 0x200]);

@@ -1,5 +1,8 @@
-// $KmKId: MainView.swift,v 1.30 2021-08-09 01:52:45+00 kentd Exp $
-//  Copyright 2019-2021 by Kent Dickey
+// $KmKId: MainView.swift,v 1.31 2021-08-22 16:23:47+00 kentd Exp $
+
+//	Copyright 2019-2021 by Kent Dickey
+//	This code is covered by the GNU GPL v3
+//	See the file COPYING.txt or https://www.gnu.org/licenses/
 //
 
 import Cocoa

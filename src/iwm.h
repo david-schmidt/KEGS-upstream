@@ -1,5 +1,5 @@
 #ifdef INCLUDE_RCSID_C
-const char rcsid_iwm_h[] = "@(#)$KmKId: iwm.h,v 1.30 2021-08-10 13:47:06+00 kentd Exp $";
+const char rcsid_iwm_h[] = "@(#)$KmKId: iwm.h,v 1.31 2021-08-22 21:04:19+00 kentd Exp $";
 #endif
 
 /************************************************************************/
@@ -56,18 +56,18 @@ STRUCT(Dynapro_file) {
 	Dynapro_file *subdir_ptr;
 	char	*unix_path;
 	byte	*buffer_ptr;
-	byte	prodos_name[17];	// First byte is len, nul at end
+	byte	prodos_name[17];	// +0x00-0x0f: [0] is len, nul at end
 	word32	dir_byte;		// Byte address of this file's dir ent
-	word32	eof;
-	word32	blocks_used;
-	word32	creation_time;
-	word32	lastmod_time;
-	word16	upper_lower;		// Version/Min_version: lowercase flags
-	word16	key_block;
-	word16	aux_type;
-	word16	header_pointer;
+	word32	eof;			// +0x15-0x17
+	word32	blocks_used;		// +0x13-0x14
+	word32	creation_time;		// +0x18-0x1b
+	word32	lastmod_time;		// +0x21-0x24
+	word16	upper_lower;		// +0x1c-0x1d: Versions: lowercase flags
+	word16	key_block;		// +0x11-0x12
+	word16	aux_type;		// +0x1f-0x20
+	word16	header_pointer;		// +0x25-0x26
 	word16	map_first_block;
-	byte	file_type;
+	byte	file_type;		// +0x10
 	byte	modified_flag;
 	byte	damaged;
 };

@@ -1,4 +1,4 @@
-const char rcsid_joystick_driver_c[] = "@(#)$KmKId: joystick_driver.c,v 1.16 2021-08-17 00:08:36+00 kentd Exp $";
+const char rcsid_joystick_driver_c[] = "@(#)$KmKId: joystick_driver.c,v 1.17 2021-08-22 16:25:04+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -38,6 +38,9 @@ int	g_joystick_native_fd = -1;
 int	g_joystick_num_axes = 0;
 int	g_joystick_num_buttons = 0;
 
+int	g_joystick_callback_buttons = 0;
+int	g_joystick_callback_x = 32767;
+int	g_joystick_callback_y = 32767;
 
 #ifdef __linux__
 # define JOYSTICK_DEFINED
@@ -256,10 +259,33 @@ joystick_update(double dcycs)
 		g_paddle_val[i] = 32767;
 	}
 	g_paddle_buttons = 0xc;
+	if(g_joystick_native_type1 >= 0) {
+		g_paddle_buttons = 0xc | (g_joystick_callback_buttons & 3);
+		g_paddle_val[0] = g_joystick_callback_x;
+		g_paddle_val[1] = g_joystick_callback_y;
+		paddle_update_trigger_dcycs(dcycs);
+	}
 }
 
 void
 joystick_update_buttons()
 {
+	if(g_joystick_native_type1 >= 0) {
+		g_paddle_buttons = 0xc | (g_joystick_callback_buttons & 3);
+	}
 }
 #endif
+
+void
+joystick_callback_init(int native_type)
+{
+	g_joystick_native_type1 = native_type;
+}
+
+void
+joystick_callback_update(word32 buttons, int paddle_x, int paddle_y)
+{
+	g_joystick_callback_buttons = (g_paddle_buttons & (~3)) | (buttons & 3);
+	g_joystick_callback_x = paddle_x;
+	g_joystick_callback_y = paddle_y;
+}
