@@ -1,4 +1,13 @@
 
+Changes in KEGS v1.13 since v1.12 (09/23/21)
+- Better support for joysticks on Macs.  Select Native Joystick 1.
+
+
+Changes in KEGS v1.12 since v1.11 (08/22/21)
+- Preliminary support for joysticks on Macs.  Select Native Joystick 1.
+- Fixes for Keypad Joystick to work again (the non-US keyboard support broke
+	them).
+
 Changes in KEGS v1.11 since v1.08 (08/19/21)
 - KEGS should support many non-US keyboards, converting your local
 	keys to the US equivalents: [,],|, etc.  Italian works least well,

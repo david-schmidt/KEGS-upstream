@@ -1,4 +1,4 @@
-const char rcsid_joystick_driver_c[] = "@(#)$KmKId: joystick_driver.c,v 1.17 2021-08-22 16:25:04+00 kentd Exp $";
+const char rcsid_joystick_driver_c[] = "@(#)$KmKId: joystick_driver.c,v 1.18 2021-09-19 04:50:12+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -233,6 +233,194 @@ joystick_update_buttons()
 		} else {
 			g_paddle_buttons = g_paddle_buttons & (~2);
 		}
+	}
+}
+#endif
+
+#ifdef MAC
+# define JOYSTICK_DEFINED
+
+#include <IOKit/IOKitLib.h>
+#include <IOKit/hid/IOHIDManager.h>
+#include <IOKit/hid/IOHIDKeys.h>
+#include <IOKit/usb/USBSpec.h>
+#include <CoreFoundation/CoreFoundation.h>
+// Headers are at: /Applications/Xcode.app/Contents/Developer/Platforms/
+//      MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/
+//      Frameworks/IOKit.framework/Headers
+// Thanks to VirtualC64 and hidapi library for coding example
+
+CFIndex g_joystick_min = 0;
+CFIndex g_joystick_range = 256;
+int	g_joystick_minmax_valid = 0;
+int	g_joystick_dummy = 0;
+
+void
+hid_device_callback(void *ptr, IOReturn result, void *sender,
+						IOHIDValueRef value)
+{
+	IOHIDElementRef element;
+	word32	mask;
+	int	usage_page, usage, ival, button;
+
+	// This is a callback routine, and it's unclear to me what the state is
+	//  For safety, do no printfs() (other than for debug).
+	if((ptr || result || sender || 1) == 0) {
+		printf("Bad\n");		// Avoid unused var warning
+	}
+
+	element = IOHIDValueGetElement(value);
+	usage_page = IOHIDElementGetUsagePage(element);
+	usage = IOHIDElementGetUsage(element);
+	ival = IOHIDValueGetIntegerValue(value);
+#if 0
+	printf(" usage_page:%d, usage:%d, value:%d\n", usage_page, usage, ival);
+#endif
+	if((usage_page == kHIDPage_GenericDesktop) &&
+				((usage >= kHIDUsage_GD_X) &&
+				(usage <= kHIDUsage_GD_Y)) &&
+				!g_joystick_minmax_valid) {
+		g_joystick_min = IOHIDElementGetLogicalMin(element);
+		g_joystick_range = IOHIDElementGetLogicalMax(element) + 1 -
+							g_joystick_min;
+		// printf("min:%lld range:%lld\n", (dword64)g_joystick_min,
+		//				(dword64)g_joystick_range);
+		if(g_joystick_range == 0) {
+			g_joystick_range = 1;
+		}
+		g_joystick_minmax_valid = 1;
+	}
+	if((usage_page == kHIDPage_GenericDesktop) &&
+						(usage == kHIDUsage_GD_X)) {
+		g_joystick_callback_x = ((ival * 65536) / g_joystick_range) -
+									32768;
+		//printf("g_joystick_callback_x = %d\n", g_joystick_callback_x);
+	}
+	if((usage_page == kHIDPage_GenericDesktop) &&
+						(usage == kHIDUsage_GD_Y)) {
+		g_joystick_callback_y = ((ival * 65536) / g_joystick_range) -
+									32768;
+		//printf("g_joystick_callback_y = %d\n", g_joystick_callback_y);
+	}
+	if((usage_page == kHIDPage_Button) && (usage >= 1) && (usage <= 10)) {
+		// Buttons: usage=1 is button 0, usage=2 is button 1, etc.
+		button = (~usage) & 1;
+		mask = 1 << button;
+		//printf("Button %d (%d) pressed:%d\n", button, usage, ival);
+		if(ival == 0) {		// Button released
+			g_joystick_callback_buttons &= (~mask);
+		} else {		// Button pressed
+			g_joystick_callback_buttons |= mask;
+		}
+	}
+}
+
+int
+hid_get_int_property(IOHIDDeviceRef device, CFStringRef key_cfstr)
+{
+	CFTypeRef ref;
+	Boolean	bret;
+	int	int_val;
+
+	ref = IOHIDDeviceGetProperty(device, key_cfstr);
+	if(ref) {
+		bret = CFNumberGetValue((CFNumberRef)ref, kCFNumberIntType,
+								&int_val);
+		if(bret) {
+			return int_val;
+		}
+	}
+	return 0;
+}
+
+void
+joystick_init()
+{
+	IOHIDManagerRef hid_mgr;
+	CFSetRef devices_set;
+	CFIndex	num_devices;
+	IOHIDDeviceRef *devices_array, device;
+	int	vendor, usage_page, usage;
+	int	i;
+
+	g_joystick_native_type1 = -1;
+	g_joystick_native_type2 = -1;
+
+	hid_mgr = IOHIDManagerCreate(kCFAllocatorDefault,
+							kIOHIDOptionsTypeNone);
+	IOHIDManagerSetDeviceMatching(hid_mgr, 0);
+	IOHIDManagerOpen(hid_mgr, kIOHIDOptionsTypeNone);
+
+	devices_set = IOHIDManagerCopyDevices(hid_mgr);
+	num_devices = CFSetGetCount(devices_set);
+
+	// Sets are hashtables, so we cannot directly access it.  The only way
+	//  to iterate over all values is to use CFSetGetValues to get a simple
+	//  array of the values, and iterate over that
+	devices_array = calloc(num_devices, sizeof(IOHIDDeviceRef));
+	CFSetGetValues(devices_set, (const void **)devices_array);
+
+	for(i = 0; i < num_devices; i++) {
+		device = devices_array[i];
+		vendor = hid_get_int_property(device, CFSTR(kIOHIDVendorIDKey));
+		// printf(" vendor: %d\n", vendor);
+		usage_page = hid_get_int_property(device,
+					CFSTR(kIOHIDDeviceUsagePageKey));
+		usage = hid_get_int_property(device,
+					CFSTR(kIOHIDDeviceUsageKey));
+		// printf(" usage_page:%d, usage:%d\n", usage_page, usage);
+		usage_page = hid_get_int_property(device,
+					CFSTR(kIOHIDPrimaryUsagePageKey));
+		usage = hid_get_int_property(device,
+					CFSTR(kIOHIDPrimaryUsageKey));
+		// printf(" primary_usage_page:%d, usage:%d\n", usage_page,
+		//						usage);
+		if(usage_page != kHIDPage_GenericDesktop) {
+			continue;
+		}
+		if((usage != kHIDUsage_GD_Joystick) &&
+				(usage != kHIDUsage_GD_GamePad) &&
+				(usage != kHIDUsage_GD_MultiAxisController)) {
+			continue;
+		}
+		printf(" JOYSTICK FOUND!\n");
+		IOHIDDeviceOpen(device, kIOHIDOptionsTypeNone);
+		IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetCurrent(),
+							kCFRunLoopCommonModes);
+		IOHIDDeviceRegisterInputValueCallback(device,
+					hid_device_callback, 0);
+		g_joystick_native_type1 = 1;
+		return;
+		// Now, hid_device_callback will be called whenever a joystick
+		//  value changes.  Only set global variables for joystick.
+	}
+}
+
+void
+joystick_update(double dcycs)
+{
+	int	i;
+
+	if(dcycs) {
+		// Avoid unused parameter warnings
+	}
+	for(i = 0; i < 4; i++) {
+		g_paddle_val[i] = 32767;
+	}
+	g_paddle_buttons = 0xc;
+	if(g_joystick_native_type1 >= 0) {
+		g_paddle_buttons = 0xc | (g_joystick_callback_buttons & 3);
+		g_paddle_val[0] = g_joystick_callback_x;
+		g_paddle_val[1] = g_joystick_callback_y;
+		paddle_update_trigger_dcycs(dcycs);
+	}
+}
+
+void
+joystick_update_buttons()
+{
+	if(g_joystick_native_type1 >= 0) {
+		g_paddle_buttons = 0xc | (g_joystick_callback_buttons & 3);
 	}
 }
 #endif

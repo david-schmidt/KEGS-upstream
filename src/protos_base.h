@@ -11,7 +11,7 @@
 /************************************************************************/
 
 #ifdef INCLUDE_RCSID_C
-const char rcsid_protos_base_h[] = "@(#)$KmKId: protos_base.h,v 1.84 2021-08-22 21:04:06+00 kentd Exp $";
+const char rcsid_protos_base_h[] = "@(#)$KmKId: protos_base.h,v 1.87 2021-08-29 19:26:24+00 kentd Exp $";
 #endif
 
 /* xdriver.c and macdriver.c and windriver.c */
@@ -622,6 +622,7 @@ Dynapro_file *dynapro_alloc_file(void);
 void dynapro_free_file(Dynapro_file *fileptr, int check_map);
 void dynapro_free_recursive_file(Dynapro_file *fileptr, int check_map);
 void dynapro_free_dynapro_info(Disk *dsk);
+word32 dynapro_find_free_block_internal(Disk *dsk);
 word32 dynapro_find_free_block(Disk *dsk);
 byte *dynapro_malloc_file(char *path_ptr, dword64 *dsize_ptr, int extra_size);
 void dynapro_join_path_and_file(char *outstr, const char *unix_path, const char *str, int path_max);
@@ -637,7 +638,6 @@ void dynapro_handle_write_dir(Disk *dsk, Dynapro_file *parent_ptr, Dynapro_file 
 word32 dynapro_process_write_file(Disk *dsk, Dynapro_file *fileptr);
 void dynapro_handle_write_file(Disk *dsk, Dynapro_file *fileptr);
 void dynapro_handle_changed_entry(Disk *dsk, Dynapro_file *fileptr);
-word32 dynapro_validate_header(Disk *dsk, Dynapro_file *fileptr, word32 dir_byte, word32 parent_dir_byte);
 word32 dynapro_write_to_unix_file(const char *unix_path, byte *data_ptr, word32 size);
 void dynapro_unmap_file(Disk *dsk, Dynapro_file *fileptr);
 void dynapro_unlink_file(Dynapro_file *fileptr);
@@ -648,20 +648,17 @@ int dynapro_write(Disk *dsk, byte *bufptr, dword64 doffset, word32 size);
 void dynapro_debug_update(Disk *dsk);
 void dynapro_debug_map(Disk *dsk, const char *str);
 void dynapro_debug_recursive_file_map(Dynapro_file *fileptr, int start);
-void dynapro_validate_init_freeblks(byte *freeblks_ptr, word32 num_blocks);
-word32 dynapro_validate_freeblk(Disk *dsk, byte *freeblks_ptr, word32 block);
-word32 dynapro_validate_file(Disk *dsk, byte *freeblks_ptr, word32 block_num, int level);
-word32 dynapro_validate_dir(Disk *dsk, byte *freeblks_ptr, word32 dir_byte, word32 parent_dir_byte, word32 exp_blocks_used);
-int dynapro_validate_disk(Disk *dsk);
 word32 dynapro_unix_to_prodos_time(const time_t *time_ptr);
 int dynapro_create_prodos_name(Dynapro_file *newfileptr, Dynapro_file *matchptr, word32 storage_type);
 Dynapro_file *dynapro_new_unix_file(const char *path, Dynapro_file *parent_ptr, Dynapro_file *match_ptr, word32 storage_type);
 int dynapro_create_dir(Disk *dsk, char *unix_path, Dynapro_file *parent_ptr, word32 dir_byte);
 word32 dynapro_add_file_entry(Disk *dsk, Dynapro_file *fileptr, Dynapro_file *head_ptr, word32 dir_byte, word32 inc);
+word32 dynapro_fork_from_unix(Disk *dsk, byte *fptr, word32 *storage_type_ptr, word32 key_block, dword64 dsize);
 word32 dynapro_file_from_unix(Disk *dsk, Dynapro_file *fileptr);
 word32 dynapro_prep_image(Disk *dsk, const char *dir_path, word32 num_blocks);
-word32 dynapro_map_one_file_block(Disk *dsk, Dynapro_file *fileptr, word32 block_num, word32 file_offset);
-word32 dynapro_map_file_blocks(Disk *dsk, Dynapro_file *fileptr, word32 block_num, int level, word32 file_offset);
+word32 dynapro_map_one_file_block(Disk *dsk, Dynapro_file *fileptr, word32 block_num, word32 file_offset, word32 eof);
+word32 dynapro_map_file_blocks(Disk *dsk, Dynapro_file *fileptr, word32 block_num, int level, word32 file_offset, word32 eof);
+word32 dynapro_map_file(Disk *dsk, Dynapro_file *fileptr, int do_file_data);
 word32 dynapro_map_dir_blocks(Disk *dsk, Dynapro_file *fileptr);
 word32 dynapro_build_map(Disk *dsk, Dynapro_file *fileptr);
 int dynapro_mount(Disk *dsk, char *dir_path, word32 num_blocks);
@@ -671,13 +668,33 @@ int dynapro_mount(Disk *dsk, char *dir_path, word32 num_blocks);
 word32 dynatype_scan_extensions(const char *str);
 word32 dynatype_find_prodos_type(const char *str);
 const char *dynatype_find_file_type(word32 file_type);
-void dynatype_detect_file_type(Dynapro_file *fileptr, const char *path_ptr);
+word32 dynatype_detect_file_type(Dynapro_file *fileptr, const char *path_ptr, word32 storage_type);
 int dynatype_get_extension(const char *str, char *out_ptr, int buf_len);
 int dynatype_comma_arg(const char *str, word32 *type_or_aux_ptr);
 void dynatype_fix_unix_name(Dynapro_file *fileptr, char *outbuf_ptr, int path_max);
 
 
 /* dyna_filt.c */
+
+
+/* dyna_validate.c */
+word32 dynapro_validate_header(Disk *dsk, Dynapro_file *fileptr, word32 dir_byte, word32 parent_dir_byte);
+void dynapro_validate_init_freeblks(byte *freeblks_ptr, word32 num_blocks);
+word32 dynapro_validate_freeblk(Disk *dsk, byte *freeblks_ptr, word32 block);
+word32 dynapro_validate_file(Disk *dsk, byte *freeblks_ptr, word32 block_num, word32 eof, int level_first);
+word32 dynapro_validate_forked_file(Disk *dsk, byte *freeblks_ptr, word32 block_num, word32 eof);
+word32 dynapro_validate_dir(Disk *dsk, byte *freeblks_ptr, word32 dir_byte, word32 parent_dir_byte, word32 exp_blocks_used);
+int dynapro_validate_disk(Disk *dsk);
+
+
+/* applesingle.c */
+word32 applesingle_get_be32(const byte *bptr);
+word32 applesingle_get_be16(const byte *bptr);
+void applesingle_set_be32(byte *bptr, word32 val);
+void applesingle_set_be16(byte *bptr, word32 val);
+word32 applesingle_map_from_prodos(Disk *dsk, Dynapro_file *fileptr, int do_file_data);
+word32 applesingle_from_unix(Disk *dsk, Dynapro_file *fileptr, byte *fptr, dword64 dsize);
+word32 applesingle_make_prodos_fork(Disk *dsk, byte *fptr, byte *tptr, word32 length);
 
 
 /* video.c */

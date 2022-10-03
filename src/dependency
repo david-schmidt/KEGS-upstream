@@ -23,5 +23,7 @@ undeflate.o: undeflate.c defc.h defcomm.h iwm.h protos.h protos_base.h
 dynapro.o: dynapro.c defc.h defcomm.h iwm.h protos.h protos_base.h
 dyna_type.o: dyna_type.c defc.h defcomm.h iwm.h protos.h protos_base.h
 dyna_filt.o: dyna_filt.c defc.h defcomm.h iwm.h protos.h protos_base.h
+dyna_validate.o: dyna_validate.c defc.h defcomm.h iwm.h protos.h protos_base.h
+applesingle.o: applesingle.c defc.h defcomm.h iwm.h protos.h protos_base.h
 video.o: video.c defc.h defcomm.h iwm.h protos.h protos_base.h kegsfont.h
 macsnd_driver.o: macsnd_driver.c defc.h defcomm.h iwm.h protos.h protos_base.h sound.h

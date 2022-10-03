@@ -1,4 +1,4 @@
-const char rcsid_debugger_c[] = "@(#)$KmKId: debugger.c,v 1.38 2021-08-17 00:05:25+00 kentd Exp $";
+const char rcsid_debugger_c[] = "@(#)$KmKId: debugger.c,v 1.40 2021-08-30 04:32:33+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -967,6 +967,7 @@ debug_logpc_off(const char *str)
 	g_fcycles_end = 0;
 	dbg_printf("Disabled logging of PC and data accesses\n");
 }
+
 void
 debug_logpc_out_data(FILE *pcfile, Data_log *log_data_ptr, double start_dcycs)
 {
@@ -986,9 +987,9 @@ debug_logpc_out_data(FILE *pcfile, Data_log *log_data_ptr, double start_dcycs)
 	}
 	size = log_data_ptr->size;
 	if(size > 32) {
-		fprintf(pcfile, "INFO %08x %08x t:%03x %9.2f\n",
-			log_data_ptr->addr, log_data_ptr->val, size,
-			log_data_ptr->dcycs - start_dcycs);
+		fprintf(pcfile, "INFO %08x %08x %04x t:%04x %9.2f\n",
+			log_data_ptr->addr, log_data_ptr->val, size >> 16,
+			size & 0xffff, log_data_ptr->dcycs - start_dcycs);
 	} else {
 		offset64slow = addr64 - (unsigned long)&(g_slow_memory_ptr[0]);
 		if(offset64 < g_mem_size_total) {

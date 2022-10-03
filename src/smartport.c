@@ -1,4 +1,4 @@
-const char rcsid_smartport_c[] = "@(#)$KmKId: smartport.c,v 1.46 2021-08-17 00:02:08+00 kentd Exp $";
+const char rcsid_smartport_c[] = "@(#)$KmKId: smartport.c,v 1.47 2021-08-30 04:03:22+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -19,6 +19,7 @@ extern int Halt_on;
 extern int g_rom_version;
 extern int g_io_amt;
 extern int g_highest_smartport_unit;
+extern double g_cur_dcycs;
 
 extern Engine_reg engine;
 
@@ -148,6 +149,7 @@ do_c70d(word32 arg0)
 	}
 
 	smartport_log(0xc70d, cmd, rts_addr, cmd_list);
+	dbg_log_info(g_cur_dcycs, (rts_addr << 16) | cmd, cmd_list, 0xc70d);
 
 	switch(cmd & 0x3f) {
 	case 0x00:	/* Status == 0x00 and 0x40 */
@@ -172,6 +174,8 @@ do_c70d(word32 arg0)
 		}
 
 		smartport_log(0, unit, status_ptr, status_code);
+		dbg_log_info(g_cur_dcycs, (status_code << 16) | unit,
+							cmd_list, 0xc700);
 
 		disk_printf("unit: %02x, status_ptr: %06x, code: %02x\n",
 			unit, status_ptr, status_code);
@@ -474,6 +478,8 @@ do_c70a(word32 arg0)
 	}
 
 	smartport_log(0xc70a, cmd, blk, buf);
+	dbg_log_info(g_cur_dcycs,
+		(buf << 16) | ((unit & 0xff) << 8) | (cmd & 0xff), blk, 0xc70a);
 
 	engine.psr &= ~1;	/* clear carry */
 	if(g_rom_version >= 3) {
@@ -488,6 +494,8 @@ do_c70a(word32 arg0)
 		dsize = (dsize + 511) / 512;
 
 		smartport_log(0, unit, dsize, 0);
+		dbg_log_info(g_cur_dcycs, ((unit & 0xff) << 8) | (cmd & 0xff),
+							dsize, 0x1c700);
 
 		ret = 0;
 		engine.xreg = dsize & 0xff;
@@ -521,6 +529,7 @@ do_read_c7(int unit_num, word32 buf, word32 blk)
 	int	len, fd;
 	int	i;
 
+	dbg_log_info(g_cur_dcycs, (buf << 8) | (unit_num & 0xff), blk, 0xc701);
 	if((unit_num < 0) || (unit_num > MAX_C7_DISKS)) {
 		halt_printf("do_read_c7: unit_num: %d\n", unit_num);
 		smartport_error();
@@ -598,6 +607,8 @@ do_write_c7(int unit_num, word32 buf, word32 blk)
 	int	len, fd;
 	int	i;
 
+	dbg_log_info(g_cur_dcycs, (buf << 16) | (unit_num & 0xff), blk, 0xc702);
+
 	if(unit_num < 0 || unit_num > MAX_C7_DISKS) {
 		halt_printf("do_write_c7: unit_num: %d\n", unit_num);
 		smartport_error();
@@ -667,6 +678,8 @@ do_format_c7(int unit_num)
 	dword64	dimage_start, dimage_size, dret, dtotal, dsum;
 	int	len, max, fd;
 	int	i;
+
+	dbg_log_info(g_cur_dcycs, (unit_num & 0xff), 0, 0xc703);
 
 	if(unit_num < 0 || unit_num > MAX_C7_DISKS) {
 		halt_printf("do_format_c7: unit_num: %d\n", unit_num);

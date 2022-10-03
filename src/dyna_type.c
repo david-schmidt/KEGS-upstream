@@ -1,4 +1,4 @@
-const char rcsid_dynatype_c[] = "@(#)$KmKId: dyna_type.c,v 1.5 2021-08-16 04:59:46+00 kentd Exp $";
+const char rcsid_dynatype_c[] = "@(#)$KmKId: dyna_type.c,v 1.7 2021-08-31 04:39:09+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -24,7 +24,7 @@ STRUCT(Dynatype_extensions) {
 };
 
 Dynatype_extensions g_dynatype_extensions[] = {
-{	"applesingle",		0x1ff,	0xffff },
+{	"applesingle",		0xfff,	0xffff },
 {	"txt",			0x04,	0 },
 {	"c",			0x04,	0 },			// ,ttxt
 {	"s",			0x04,	0 },			// ,ttxt
@@ -111,8 +111,9 @@ dynatype_find_file_type(word32 file_type)
 	return 0;
 }
 
-void
-dynatype_detect_file_type(Dynapro_file *fileptr, const char *path_ptr)
+word32
+dynatype_detect_file_type(Dynapro_file *fileptr, const char *path_ptr,
+							word32 storage_type)
 {
 	char	ext_buf[32];
 	const char *str;
@@ -162,6 +163,10 @@ dynatype_detect_file_type(Dynapro_file *fileptr, const char *path_ptr)
 	// Handle extensions and type.  First do extension mapping
 	if(ext_buf[0]) {
 		type_or_aux = dynatype_scan_extensions(&ext_buf[0]);
+		if((type_or_aux) >= 0x0f000000UL) {
+			// AppleSingle
+			storage_type = 0x50;		// Forked file
+		}
 		if(file_type < 0x1000000) {
 			file_type = type_or_aux;
 		}
@@ -169,14 +174,18 @@ dynatype_detect_file_type(Dynapro_file *fileptr, const char *path_ptr)
 			aux_type = type_or_aux;
 		}
 	}
+#if 0
 	printf("After parsing ext, file_type:%08x, aux_type:%08x\n",
 						file_type, aux_type);
+#endif
 
 	fileptr->file_type = (file_type >> 16) & 0xff;
 	if(aux_type == 0) {
 		aux_type = file_type & 0xffff;
 	}
 	fileptr->aux_type = aux_type & 0xffff;
+
+	return storage_type;
 }
 
 int
@@ -268,17 +277,24 @@ dynatype_fix_unix_name(Dynapro_file *fileptr, char *outbuf_ptr, int path_max)
 	const char *str;
 	word32	aux_type;
 
+#if 0
 	printf("Looking at %s ftype:%02x aux:%04x\n", outbuf_ptr,
 					fileptr->file_type, fileptr->aux_type);
+#endif
 
 	if(fileptr->prodos_name[0] >= 0xd0) {
 		return;			// Directory, or Dir/Volume Header
+	}
+	if((fileptr->prodos_name[0] & 0xf0) == 0x50) {
+		// Forked file, add .applesingle
+		cfg_strlcat(outbuf_ptr, ".applesingle", path_max);
+		return;
 	}
 
 	memset(&tmpfile, 0, sizeof(Dynapro_file));
 
 	// See what this file defaults to as to type/aux
-	dynatype_detect_file_type(&tmpfile, outbuf_ptr);
+	(void)dynatype_detect_file_type(&tmpfile, outbuf_ptr, 0x10);
 
 	// Otherwise, add ,ttype and ,a$aux as needed
 	if(tmpfile.file_type != fileptr->file_type) {
@@ -294,7 +310,7 @@ dynatype_fix_unix_name(Dynapro_file *fileptr, char *outbuf_ptr, int path_max)
 		cfg_strlcat(outbuf_ptr, str, path_max);
 	}
 
-	dynatype_detect_file_type(&tmpfile, outbuf_ptr);
+	(void)dynatype_detect_file_type(&tmpfile, outbuf_ptr, 0x10);
 	aux_type = fileptr->aux_type;
 
 	if(aux_type != tmpfile.aux_type) {
@@ -303,10 +319,10 @@ dynatype_fix_unix_name(Dynapro_file *fileptr, char *outbuf_ptr, int path_max)
 		cfg_strlcat(outbuf_ptr, &buf[0], path_max);
 	}
 
-	printf("dynatype_new_unix_name: %s\n", outbuf_ptr);
+	// printf("dynatype_new_unix_name: %s\n", outbuf_ptr);
 
 	// Check that it succeeded
-	dynatype_detect_file_type(&tmpfile, outbuf_ptr);
+	(void)dynatype_detect_file_type(&tmpfile, outbuf_ptr, 0x10);
 	if((tmpfile.file_type != fileptr->file_type) ||
 				(tmpfile.aux_type != fileptr->aux_type)) {
 		halt_printf("File %s want ftype:%02x aux:%04x, got:%02x %04x\n",
