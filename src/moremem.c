@@ -1,4 +1,4 @@
-const char rcsid_moremem_c[] = "@(#)$KmKId: moremem.c,v 1.289 2023-05-22 17:14:55+00 kentd Exp $";
+const char rcsid_moremem_c[] = "@(#)$KmKId: moremem.c,v 1.293 2023-06-12 21:10:34+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -33,6 +33,8 @@ extern int Verbose;
 extern int g_rom_version;
 extern int g_user_page2_shadow;
 extern Iwm g_iwm;
+extern int g_halt_sim;
+extern int g_config_control_panel;
 
 
 /* from iwm.c */
@@ -1200,7 +1202,7 @@ io_read(word32 loc, dword64 *cyc_ptr)
 		/* 0xc030 - 0xc03f */
 		case 0x30: /* 0xc030 */
 			/* click speaker */
-			return doc_read_c030(dfcyc);
+			return sound_read_c030(dfcyc);
 		case 0x31: /* 0xc031 */
 			/* 3.5" control */
 			return g_iwm.state & 0xc0;
@@ -1242,7 +1244,7 @@ io_read(word32 loc, dword64 *cyc_ptr)
 		case 0x41: /* 0xc041 */
 			return g_c041_val;
 		case 0x45: /* 0xc045 */
-			halt_printf("Mega II mouse read: c045\n");
+			//halt_printf("Mega II mouse read: c045\n");
 			return 0;
 		case 0x46: /* 0xc046 */
 			tmp = g_c046_val;
@@ -1738,7 +1740,7 @@ io_write(word32 loc, int val, dword64 *cyc_ptr)
 #if 0
 			printf("Write speaker?\n");
 #endif
-			(void)doc_read_c030(dfcyc);
+			sound_write_c030(dfcyc);
 			return;
 		case 0x31: /* 0xc031 */
 			tmp = val ^ g_iwm.state;
@@ -1830,11 +1832,11 @@ io_write(word32 loc, int val, dword64 *cyc_ptr)
 			return;
 		case 0x3c: /* 0xc03c */
 			/* doc ctl */
-			doc_write_c03c(val, dfcyc);
+			doc_write_c03c(dfcyc, val);
 			return;
 		case 0x3d: /* 0xc03d */
 			/* doc data reg */
-			doc_write_c03d(val, dfcyc);
+			doc_write_c03d(dfcyc, val);
 			return;
 		case 0x3e: /* 0xc03e */
 			g_c03ef_doc_ptr = (g_c03ef_doc_ptr & 0xff00) + val;
@@ -1875,9 +1877,10 @@ io_write(word32 loc, int val, dword64 *cyc_ptr)
 		case 0x4f: /* c04f */
 			g_em_emubyte_cnt = 1;
 			return;
+		case 0x45: /* c045 */
+			return;
 		case 0x40: /* c040 */
 		case 0x44: /* c044 */
-		case 0x45: /* c045 */
 		case 0x49: /* c049 */
 		case 0x4a: /* c04a */
 		case 0x4b: /* c04b */
@@ -2200,7 +2203,7 @@ io_write(word32 loc, int val, dword64 *cyc_ptr)
 }
 
 // IIgs vertical line counters
-// 0x7d - 0x7f: in vbl, top of screen?
+// 0x7d - 0x7f: in vbl, top of screen
 // 0x80 - 0xdf: not in vbl, drawing screen
 // 0xe0 - 0xff: in vbl, bottom of screen
 // Note: lines are then 0-0x60 effectively, for 192 lines, from 0x80-0xdf
@@ -2225,30 +2228,45 @@ get_lines_since_vbl(dword64 dfcyc)
 
 	lines_since_vbl = (lines_since_vbl << 8) + offset;
 
-	if(lines_since_vbl < 0x10680) {
+	if(!g_halt_sim && !g_config_control_panel) {
+		dbg_log_info(dfcyc, (word32)dusecs_since_last_vbl,
+						lines_since_vbl, 0xc02e);
+	}
+	if(lines_since_vbl < 0x10541) {
 		return lines_since_vbl;
 	} else {
+		// We've entered the next frame, but update_60hz() hasn't been
+		//  called yet.  Produce the proper c02e/c02f counter values
+		//  for the first line of the display
+		lines_since_vbl = lines_since_vbl - 0x10600;
+#if 0
+		printf("lines_since_vbl was:%08x, now:%08x\n",
+				lines_since_vbl + 0x10600, lines_since_vbl);
 		halt_printf("lines_since_vbl: %08x!\n", lines_since_vbl);
 		printf("du_s_l_v: %f, dfcyc: %016llx, last_vbl_cycs: %016llx\n",
 			dusecs_since_last_vbl, dfcyc, g_last_vbl_dfcyc);
 		show_dtime_array();
 		show_all_events();
 		/* U_STACK_TRACE(); */
+#endif
 	}
 
 	return lines_since_vbl;
 }
 
-
 int
 in_vblank(dword64 dfcyc)
 {
-	int	lines_since_vbl;
+	word32	lines_since_vbl;
 
 	lines_since_vbl = get_lines_since_vbl(dfcyc);
 
-	if(lines_since_vbl >= 0xc000) {
+	// Testing indicates $c019 is a cycle delayed from $C02F counter
+	if(lines_since_vbl > 0xc000) {	// Exclude line 192 first cycle!
 		return 1;		// 1=in VBL
+	}
+	if(lines_since_vbl == 0) {
+		return 1;		// Handle 1-cycle delay in reading c019
 	}
 
 	return 0;
@@ -2278,8 +2296,7 @@ read_vid_counters(int loc, dword64 dfcyc)
 			"%016llx\n", lines_since_vbl, dfcyc, g_last_vbl_dfcyc);
 	}
 
-	if(loc == 0xe) {
-		/* Vertical count */
+	if(loc == 0xe) {		// c02e:  Vertical count
 		return (lines_since_vbl >> 9) & 0xff;
 	}
 

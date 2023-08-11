@@ -1,4 +1,4 @@
-const char rcsid_mockingboard_c[] = "@(#)$KmKId: mockingboard.c,v 1.25 2023-05-19 13:54:02+00 kentd Exp $";
+const char rcsid_mockingboard_c[] = "@(#)$KmKId: mockingboard.c,v 1.26 2023-06-13 16:54:18+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -607,7 +607,7 @@ mock_ay8913_reg_write(int pair_num, dword64 dfcyc)
 					ay8913ptr->regs[11],
 					ay8913ptr->regs[13]);
 			}
-			sound_play(dsamps);
+			sound_play(dfcyc);
 		}
 		ay8913ptr->regs[reg_addr_latch] = ora;
 		if(reg_addr_latch == 13) {		// Envelope control

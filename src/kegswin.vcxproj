@@ -131,6 +131,7 @@
     <ClCompile Include="scc_windriver.c" />
     <ClCompile Include="sim65816.c" />
     <ClCompile Include="smartport.c" />
+    <ClCompile Include="doc.c" />
     <ClCompile Include="sound.c" />
     <ClCompile Include="sound_driver.c" />
     <ClCompile Include="undeflate.c" />

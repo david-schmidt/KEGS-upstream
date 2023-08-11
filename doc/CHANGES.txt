@@ -1,8 +1,24 @@
 
-Changes in KEGS v1.26 since v1.25 (05/21/23)
+Changes in KEGS v1.27 since v1.26 (06/13/23)
+- Ignore WDM 0xfc,0xfd,0xff to avoid HOST.FST causing Code Red.
+- Fix $C019 reading to match Deater's Midline demo
+- Add false reads for RMW instruction, (dloc),y, abs,x, and abs,y modes.
+	Only 8-bit false reads are done currently (this only affect 16-bit
+	RMW, where I know of nothing using the false reads).
+- Fix reported bug where long paths in the file selection screens didn't
+	truncate the files so the endings could always be seen.
+- Allow 140K .SDK images to be selected in the image file selection screen.
+- Fix $C030 speaker toggle emulation to eliminate a 60-Hertz buzz caused by
+	the code being organized around 60Hz screen refresh and not counting
+	on the last toggle correctly in all cases.  The $C030 speaker output
+	ramps down to 0 after about 60msec to avoid the annoying "click"
+	4 seconds later when KEGS pauses sound output.
+
+
+Changes in KEGS v1.26 since v1.25 (05/22/23)
 - Fix Win64 Dynapro issues (O_BINARY, setvbuf was causing a crash).
 - Fix a KEGS bug in the Bank $E0 memory map which could corrupt data in the
-	Apple IIgs memory from $E0/6000 - $E0/A000.
+	Apple IIgs memory from $E0/6000 - $E0/A000 introduced in KEGS 1.20.
 
 
 Changes in KEGS v1.25 since v1.24 (05/21/23)

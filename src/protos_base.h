@@ -11,7 +11,7 @@
 /************************************************************************/
 
 #ifdef INCLUDE_RCSID_C
-const char rcsid_protos_base_h[] = "@(#)$KmKId: protos_base.h,v 1.136 2023-05-21 20:06:32+00 kentd Exp $";
+const char rcsid_protos_base_h[] = "@(#)$KmKId: protos_base.h,v 1.138 2023-06-08 01:35:25+00 kentd Exp $";
 #endif
 
 #ifdef __GNUC__
@@ -569,9 +569,30 @@ void do_c700(word32 ret);
 
 
 
+/* doc.c */
+void doc_init(void);
+void doc_reset(dword64 dfcyc);
+int doc_play(dword64 dfcyc, double last_dsamp, double dsamp_now, int num_samps, int snd_buf_init, int *outptr_start);
+void doc_handle_event(int osc, dword64 dfcyc);
+void doc_sound_end(int osc, int can_repeat, double eff_dsamps, double dsamps);
+void doc_add_sound_irq(int osc);
+void doc_remove_sound_irq(int osc, int must);
+void doc_start_sound2(int osc, dword64 dfcyc);
+void doc_start_sound(int osc, double eff_dsamps, double dsamps);
+void doc_wave_end_estimate2(int osc, dword64 dfcyc);
+void doc_wave_end_estimate(int osc, double eff_dsamps, double dsamps);
+void doc_remove_sound_event(int osc);
+void doc_write_ctl_reg(dword64 dfcyc, int osc, int val);
+void doc_recalc_sound_parms(dword64 dfcyc, int osc);
+int doc_read_c03c(void);
+int doc_read_c03d(dword64 dfcyc);
+void doc_write_c03c(dword64 dfcyc, word32 val);
+void doc_write_c03d(dword64 dfcyc, word32 val);
+void doc_show_ensoniq_state(void);
+
+
+
 /* sound.c */
-void doc_log_rout(char *msg, int osc, double dsamps, int etc);
-void show_doc_log(void);
 void sound_init(void);
 void sound_set_audio_rate(int rate);
 void sound_reset(dword64 dfcyc);
@@ -581,27 +602,15 @@ void open_sound_file(void);
 void close_sound_file(void);
 void check_for_range(word32 *addr, int num_samps, int offset);
 void send_sound_to_file(word32 *addr, int shm_pos, int num_samps);
-void show_c030_state(void);
-void show_c030_samps(int *outptr, int num);
-void sound_play(double dsamps);
+void show_c030_state(dword64 dfcyc);
+void show_c030_samps(dword64 dfcyc, int *outptr, int num);
+int sound_play_c030(dword64 dfcyc, dword64 dsamp, int *outptr_start, int num_samps);
+void sound_play(dword64 dfcyc);
 void sound_mock_envelope(int pair, int *env_ptr, int num_samps, int *vol_ptr);
 void sound_mock_noise(int pair, byte *noise_ptr, int num_samps);
 void sound_mock_play(int pair, int channel, int *outptr, int *env_ptr, byte *noise_ptr, int *vol_ptr, int num_samps);
-void doc_handle_event(int osc, dword64 dfcyc);
-void doc_sound_end(int osc, int can_repeat, double eff_dsamps, double dsamps);
-void add_sound_irq(int osc);
-void remove_sound_irq(int osc, int must);
-void start_sound(int osc, double eff_dsamps, double dsamps);
-void wave_end_estimate(int osc, double eff_dsamps, double dsamps);
-void remove_sound_event(int osc);
-void doc_write_ctl_reg(int osc, int val, double dsamps);
-void doc_recalc_sound_parms(int osc, double dsamps);
-int doc_read_c030(dword64 dfcyc);
-int doc_read_c03c(void);
-int doc_read_c03d(dword64 dfcyc);
-void doc_write_c03c(int val, dword64 dfcyc);
-void doc_write_c03d(int val, dword64 dfcyc);
-void doc_show_ensoniq_state(void);
+word32 sound_read_c030(dword64 dfcyc);
+void sound_write_c030(dword64 dfcyc);
 
 
 

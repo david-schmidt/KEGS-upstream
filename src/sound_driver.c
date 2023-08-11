@@ -1,4 +1,4 @@
-const char rcsid_sound_driver_c[] = "@(#)$KmKId: sound_driver.c,v 1.31 2023-05-04 19:33:31+00 kentd Exp $";
+const char rcsid_sound_driver_c[] = "@(#)$KmKId: sound_driver.c,v 1.32 2023-06-05 18:41:09+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -277,8 +277,8 @@ snddrv_send_sound(int real_samps, int size)
 	} else {
 		tmp = size + 0xa1000000;
 	}
-	doc_log_rout("send_sound", -1, g_last_sound_play_dsamp,
-						(real_samps << 30) + size);
+	//doc_log_rout("send_sound", -1, g_last_sound_play_dsamp,
+	//					(real_samps << 30) + size);
 
 	call_playit = 0;
 #if defined(MAC) || defined(_WIN32)

@@ -15,6 +15,7 @@ paddles.o: paddles.c defc.h defcomm.h iwm.h protos.h protos_base.h
 mockingboard.o: mockingboard.c defc.h defcomm.h iwm.h protos.h protos_base.h sound.h
 sim65816.o: sim65816.c defc.h defcomm.h iwm.h protos.h protos_base.h
 smartport.o: smartport.c defc.h defcomm.h iwm.h protos.h protos_base.h
+doc.o: doc.c defc.h defcomm.h iwm.h protos.h protos_base.h sound.h
 sound.o: sound.c defc.h defcomm.h iwm.h protos.h protos_base.h sound.h
 sound_driver.o: sound_driver.c defc.h defcomm.h iwm.h protos.h protos_base.h sound.h
 woz.o: woz.c defc.h defcomm.h iwm.h protos.h protos_base.h

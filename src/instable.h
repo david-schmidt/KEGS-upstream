@@ -1,4 +1,4 @@
-// "@(#)$KmKId: instable.h,v 1.117 2021-08-17 00:08:36+00 kentd Exp $"
+// "@(#)$KmKId: instable.h,v 1.118 2023-06-02 19:56:30+00 kentd Exp $"
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -70,7 +70,7 @@ case 0x03:			/*  ORA Disp8,S */
 	break;
 
 case 0x04:			/*  TSB Dloc */
-	GET_DLOC_RD();
+	GET_DLOC_RD_RMW();
 	TSB_INST(1);
 	break;
 
@@ -80,7 +80,7 @@ case 0x05:			/*  ORA Dloc */
 	break;
 
 case 0x06:			/*  ASL Dloc */
-	GET_DLOC_RD();
+	GET_DLOC_RD_RMW();
 	ASL_INST(1);
 	break;
 
@@ -120,7 +120,7 @@ case 0x0b:			/*  PHD */
 	break;
 
 case 0x0c:			/*  TSB abs */
-	GET_ABS_RD();
+	GET_ABS_RD_RMW();
 	TSB_INST(0);
 	break;
 
@@ -130,7 +130,7 @@ case 0x0d:			/*  ORA abs */
 	break;
 
 case 0x0e:			/*  ASL abs */
-	GET_ABS_RD();
+	GET_ABS_RD_RMW();
 	ASL_INST(0);
 	break;
 
@@ -159,7 +159,7 @@ case 0x13:			/*  ORA (Disp8,s),y */
 	break;
 
 case 0x14:			/*  TRB Dloc */
-	GET_DLOC_RD();
+	GET_DLOC_RD_RMW();
 	TRB_INST(1);
 	break;
 
@@ -169,7 +169,7 @@ case 0x15:			/*  ORA Dloc,x */
 	break;
 
 case 0x16:			/*  ASL Dloc,X */
-	GET_DLOC_X_RD();
+	GET_DLOC_X_RD_RMW();
 	ASL_INST(1);
 	break;
 
@@ -208,7 +208,7 @@ case 0x1b:			/*  TCS */
 	break;
 
 case 0x1c:			/*  TRB Abs */
-	GET_ABS_RD();
+	GET_ABS_RD_RMW();
 	TRB_INST(0);
 	break;
 
@@ -218,7 +218,7 @@ case 0x1d:			/*  ORA Abs,X */
 	break;
 
 case 0x1e:			/*  ASL Abs,X */
-	GET_ABS_X_RD_WR();
+	GET_ABS_X_RD_RMW();
 	ASL_INST(0);
 	break;
 
@@ -265,9 +265,7 @@ case 0x25:			/*  AND Dloc */
 	break;
 
 case 0x26:			/*  ROL Dloc */
-	GET_DLOC_RD();
-/*  save1 is now apple addr */
-/*  ret0 is data */
+	GET_DLOC_RD_RMW();
 	ROL_INST(1);
 	break;
 
@@ -325,7 +323,7 @@ case 0x2d:			/*  AND abs */
 	break;
 
 case 0x2e:			/*  ROL abs */
-	GET_ABS_RD();
+	GET_ABS_RD_RMW();
 	ROL_INST(0);
 	break;
 
@@ -364,7 +362,7 @@ case 0x35:			/*  AND Dloc,x */
 	break;
 
 case 0x36:			/*  ROL Dloc,X */
-	GET_DLOC_X_RD();
+	GET_DLOC_X_RD_RMW();
 	ROL_INST(1);
 	break;
 
@@ -412,7 +410,7 @@ case 0x3d:			/*  AND Abs,X */
 	break;
 
 case 0x3e:			/*  ROL Abs,X */
-	GET_ABS_X_RD_WR();
+	GET_ABS_X_RD_RMW();
 	ROL_INST(0);
 	break;
 
@@ -486,9 +484,7 @@ case 0x45:			/*  EOR Dloc */
 	break;
 
 case 0x46:			/*  LSR Dloc */
-	GET_DLOC_RD();
-/*  save1 is now apple addr */
-/*  ret0 is data */
+	GET_DLOC_RD_RMW();
 	LSR_INST(1);
 	break;
 
@@ -543,7 +539,7 @@ case 0x4d:			/*  EOR abs */
 	break;
 
 case 0x4e:			/*  LSR abs */
-	GET_ABS_RD();
+	GET_ABS_RD_RMW();
 	LSR_INST(0);
 	break;
 
@@ -597,7 +593,7 @@ case 0x55:			/*  EOR Dloc,x */
 	break;
 
 case 0x56:			/*  LSR Dloc,X */
-	GET_DLOC_X_RD();
+	GET_DLOC_X_RD_RMW();
 	LSR_INST(1);
 	break;
 
@@ -646,7 +642,7 @@ case 0x5d:			/*  EOR Abs,X */
 	break;
 
 case 0x5e:			/*  LSR Abs,X */
-	GET_ABS_X_RD_WR();
+	GET_ABS_X_RD_RMW();
 	LSR_INST(0);
 	break;
 
@@ -689,9 +685,7 @@ case 0x65:			/*  ADC Dloc */
 	break;
 
 case 0x66:			/*  ROR Dloc */
-	GET_DLOC_RD();
-/*  save1 is now apple addr */
-/*  ret0 is data */
+	GET_DLOC_RD_RMW();
 	ROR_INST(1);
 	break;
 
@@ -759,7 +753,7 @@ case 0x6d:			/*  ADC abs */
 	break;
 
 case 0x6e:			/*  ROR abs */
-	GET_ABS_RD();
+	GET_ABS_RD_RMW();
 	ROR_INST(0);
 	break;
 
@@ -799,7 +793,7 @@ case 0x75:			/*  ADC Dloc,x */
 	break;
 
 case 0x76:			/*  ROR Dloc,X */
-	GET_DLOC_X_RD();
+	GET_DLOC_X_RD_RMW();
 	ROR_INST(1);
 	break;
 
@@ -851,7 +845,7 @@ case 0x7d:			/*  ADC Abs,X */
 	break;
 
 case 0x7e:			/*  ROR Abs,X */
-	GET_ABS_X_RD_WR();
+	GET_ABS_X_RD_RMW();
 	ROR_INST(0);
 	break;
 
@@ -950,7 +944,7 @@ case 0x90:			/*  BCC disp8 */
 	break;
 
 case 0x91:			/*  STA (Dloc),y */
-	GET_DLOC_IND_Y_ADDR_FOR_WR();
+	GET_DLOC_IND_Y_ADDR(1);
 	STA_INST(0);
 	break;
 
@@ -991,7 +985,7 @@ case 0x98:			/*  TYA */
 	break;
 
 case 0x99:			/*  STA abs,y */
-	GET_ABS_INDEX_ADDR_FOR_WR(yreg)
+	GET_ABS_INDEX_ADDR(yreg, 1)
 	STA_INST(0);
 	break;
 
@@ -1014,12 +1008,12 @@ case 0x9c:			/*  STZ Abs */
 	break;
 
 case 0x9d:			/*  STA Abs,X */
-	GET_ABS_INDEX_ADDR_FOR_WR(xreg);
+	GET_ABS_INDEX_ADDR(xreg, 1);
 	STA_INST(0);
 	break;
 
 case 0x9e:			/*  STZ Abs,X */
-	GET_ABS_INDEX_ADDR_FOR_WR(xreg);
+	GET_ABS_INDEX_ADDR(xreg, 1);
 	STZ_INST(0);
 	break;
 
@@ -1231,7 +1225,7 @@ case 0xc5:			/*  CMP Dloc */
 	break;
 
 case 0xc6:			/*  DEC Dloc */
-	GET_DLOC_RD();
+	GET_DLOC_RD_RMW();
 	DEC_INST(1);
 	break;
 
@@ -1274,7 +1268,7 @@ case 0xcd:			/*  CMP abs */
 	break;
 
 case 0xce:			/*  DEC abs */
-	GET_ABS_RD();
+	GET_ABS_RD_RMW();
 	DEC_INST(0);
 	break;
 
@@ -1315,7 +1309,7 @@ case 0xd5:			/*  CMP Dloc,x */
 	break;
 
 case 0xd6:			/*  DEC Dloc,x */
-	GET_DLOC_X_RD();
+	GET_DLOC_X_RD_RMW();
 	DEC_INST(1);
 	break;
 
@@ -1359,7 +1353,7 @@ case 0xdd:			/*  CMP Abs,X */
 	break;
 
 case 0xde:			/*  DEC Abs,X */
-	GET_ABS_X_RD_WR();
+	GET_ABS_X_RD_RMW();
 	DEC_INST(0);
 	break;
 
@@ -1404,7 +1398,7 @@ case 0xe5:			/*  SBC Dloc */
 	break;
 
 case 0xe6:			/*  INC Dloc */
-	GET_DLOC_RD();
+	GET_DLOC_RD_RMW();
 	INC_INST(1);
 	break;
 
@@ -1445,7 +1439,7 @@ case 0xed:			/*  SBC abs */
 	break;
 
 case 0xee:			/*  INC abs */
-	GET_ABS_RD();
+	GET_ABS_RD_RMW();
 	INC_INST(0);
 	break;
 
@@ -1486,7 +1480,7 @@ case 0xf5:			/*  SBC Dloc,x */
 	break;
 
 case 0xf6:			/*  INC Dloc,x */
-	GET_DLOC_X_RD();
+	GET_DLOC_X_RD_RMW();
 	INC_INST(1);
 	break;
 
@@ -1541,7 +1535,7 @@ case 0xfd:			/*  SBC Abs,X */
 	break;
 
 case 0xfe:			/*  INC Abs,X */
-	GET_ABS_X_RD_WR();
+	GET_ABS_X_RD_RMW();
 	INC_INST(0);
 	break;
 

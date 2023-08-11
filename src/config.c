@@ -1,4 +1,4 @@
-const char rcsid_config_c[] = "@(#)$KmKId: config.c,v 1.138 2023-05-21 19:52:35+00 kentd Exp $";
+const char rcsid_config_c[] = "@(#)$KmKId: config.c,v 1.141 2023-06-13 14:48:11+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -114,7 +114,7 @@ int	g_cfg_ignorecase = 0;
 #define CFG_OPT_MAXSTR	100
 
 int g_cfg_opts_vals[CFG_MAX_OPTS];
-char g_cfg_opts_str[CFG_OPT_MAXSTR];
+char g_cfg_opts_str[CFG_PATH_MAX];
 char g_cfg_opt_buf[CFG_OPT_MAXSTR];
 
 char *g_cfg_rom_path = "ROM";
@@ -860,7 +860,6 @@ config_parse_option(char *buf, int pos, int len, int line)
 	case CFGTYPE_INT:
 		/* use strtol */
 		val = (int)strtol(&buf[pos], 0, 0);
-		printf("strtol ret: %d\n", val);
 		iptr = (int *)menuptr->ptr;
 		old_val = *iptr;
 		*iptr = val;
@@ -2696,12 +2695,11 @@ cfg_parse_menu(Cfg_menu *menuptr, int menu_pos, int highlight_pos, int change)
 			snprintf(str, CFG_OPT_MAXSTR, "%d", curval);
 		} else if (type == CFGTYPE_DISK) {
 			str = &(g_cfg_opts_str[0]);
-			(void)cfg_get_disk_name(str, CFG_OPT_MAXSTR, type_ext,
-									1);
+			(void)cfg_get_disk_name(str, CFG_PATH_MAX, type_ext, 1);
 			str = cfg_shorten_filename(str, 68);
 		} else if (type == CFGTYPE_FILE) {
 			str = &(g_cfg_opts_str[0]);
-			snprintf(str, CFG_OPT_MAXSTR, "%s", curstr);
+			snprintf(str, CFG_PATH_MAX, "%s", curstr);
 			str = cfg_shorten_filename(str, 68);
 		} else {
 			str = "";
@@ -3398,6 +3396,9 @@ cfg_file_readdir(const char *pathptr)
 			is_gz = 1;
 		}
 		if((len > 4) && !cfgcasecmp(&g_cfg_tmp_path[len - 4], ".woz")) {
+			is_gz = 1;
+		}
+		if((len > 4) && !cfgcasecmp(&g_cfg_tmp_path[len - 4], ".sdk")) {
 			is_gz = 1;
 		}
 		if(ret != 0) {

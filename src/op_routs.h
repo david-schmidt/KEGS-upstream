@@ -1,4 +1,4 @@
-// $KmKId: op_routs.h,v 1.45 2021-08-17 00:08:26+00 kentd Exp $
+// $KmKId: op_routs.h,v 1.46 2023-06-02 19:56:00+00 kentd Exp $
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -60,22 +60,6 @@
 #define GET_DLOC_L_IND_ADDR()		\
 	GET_1BYTE_ARG;			\
 	GET_DLOC_L_IND_WR()
-
-#define GET_DLOC_IND_Y_ADDR_FOR_WR()					\
-	GET_1BYTE_ARG;							\
-	if(direct & 0xff) {						\
-		CYCLES_PLUS_1;						\
-	}								\
-	GET_MEMORY_DIRECT_PAGE16((direct + arg) & 0xffff, tmp1);	\
-	tmp1 += (dbank << 16);						\
-	arg = (tmp1 & 0xffff00) | ((tmp1 + yreg) & 0xff);		\
-	if(IS_ACC16) {							\
-		CYCLES_PLUS_1;						\
-	} else {							\
-		GET_MEMORY8(arg, tmp2);					\
-	}								\
-	arg = tmp1 + yreg;						\
-	INC_KPC_2;
 
 
 #define GET_DLOC_IND_WR()		\
@@ -152,13 +136,6 @@
 	GET_3BYTE_ARG;			\
 	CYCLES_PLUS_2;			\
 	INC_KPC_4;
-
-#define GET_ABS_INDEX_ADDR_FOR_WR(index_reg)	\
-	GET_2BYTE_ARG;			\
-	arg = arg + (dbank << 16);	\
-	INC_KPC_3;			\
-	CYCLES_PLUS_2;			\
-	arg = (arg + index_reg) & 0xffffff;
 
 #define GET_LONG_X_ADDR_FOR_WR()		\
 	GET_3BYTE_ARG;			\

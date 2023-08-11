@@ -1,5 +1,5 @@
 
-KEGS: Kent's Emulated GS version 1.24
+KEGS: Kent's Emulated GS version 1.27
 http://kegs.sourceforge.net/
 
 What is this?
@@ -806,8 +806,8 @@ Mockingboard emulation is just for the AY8913 sound chip, not for the
 SC01 speech chip.  To use the Mockingboard, you must do Ctrl-Cmd-ESC to
 get to the IIgs control panel, select Control Panel, then Slots, then
 set slot 4 to "Your card".  Make sure you press return.  Then get out,
-and then do Ctrl-Cmd-Reset to restart KEGS (and make the change take
-effect).
+and then do Ctrl-Cmd-Reset.  The reset is a limitation of the IIgs ROM, it
+often doesn't seem to make proper register changes until the next Reset).
 
 
 SCC (Serial Port) emulation:
@@ -915,8 +915,8 @@ ch_in:	Percentage of Unix processor cycles spent checking for X input Events.
 ref_l:	Percentage of Unix processor cycles spent scanning the Apple IIgs
 		memory for changes to the current display screen memory,
 		and copying those changes to internal XImage buffers.
-ref_x:	Percentage of Unix processor cycles spent sending those XImage buffers
-		to the X server.  Very similar to xred_cs.
+pix/fr:	Number of pixels changed on average for the last 60 frames.
+
 
 Line 3: (Interpreter overhead)
 Ints:  Number of Apple IIgs interrupts over the last second.
@@ -932,7 +932,7 @@ Eng:	Number of calls to the main instruction interpreter loop in the
 act:	Some instructions are handled by the main interpreter loop returning
 		special status "actions" to main event loop.  This is the
 		number over the last second.  Should be low.
-hev:	This tracks HALT_EVENTs.  KEGS returns to the main loop to recalc
+rev:	This tracks EVENTs.  KEGS returns to the main loop to recalc
 		effective speed whenever any speed-changing I/O location is
 		touched.  See the code, mostly in moremem.c
 esi:	This counts the number of superhires scan-line interrupts
@@ -941,24 +941,17 @@ edi:	This counts the number of Ensoniq "special events" over the last
 		second.  A sound that stops playing always causes a KEGS
 		event, even if it doesn't cause a IIgs interrupt.
 
-Line 4: (Ensoniq DOC info)
-snd1,2,3,4:  Percentage of Unix processor cycles spent handling various
-		sound activities.  snd1 is the total sum of all sound overhead.
-st:	Percentage of Unix cycles spent starting new Ensoniq oscillators.
-est:	Percentage of Unix cycles spent looking for 0 bytes in sounds.
-x.yz:	This final number is the average number of oscillators playing
-		over the last second.  Up to 4.00 is low overhead, over
-		20.0 is high overhead.
+Line 4: Not used
 
-Line 5: (Ensoniq DOC info)
-snd_plays:	Number of calls to a routine called sound_play, which
-		plays Ensoniq sounds.  Always called at least 60 times per sec.
-doc_ev:	Number of Ensoniq (DOC) events in the last second.  A sound
-		stopping is an event, but changing a parameter of a sound
-		while it is playing is also an event.
-st_snd:	 Number of sounds that were started in the last second.
-snd_parms:	Number of times a sound parameter was changed while it
-		was playing.
+Line 5: (Host overhead)
+sleep_dtime:	Amount of time, in seconds, where KEGS "slept" for the last
+		second.  Indicates how idle KEGS was.
+out_16ms:	Amount of time, in seconds, KEGS spent drawing to the host
+		screen and other overhead, in the last second.
+in_16ms:	Amount of time, in seconds, KEGS spent emulating the Apple IIgs
+		in the last second.
+snd_pl:		Number of times a sound parameter was changed while it
+		was playing, but there will always be 60 per second minimum.
 
 Line 6: (IWM info)
 For each IWM device, this line displays the current track (and side for
