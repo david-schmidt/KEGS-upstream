@@ -1,10 +1,10 @@
 #ifdef INCLUDE_RCSID_C
-const char rcsid_iwm_h[] = "@(#)$KmKId: iwm.h,v 1.33 2021-12-17 22:53:42+00 kentd Exp $";
+const char rcsid_iwm_h[] = "@(#)$KmKId: iwm.h,v 1.43 2022-05-06 21:47:48+00 kentd Exp $";
 #endif
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -17,8 +17,11 @@ const char rcsid_iwm_h[] = "@(#)$KmKId: iwm.h,v 1.33 2021-12-17 22:53:42+00 kent
 #define MAX_TRACKS	(2*80)
 #define MAX_C7_DISKS	16
 
-#define NIB_LEN_525		0x1900		/* 51072 bits per track */
-#define NIBS_FROM_ADDR_TO_DATA	20
+#define NIB_LEN_525		0x18f2		/* 51088 bits per track */
+// Expected bits per track: (1020484/5)/4 = 51024.  A little extra seems good
+
+#define NIBS_FROM_ADDR_TO_DATA	28
+// Copy II+ Manual Sector Copy fails if this is 20, so make it 28
 
 // image_type settings.  0 means unknown type
 #define DSK_TYPE_PRODOS		1
@@ -27,25 +30,60 @@ const char rcsid_iwm_h[] = "@(#)$KmKId: iwm.h,v 1.33 2021-12-17 22:53:42+00 kent
 #define DSK_TYPE_NIB		4
 #define DSK_TYPE_WOZ		5
 
+// Note: C031_APPLE35SEL must be 6, C031_CTRL must be 7, MOTOR_ON must be 5!
+// Q7 needs to be adjacent and higher than Q6
+// Bits 4:0 are IWM mode register: 0: latch mode; 1: async handshake;
+//   2: immediate motor off (no 1 sec delay); 3: 2us bit timing;
+//   4: Divide input clock by 8 (instead of 7)
+#define IWM_BIT_MOTOR_ON		5
+#define IWM_BIT_C031_APPLE35SEL		6
+#define IWM_BIT_C031_CTRL		7
+#define IWM_BIT_STEP_DIRECTION35	8
+#define IWM_BIT_MOTOR_ON35		9
+#define IWM_BIT_MOTOR_OFF		10
+#define IWM_BIT_DRIVE_SEL		11
+#define IWM_BIT_Q6			12
+#define IWM_BIT_Q7			13
+#define IWM_BIT_ENABLE2			14
+#define IWM_BIT_LAST_SEL35		15
+#define IWM_BIT_PHASES			16
+#define IWM_BIT_RESET			20
+
+#define IWM_STATE_MOTOR_ON		(1 << IWM_BIT_MOTOR_ON)
+#define IWM_STATE_C031_APPLE35SEL	(1 << IWM_BIT_C031_APPLE35SEL)
+#define IWM_STATE_C031_CTRL		(1 << IWM_BIT_C031_CTRL)
+#define IWM_STATE_STEP_DIRECTION35	(1 << IWM_BIT_STEP_DIRECTION35)
+#define IWM_STATE_MOTOR_ON35		(1 << IWM_BIT_MOTOR_ON35)
+#define IWM_STATE_MOTOR_OFF		(1 << IWM_BIT_MOTOR_OFF)
+#define IWM_STATE_DRIVE_SEL		(1 << IWM_BIT_DRIVE_SEL)
+#define IWM_STATE_Q6			(1 << IWM_BIT_Q6)
+#define IWM_STATE_Q7			(1 << IWM_BIT_Q7)
+#define IWM_STATE_ENABLE2		(1 << IWM_BIT_ENABLE2)
+#define IWM_STATE_LAST_SEL35		(1 << IWM_BIT_LAST_SEL35)
+#define IWM_STATE_PHASES		(1 << IWM_BIT_PHASES)
+#define IWM_STATE_RESET			(1 << IWM_BIT_RESET)
+
 STRUCT(Trk) {
 	byte	*raw_bptr;
 	byte	*sync_ptr;
 	dword64	dunix_pos;
-	word32	unix_len;
-	word32	track_qbits;
+	word16	unix_len;
+	word16	dirty;
+	word32	track_bits;
 };
 
 STRUCT(Woz_info) {
 	byte	*wozptr;
 	word32	woz_size;
 	int	version;
-	int	bad;
+	int	reparse_needed;
+	word32	max_trk_blocks;
 	int	meta_size;
 	int	trks_size;
-	byte	*tmap_bptr;
-	byte	*trks_bptr;
-	byte	*info_bptr;
-	byte	*meta_bptr;
+	int	tmap_offset;
+	int	trks_offset;
+	int	info_offset;
+	int	meta_offset;
 };
 
 typedef struct Dynapro_map_st Dynapro_map;
@@ -101,16 +139,19 @@ STRUCT(Disk) {
 	int	smartport;
 	int	disk_525;
 	int	drive;
-	int	cur_qtr_track;
+	word32	cur_frac_track;
 	int	image_type;
 	int	vol_num;
 	int	write_prot;
 	int	write_through_to_unix;
 	int	disk_dirty;
 	int	just_ejected;
-	int	last_phase;
-	word32	cur_qbit_pos;
-	word32	cur_track_qbits;
+	int	last_phases;
+	double	dcycs_last_phases;
+	word32	cur_fbit_pos;
+	word32	fbit_mult;
+	word32	cur_track_bits;
+	int	raw_bptr_malloc;
 	Trk	*cur_trk_ptr;
 	int	num_tracks;
 	Trk	*trks;
@@ -121,24 +162,17 @@ STRUCT(Iwm) {
 	Disk	drive35[2];
 	Disk	smartport[MAX_C7_DISKS];
 	double	dcycs_last_fastemul_read;
-	int	motor_on;
-	int	motor_off;
+	word32	state;
 	int	motor_off_vbl_count;
-	int	motor_on35;
-	int	head35;
-	int	last_sel35;
-	int	step_direction35;
-	int	iwm_phase[4];
-	int	iwm_mode;
-	int	drive_select;
-	int	q6;
-	int	q7;
-	int	enable2;
-	int	reset;
+	word32	forced_sync_bit;
+	word32	last_rd_bit;
 	word32	write_val;
-	word32	qbit_wr_start;
-	word32	qbit_wr_last;
-	word32	forced_sync_qbit;
+	word32	wr_last_bit[5];
+	word32	wr_qtr_track[5];
+	word32	wr_num_bits[5];
+	word32	wr_prior_num_bits[5];
+	word32	wr_delta[5];
+	int	num_active_writes;
 };
 
 STRUCT(Driver_desc) {

@@ -1,4 +1,26 @@
 
+Changes in KEGS v1.19 since v1.18 (03/11/23)
+- 'L' on the disk selection screen locks/unlocks images.
+- Ignore case when detecting image extensions like .PO.
+- Allow setting ROM image on command line: -rom=/path/to/rom/file
+- Big changes to disk emulation for better WOZ image compability.
+	Writing to WOZ images works properly now, recalculating CRC correctly.
+	Automatically changes a floppy disk image to .WOZ if writing to the
+	image makes it no longer a standard format.  User can rename image to
+	save the new .WOZ changes.
+
+
+Changes in KEGS v1.18 since v1.17 (02/09/22)
+- Alpha version of KEGSWIN, KEGS can now run on Windows 10 or later.
+	(No binary yet)
+
+
+Changes in KEGS v1.17 since v1.16 (02/09/22)
+- Implement $C02C "Test Mode" reading of the character ROM.  This enables
+	SuperConvert 4 TDM conversions to work properly.
+- Add Video->Swap Command/Option menu item to support Windows keyboards better.
+
+
 Changes in KEGS v1.16 since v1.14 (01/23/22)
 - Better cursor focus tracking, less likely to have an invisible cursor
 	when KEGS is no longer the active window.

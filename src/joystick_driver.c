@@ -1,4 +1,4 @@
-const char rcsid_joystick_driver_c[] = "@(#)$KmKId: joystick_driver.c,v 1.19 2022-02-10 00:56:56+00 kentd Exp $";
+const char rcsid_joystick_driver_c[] = "@(#)$KmKId: joystick_driver.c,v 1.20 2022-04-03 13:38:37+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -386,7 +386,7 @@ joystick_init()
 				(usage != kHIDUsage_GD_MultiAxisController)) {
 			continue;
 		}
-		printf(" JOYSTICK FOUND!\n");
+		printf(" JOYSTICK FOUND, vendor:%08x!\n", vendor);
 		IOHIDDeviceOpen(device, kIOHIDOptionsTypeNone);
 		IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetCurrent(),
 							kCFRunLoopCommonModes);

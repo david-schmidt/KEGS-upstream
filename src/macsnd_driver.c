@@ -1,4 +1,4 @@
-const char rcsid_macsnd_driver_c[] = "@(#)$KmKId: macsnd_driver.c,v 1.19 2022-02-04 19:22:46+00 kentd Exp $";
+const char rcsid_macsnd_driver_c[] = "@(#)$KmKId: macsnd_driver.c,v 1.20 2022-04-03 13:38:47+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -41,6 +41,7 @@ word32	g_macsnd_rebuf[MACSND_REBUF_SIZE];
 volatile int g_macsnd_rd_pos;
 volatile int g_macsnd_wr_pos;
 volatile int g_macsnd_playing = 0;
+int g_macsnd_channel_warn = 0;
 extern int g_sound_min_samples;			// About 33ms
 extern int g_sound_max_multiplier;		// About 6, so 6*33 ~= 200ms.
 
@@ -106,6 +107,10 @@ audio_callback(void *in_ref_ptr, AudioUnitRenderActionFlags *aura_flags_ptr,
 
 	for(i = 0; i < num_buffers; i++) {
 		num_channels = abuflist_ptr->mBuffers[i].mNumberChannels;
+		if((num_channels != 2) && !g_macsnd_channel_warn) {
+			printf("mNumberChannels:%d\n", num_channels);
+			g_macsnd_channel_warn = 1;
+		}
 		num_samps = abuflist_ptr->mBuffers[i].mDataByteSize / 4;
 		wptr = (word32 *)abuflist_ptr->mBuffers[i].mData;
 #if 0
@@ -143,7 +148,6 @@ int
 mac_send_audio(byte *ptr, int in_size)
 {
 	word32	*wptr, *macptr;
-	word32	*eptr;
 	int	samps, sample_num;
 	int	i;
 
@@ -151,7 +155,6 @@ mac_send_audio(byte *ptr, int in_size)
 	wptr = (word32 *)ptr;
 	sample_num = g_macsnd_wr_pos;
 	macptr = &(g_macsnd_rebuf[0]);
-	eptr = &g_macsnd_rebuf[MACSND_REBUF_SIZE];
 	for(i = 0; i < samps; i++) {
 		macptr[sample_num] = *wptr++;
 		sample_num++;

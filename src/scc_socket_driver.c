@@ -1,4 +1,4 @@
-const char rcsid_scc_socket_driver_c[] = "@(#)$KmKId: scc_socket_driver.c,v 1.23 2022-02-10 00:55:25+00 kentd Exp $";
+const char rcsid_scc_socket_driver_c[] = "@(#)$KmKId: scc_socket_driver.c,v 1.24 2022-08-28 16:04:45+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -62,7 +62,9 @@ scc_socket_init(int port)
 					/* 1 connected */
 	scc_ptr->socket_num_rings = 0;
 	scc_ptr->socket_last_ring_dcycs = 0;
-	scc_ptr->dcd = 0;		/* 0 means no carrier */
+	if(port == 1) {
+		scc_ptr->dcd = 0;		/* 0 means no carrier */
+	}
 	scc_ptr->modem_s0_val = 0;
 	scc_ptr->host_aux1 = sizeof(struct sockaddr_in);
 	scc_ptr->host_handle = malloc(scc_ptr->host_aux1);
@@ -317,7 +319,9 @@ scc_socket_close(int port, int full_close, double dcycs)
 	}
 	scc_ptr->rdwrfd = -1;
 	scc_ptr->sockfd = -1;
-	scc_ptr->dcd = 0;
+	if(port == 1) {
+		scc_ptr->dcd = 1;
+	}
 	scc_ptr->socket_num_rings = 0;
 
 	if(!full_close) {

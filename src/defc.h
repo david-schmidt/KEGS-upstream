@@ -1,10 +1,10 @@
 #ifdef INCLUDE_RCSID_C
-const char rcsid_defc_h[] = "@(#)$KmKId: defc.h,v 1.128 2022-02-10 00:47:43+00 kentd Exp $";
+const char rcsid_defc_h[] = "@(#)$KmKId: defc.h,v 1.132 2023-03-05 16:29:25+00 kentd Exp $";
 #endif
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2022 by Kent Dickey		*/
+/*			Copyright 2002-2023 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -33,6 +33,8 @@ typedef unsigned long long dword64;
 #define CYCS_3_5_MHZ		(CYCS_28_MHZ/8)
 #define DCYCS_1_MHZ		((DCYCS_28_MHZ/28.0)*(65.0*7/(65.0*7+1.0)))
 #define CYCS_1_MHZ		((int)DCYCS_1_MHZ)
+
+// CYCS_1_MHZ is 1020484.32016
 
 #define DCYCS_IN_16MS_RAW	(262.0 * 65.0)
 /* Use precisely 17030 instead of forcing 60 Hz since this is the number of */
@@ -134,6 +136,7 @@ STRUCT(Engine_reg) {
 STRUCT(Break_point) {
 	word32	start_addr;
 	word32	end_addr;
+	word32	acc_type;
 };
 
 STRUCT(Change_rect) {
@@ -343,6 +346,8 @@ STRUCT(Lzw_state) {
 #define MY_MAX(a,b)	(((a) > (b)) ? (a) : (b))
 
 #define GET_ITIMER(dest)	dest = get_itimer();
+
+#define FINISH(arg1, arg2)	g_ret1 = arg1 | ((arg2) << 8); g_fcycles_end=0;
 
 #include "iwm.h"
 #include "protos.h"

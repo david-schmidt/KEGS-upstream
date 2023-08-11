@@ -1,4 +1,4 @@
-// $KmKId: AppDelegate.swift,v 1.24 2022-01-30 20:39:31+00 kentd Exp $
+// $KmKId: AppDelegate.swift,v 1.25 2022-04-17 16:13:32+00 kentd Exp $
 //	Copyright 2019-2022 by Kent Dickey
 //	This code is covered by the GNU GPL v3
 //	See the file COPYING.txt or https://www.gnu.org/licenses/
@@ -250,7 +250,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
 	func show_menu(_ menu: NSMenu, depth: Int) {
 		if(depth >= -10) {
-			//return	// HACK: remove to see debug output!
+			return	// HACK: remove to see debug output!
 		}
 		print("menu at depth \(depth): \(menu.title)")
 		if(depth > 5) {		// Prevent infinite recursion

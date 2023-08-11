@@ -1,8 +1,8 @@
-const char rcsid_scc_macdriver_c[] = "@(#)$KmKId: scc_macdriver.c,v 1.12 2021-11-12 05:00:30+00 kentd Exp $";
+const char rcsid_scc_macdriver_c[] = "@(#)$KmKId: scc_macdriver.c,v 1.14 2022-04-14 15:17:54+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -38,7 +38,7 @@ scc_serial_mac_init(int port)
 	scc_ptr->state = 0;		/* mark as uninitialized */
 
 	/*sprintf(&str_buf[0], "/dev/tty.USA19QW11P1.1"); */
-	sprintf(&str_buf[0], "/dev/tty.USA19H181P1.1");
+	snprintf(&str_buf[0], sizeof(str_buf), "/dev/tty.USA19H181P1.1");
 	/* HACK: fix this... */
 
 	fd = open(&str_buf[0], O_RDWR | O_NONBLOCK);

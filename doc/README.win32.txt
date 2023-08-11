@@ -1,4 +1,9 @@
 
+These are raw notes to myself.  Probably not useful for others, just
+ignore.  KEGS will support Windows again soon, but not yet.
+
+----
+
 Open Visual Studio 2022 (community edition).
 On the right side, "Get Started" list, select the small link underneath
 	that says "Continue without code ->".

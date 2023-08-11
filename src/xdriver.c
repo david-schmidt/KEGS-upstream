@@ -1,4 +1,4 @@
-const char rcsid_xdriver_c[] = "@(#)$KmKId: xdriver.c,v 1.232 2022-01-24 02:39:04+00 kentd Exp $";
+const char rcsid_xdriver_c[] = "@(#)$KmKId: xdriver.c,v 1.234 2022-11-24 15:51:10+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -184,7 +184,7 @@ int	g_x_a2_key_to_xsym[][3] = {
 	{ 0x27,	0x27, '"' },	/* single quote */
 	{ 0x24,	XK_Return, 0 },
 	{ 0x56,	XK_KP_4, XK_KP_Left },
-	{ 0x57,	XK_KP_5, 0 },
+	{ 0x57,	XK_KP_5, XK_KP_Begin },
 	{ 0x58,	XK_KP_6, XK_KP_Right },
 	{ 0x45,	XK_KP_Add, 0 },
 
@@ -1126,6 +1126,9 @@ x_input_events()
 			video_set_active(win_info_ptr->kimage_ptr, 0);
 			win_info_ptr->active = 0;
 			printf("Destroy %s\n", win_info_ptr->name_str);
+			if(win_info_ptr == &g_mainwin_info) {
+				x_try_xset_r();		// Mainwin: quit BURST
+			}
 			break;
 		case ReparentNotify:
 		case UnmapNotify:

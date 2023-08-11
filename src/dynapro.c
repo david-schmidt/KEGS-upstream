@@ -1,4 +1,4 @@
-const char rcsid_dynapro_c[] = "@(#)$KmKId: dynapro.c,v 1.41 2022-02-11 22:58:01+00 kentd Exp $";
+const char rcsid_dynapro_c[] = "@(#)$KmKId: dynapro.c,v 1.44 2022-06-26 04:14:15+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -183,7 +183,7 @@ dynapro_free_file(Dynapro_file *fileptr, int check_map)
 	free(fileptr->buffer_ptr);
 	fileptr->buffer_ptr = 0;
 	fileptr->next_ptr = 0;
-	printf("FREE %p\n", fileptr);
+	// printf("FREE %p\n", fileptr);
 	if(check_map && (fileptr->map_first_block != 0)) {
 		printf(" ERROR: map_first_block is %08x\n",
 						fileptr->map_first_block);
@@ -200,7 +200,7 @@ dynapro_free_recursive_file(Dynapro_file *fileptr, int check_map)
 	if(!fileptr) {
 		return;
 	}
-	printf("free_recursive %s\n", fileptr->unix_path);
+	// printf("free_recursive %s\n", fileptr->unix_path);
 	while(fileptr) {
 		nextptr = fileptr->next_ptr;
 		dynapro_free_file(fileptr, check_map);
@@ -1334,10 +1334,11 @@ dynapro_create_prodos_name(Dynapro_file *newfileptr, Dynapro_file *matchptr,
 		if(inpos < max_inpos) {
 			c = str[inpos++];
 		}
-		g_dynapro_path_buf[outpos++] = c;
+		g_dynapro_path_buf[outpos] = c;
 		if(c == 0) {
 			break;
 		}
+		outpos++;
 		if((c >= 'A') && (c <= 'Z')) {
 			continue;		// This is legal
 		}
@@ -1362,7 +1363,7 @@ dynapro_create_prodos_name(Dynapro_file *newfileptr, Dynapro_file *matchptr,
 
 		// This is not legal.  Make it a '.'
 		if((c >= 0x20) && (c <= 0x7e)) {
-			g_dynapro_path_buf[outpos - 1] = '.';
+			g_dynapro_path_buf[outpos - 1] = '@';	// do '.' later
 		} else {
 			outpos--;		// Ignore it
 		}
@@ -1370,9 +1371,16 @@ dynapro_create_prodos_name(Dynapro_file *newfileptr, Dynapro_file *matchptr,
 
 	g_dynapro_path_buf[outpos] = 0;
 	// printf(" initial path_buf:%s, %d\n", &g_dynapro_path_buf[0], outpos);
-	while((outpos >= 0) && (g_dynapro_path_buf[outpos-1] == '.')) {
+	while((outpos >= 0) && (g_dynapro_path_buf[outpos-1] == '@')) {
+		// Remove trailing '@' since they are not useful
 		outpos--;
 		g_dynapro_path_buf[outpos] = 0;
+	}
+	for(i = 1; i < outpos; i++) {
+		// Convert '@' to '.' to make name legal
+		if(g_dynapro_path_buf[i] == '@') {
+			g_dynapro_path_buf[i] = '.';
+		}
 	}
 	if(outpos == 0) {
 		// Not a valid file, just skip it
@@ -1780,10 +1788,11 @@ dynapro_add_file_entry(Disk *dsk, Dynapro_file *fileptr, Dynapro_file *head_ptr,
 		fileptr->lastmod_time = 0x00060000;
 			// low 16 bits: file_count, upper 16 bits: bitmap_block
 		fileptr->header_pointer = dsk->raw_dsize >> 9;	// Total blocks
-		dynapro_set_word16(&bptr[0x1c], 0);
+		dynapro_set_word16(&bptr[0x1c], 0x0005);
 		dynapro_set_word16(&bptr[0x16], fileptr->upper_lower);
 	} else if(storage_type >= 0xe0) {		// Directory header
 		dynapro_set_word16(&bptr[0x11], 0);
+		dynapro_set_word16(&bptr[0x1c], 0x0005);
 		parent_ptr = fileptr->parent_ptr;		// subdir entry
 		if(parent_ptr == 0) {
 			printf("parent_ptr of %s is 0\n", fileptr->unix_path);

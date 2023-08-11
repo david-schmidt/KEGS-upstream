@@ -1,8 +1,8 @@
-const char rcsid_undeflate_c[] = "@(#)$KmKId: undeflate.c,v 1.11 2021-09-26 03:25:17+00 kentd Exp $";
+const char rcsid_undeflate_c[] = "@(#)$KmKId: undeflate.c,v 1.13 2022-05-06 21:47:13+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -177,6 +177,9 @@ undeflate_calc_crc32(byte *bptr, word32 len)
 {
 	word32	crc, c, xor;
 	int	i;
+
+	// Old version, don't use other than for testing purposes.
+	//  Use woz_calc_crc32() instead.
 
 	// Generate CCITT-32 CRC, with remainder initialized to -1 and return
 	//  the complement of the CRC value
@@ -927,7 +930,7 @@ undeflate_gzip_header(Disk *dsk, byte *cptr, word32 compr_size)
 							len, dsk->dimage_size);
 				break;
 			}
-			crc = undeflate_calc_crc32(dsk->raw_data, len);
+			crc = woz_calc_crc32(dsk->raw_data, len, 0);
 			if(crc != exp_crc) {
 				printf("CRC mismatch: %08x != exp %08x\n",
 						crc, exp_crc);

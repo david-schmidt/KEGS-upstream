@@ -1,4 +1,4 @@
-# $KmKId: makefile,v 1.44 2022-02-10 01:05:17+00 kentd Exp $
+# $KmKId: makefile,v 1.45 2022-06-13 13:14:21+00 kentd Exp $
 
 XOPTS_WIN = -Wall -fomit-frame-pointer -march=pentium
 
@@ -37,7 +37,7 @@ kegsmac: $(OBJECTS) $(OBJECTS1) compile_time.o $(SWIFTOBJS)
 	mkdir -p ../KEGSMAC.app/Contents/Resources/Base.lproj/
 	mkdir -p ../KEGSMAC.app/Contents/MacOS
 	mkdir -p ../KEGSMAC.app/Contents/Frameworks
-	PERL cp_kegs_libs kegsmac /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx ../KEGSMAC.app/Contents/Frameworks
+	$(PERL) cp_kegs_libs kegsmac /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx ../KEGSMAC.app/Contents/Frameworks
 	mv kegsmac ../KEGSMAC.app/Contents/MacOS/KEGSMAC
 	echo "APPL????" > ../KEGSMAC.app/Contents/PkgInfo
 	cp -f Info.plist ../KEGSMAC.app/Contents/

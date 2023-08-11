@@ -1,8 +1,8 @@
-const char rcsid_scc_c[] = "@(#)$KmKId: scc.c,v 1.54 2021-11-12 05:20:35+00 kentd Exp $";
+const char rcsid_scc_c[] = "@(#)$KmKId: scc.c,v 1.55 2022-08-28 16:04:18+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -104,6 +104,9 @@ scc_reset()
 		scc_ptr->out_rdptr = 0;
 		scc_ptr->out_wrptr = 0;
 		scc_ptr->dcd = 0;
+		if(i == 0) {			// Slot 1, a printer generally
+			scc_ptr->dcd = 1;
+		}
 		scc_ptr->wantint_rx = 0;
 		scc_ptr->wantint_tx = 0;
 		scc_ptr->wantint_zerocnt = 0;

@@ -1,4 +1,4 @@
-const char rcsid_scc_windriver_c[] = "@(#)$KmKId: scc_windriver.c,v 1.7 2022-02-10 00:44:04+00 kentd Exp $";
+const char rcsid_scc_windriver_c[] = "@(#)$KmKId: scc_windriver.c,v 1.8 2022-04-14 15:15:14+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -35,7 +35,7 @@ scc_serial_win_init(int port)
 
 	scc_ptr->state = 0;		/* mark as failed */
 
-	sprintf(&str_buf[0], "COM%d", port+1);
+	snprintf(&str_buf[0], sizeof(str_buf), "COM%d", port+1);
 
 	host_handle = CreateFile(&str_buf[0], GENERIC_READ | GENERIC_WRITE,
 			0, NULL, OPEN_EXISTING, 0, NULL);

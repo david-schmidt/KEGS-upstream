@@ -1,8 +1,8 @@
-const char rcsid_video_c[] = "@(#)$KmKId: video.c,v 1.188 2022-02-09 02:52:19+00 kentd Exp $";
+const char rcsid_video_c[] = "@(#)$KmKId: video.c,v 1.190 2023-03-09 22:38:44+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2022 by Kent Dickey		*/
+/*			Copyright 2002-2023 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -115,6 +115,7 @@ int	g_green_right_shift = 0;
 int	g_blue_right_shift = 0;
 
 int	g_status_enable = 1;
+int	g_status_enable_previous = 1;
 char	g_status_buf[MAX_STATUS_LINES][STATUS_LINE_LENGTH + 1];
 char	*g_status_ptrs[MAX_STATUS_LINES] = { 0 };
 word16	g_pixels_widened[128];
@@ -574,6 +575,10 @@ video_update()
 		//adb_all_keys_up();
 		clear_fatal_logs();
 	}
+	if(g_status_enable != g_status_enable_previous) {
+		g_status_enable_previous = g_status_enable;
+		video_update_status_enable(&g_mainwin_kimage);
+	}
 
 	debugger_redraw_screen(&g_debugwin_kimage);
 	if(g_config_control_panel) {
@@ -679,8 +684,11 @@ change_display_mode(double dcycs)
 	}
 	tmp_line = MY_MIN(199, line);
 
-	dbg_log_info(dcycs, ((word32)g_cur_a2_stat << 12) | (line & 0xfff), 0,
+	if(!g_halt_sim || g_config_control_panel) {
+		dbg_log_info(dcycs,
+			((word32)g_cur_a2_stat << 12) | (line & 0xfff), 0,
 									0x102);
+	}
 
 	video_update_all_stat_through_line(tmp_line);
 

@@ -1,4 +1,4 @@
-const char rcsid_sim65816_c[] = "@(#)$KmKId: sim65816.c,v 1.439 2022-02-09 15:03:52+00 kentd Exp $";
+const char rcsid_sim65816_c[] = "@(#)$KmKId: sim65816.c,v 1.443 2022-04-24 15:19:24+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -53,6 +53,7 @@ extern int g_zipgs_reg_c059;
 extern int g_zipgs_reg_c05a;
 extern int g_zipgs_reg_c05b;
 extern int g_zipgs_unlock;
+extern Iwm g_iwm;
 
 Engine_reg engine;
 extern word32 table8[];
@@ -63,7 +64,6 @@ extern byte doc_ram[];
 extern int g_iwm_motor_on;
 extern int g_fast_disk_emul;
 extern int g_slow_525_emul_wr;
-extern int g_c031_disk35;
 extern int g_config_control_panel;
 
 extern int g_audio_enable;
@@ -88,7 +88,7 @@ int	g_serial_out_masking = 0;
 int	g_serial_modem[2] = { 0, 1 };
 
 int	g_config_iwm_vbl_count = 0;
-const char g_kegs_version_str[] = "1.18";
+const char g_kegs_version_str[] = "1.19";
 
 double	g_last_vbl_dcycs = 0.0;
 double	g_cur_dcycs = 0.0001;
@@ -547,11 +547,60 @@ extern int g_use_bw_hires;
 char g_display_env[512];
 int	g_screen_depth = 8;
 
+#define MAX_PARSE_FILE_OVERRIDES	20
+
+int g_parse_num_file_overrides = 0;
+const char *g_parse_file_override_str1[MAX_PARSE_FILE_OVERRIDES];
+const char *g_parse_file_override_str2[MAX_PARSE_FILE_OVERRIDES];
+
+int
+parse_argv_file_override(const char *str1, const char *str2)
+{
+	const char *may_str2;
+	int	ret, pos;
+
+	// Handle things like "rom=rompath" and "rom", "rompath"
+	// Look through str1, determine if there is '=', if so ignore str2
+	may_str2 = strchr(str1, '=');
+	ret = 1;
+	if(may_str2) {
+		str2 = may_str2 + 1;
+		ret = 0;
+	}
+	pos = g_parse_num_file_overrides++;
+	if(pos >= MAX_PARSE_FILE_OVERRIDES) {
+		fatal_printf("MAX_PARSE_FILE_OVERRIDES overflow\n");
+		my_exit(5);
+		return ret;
+	}
+	g_parse_file_override_str1[pos] = str1;
+	g_parse_file_override_str2[pos] = str2;
+	printf("Added override %d, %s = %s\n", pos, str1, str2);
+	return ret;
+}
+
+void
+parse_do_file_overrides()
+{
+	const char *str1, *str2;
+	int	i;
+
+	for(i = 0; i < g_parse_num_file_overrides; i++) {
+		str1 = g_parse_file_override_str1[i];
+		str2 = g_parse_file_override_str2[i];
+		if(!strncmp(str1, "-rom", 4)) {
+			cfg_file_update_rom(str2);
+		} else {
+			printf("file override %s unknown\n", str1);
+		}
+	}
+}
+
 int
 parse_argv(int argc, char **argv, int slashes_to_find)
 {
 	byte	*bptr;
-	char	*str;
+	char	*str, *arg2_str;
 	int	skip_amt, tmp1, len;
 	int	i;
 
@@ -670,7 +719,8 @@ parse_argv(int argc, char **argv, int slashes_to_find)
 				exit(1);
 			}
 			printf("Using %s as display\n", argv[i+1]);
-			sprintf(g_display_env, "DISPLAY=%s", argv[i+1]);
+			snprintf(g_display_env, sizeof(g_display_env),
+						"DISPLAY=%s", argv[i+1]);
 			putenv(&g_display_env[0]);
 			i++;
 		} else if(!strcmp("-noshm", argv[i])) {
@@ -697,6 +747,12 @@ parse_argv(int argc, char **argv, int slashes_to_find)
 		} else if(!strcmp("-logpc", argv[i])) {
 			printf("Force logpc enable\n");
 			debug_logpc_on("on");
+		} else if(!strncmp("-rom", argv[i], 4)) {
+			arg2_str = 0;
+			if((i + 1) < argc) {
+				arg2_str = argv[i+1];
+			}
+			i += parse_argv_file_override(argv[i], arg2_str);
 		} else {
 			printf("Bad option: %s\n", argv[i]);
 			return 3;
@@ -711,6 +767,7 @@ kegs_init(int mdepth)
 {
 	g_config_control_panel = 0;
 
+	woz_crc_init();
 	check_engine_asm_defines();
 	fixed_memory_ptrs_init();
 
@@ -723,6 +780,7 @@ kegs_init(int mdepth)
 
 	iwm_init();
 	config_init();
+	parse_do_file_overrides();
 
 	load_roms_init_memory();
 
@@ -1164,7 +1222,7 @@ run_a2_one_vbl()
 
 		motor_on = g_iwm_motor_on;
 		limit_speed = g_limit_speed;
-		apple35_sel = g_c031_disk35 & 0x40;
+		apple35_sel = g_iwm.state & IWM_STATE_C031_APPLE35SEL;
 		zip_en = ((g_zipgs_reg_c05b & 0x10) == 0);
 		zip_follow_cps = ((g_zipgs_reg_c059 & 0x8) != 0);
 		zip_speed_0tof_new = g_zipgs_reg_c05a & 0xf0;
@@ -1487,13 +1545,14 @@ update_60hz(double dcycs, double dtime_now)
 		} else {
 			g_sim_mhz = (dadj_cycles_1sec / g_sim_sum) /
 							(1000.0*1000.0);
-			sprintf(sim_mhz_buf, "%6.2f", g_sim_mhz);
+			snprintf(sim_mhz_buf, sizeof(sim_mhz_buf), "%6.2f",
+								g_sim_mhz);
 			sim_mhz_ptr = sim_mhz_buf;
 		}
 		if(dtime_diff_1sec < (1.0/250.0)) {
 			total_mhz_ptr = "???";
 		} else {
-			sprintf(total_mhz_buf, "%6.2f",
+			snprintf(total_mhz_buf, sizeof(total_mhz_buf), "%6.2f",
 				(dadj_cycles_1sec / dtime_diff_1sec) /
 								(1000000.0));
 			total_mhz_ptr = total_mhz_buf;
@@ -1506,8 +1565,8 @@ update_60hz(double dcycs, double dtime_now)
 		default: sp_str = "Unlimited"; break;
 		}
 
-		sprintf(status_buf, "dcycs:%9.1f sim MHz:%s "
-			"Eff MHz:%s, sec:%1.3f vol:%02x Limit:%s",
+		snprintf(status_buf, sizeof(status_buf), "dcycs:%9.1f sim MHz:"
+			"%s Eff MHz:%s, sec:%1.3f vol:%02x Limit:%s",
 			dcycs/(1000.0*1000.0), sim_mhz_ptr, total_mhz_ptr,
 			dtime_diff_1sec, g_doc_vol, sp_str);
 		video_update_status_line(0, status_buf);
@@ -1534,16 +1593,16 @@ update_60hz(double dcycs, double dtime_now)
 		//dtmp3 = (double)(g_cycs_in_refresh_line) / dnatcycs_1sec;
 		dtmp3 = (double)(g_cycs_in_run_16ms) / dnatcycs_1sec;
 		dtmp4 = (double)(g_cycs_in_refresh_ximage) / dnatcycs_1sec;
-		sprintf(status_buf, "xfer:%08x, %5.1f ref_amt:%d "
-			"ch_in:%4.1f%% ref_l:%4.1f%% ref_x:%4.1f%%",
+		snprintf(status_buf, sizeof(status_buf), "xfer:%08x, %5.1f "
+			"ref_amt:%d ch_in:%4.1f%% ref_l:%4.1f%% ref_x:%4.1f%%",
 			g_refresh_bytes_xfer, g_dnatcycs_1sec/(1000.0*1000.0),
 			g_line_ref_amt, dtmp2, dtmp3, dtmp4);
 		video_update_status_line(1, status_buf);
 
-		sprintf(status_buf, "Ints:%3d I/O:%4dK BRK:%3d COP:%2d "
-			"Eng:%3d act:%3d rev:%3d esi:%3d edi:%3d",
-			g_num_irq, g_io_amt>>10, g_num_brk, g_num_cop,
-			g_num_enter_engine, g_engine_action,
+		snprintf(status_buf, sizeof(status_buf), "Ints:%3d I/O:%4dK "
+			"BRK:%3d COP:%2d Eng:%3d act:%3d rev:%3d esi:%3d "
+			"edi:%3d", g_num_irq, g_io_amt>>10, g_num_brk,
+			g_num_cop, g_num_enter_engine, g_engine_action,
 			g_engine_recalc_event, g_engine_scan_int,
 			g_engine_doc_int);
 		video_update_status_line(2, status_buf);
@@ -1553,8 +1612,8 @@ update_60hz(double dcycs, double dtime_now)
 		dtmp3 = (double)(g_cycs_in_sound3) / dnatcycs_1sec;
 		dtmp4 = (double)(g_cycs_in_start_sound) / dnatcycs_1sec;
 		dtmp5 = (double)(g_cycs_in_est_sound) / dnatcycs_1sec;
-		sprintf(status_buf, "snd1:%4.1f%%, 2:%4.1f%%, "
-			"3:%4.1f%%, st:%4.1f%% est:%4.1f%% %4.2f",
+		snprintf(status_buf, sizeof(status_buf), "snd1:%4.1f%%, "
+			"2:%4.1f%%, 3:%4.1f%%, st:%4.1f%% est:%4.1f%% %4.2f",
 			dtmp1, dtmp2, dtmp3, dtmp4, dtmp5, g_fvoices);
 		video_update_status_line(3, status_buf);
 
@@ -1569,20 +1628,20 @@ update_60hz(double dcycs, double dtime_now)
 			code_str2 = "Emulated state corrupt?";
 		}
 #if 0
-		sprintf(status_buf, "snd_plays:%4d, doc_ev:%4d, st_snd:%4d "
-			"snd_parms: %4d %s",
+		snprintf(status_buf, sizeof(status_buf), "snd_plays:%4d, "
+			"doc_ev:%4d, st_snd:%4d snd_parms: %4d %s",
 			g_num_snd_plays, g_num_doc_events, g_num_start_sounds,
 			g_num_recalc_snd_parms, code_str1);
 #endif
-		sprintf(status_buf, "sleep_dtime:%8.6f, out_16ms:%8.6f, "
-			"in_16ms:%8.6f, snd_pl:%d", g_dtime_in_sleep,
-			g_dtime_outside_run_16ms, g_dtime_in_run_16ms,
-			g_num_snd_plays);
+		snprintf(status_buf, sizeof(status_buf), "sleep_dtime:%8.6f, "
+			"out_16ms:%8.6f, in_16ms:%8.6f, snd_pl:%d",
+			g_dtime_in_sleep, g_dtime_outside_run_16ms,
+			g_dtime_in_run_16ms, g_num_snd_plays);
 		video_update_status_line(4, status_buf);
 
 		draw_iwm_status(5, status_buf);
 
-		sprintf(status_buf, "KEGS v%-6s       "
+		snprintf(status_buf, sizeof(status_buf), "KEGS v%-6s       "
 			"Press F4 for Config Menu    %s %s",
 			g_kegs_version_str, code_str1, code_str2);
 		video_update_status_line(6, status_buf);
@@ -1998,23 +2057,23 @@ kegs_vprintf(const char *fmt, va_list ap)
 	return ret;
 }
 
-word32
-must_write(int fd, byte *bufptr, word32 size)
+dword64
+must_write(int fd, byte *bufptr, dword64 dsize)
 {
-	word32	len;
-	int	ret;
+	dword64	dlen;
+	long long ret;
 
-	len = size;
-	while(len != 0) {
-		ret = (int)write(fd, bufptr, len);
+	dlen = dsize;
+	while(dlen != 0) {
+		ret = write(fd, bufptr, dlen);
 		if(ret >= 0) {
-			len -= ret;
+			dlen -= ret;
 			bufptr += ret;
 		} else if((errno != EAGAIN) && (errno != EINTR)) {
 			return 0;		// just get out
 		}
 	}
-	return size;
+	return dsize;
 }
 
 void

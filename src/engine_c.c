@@ -1,8 +1,8 @@
-const char rcsid_engine_c_c[] = "@(#)$KmKId: engine_c.c,v 1.87 2021-12-19 22:44:49+00 kentd Exp $";
+const char rcsid_engine_c_c[] = "@(#)$KmKId: engine_c.c,v 1.89 2023-02-26 17:46:34+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2023 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -72,7 +72,6 @@ int bogus[] = {
 #include "op_routs.h"
 };
 
-#define FINISH(arg1, arg2)	g_ret1 = arg1 | ((arg2) << 8); g_fcycles_end=0;
 #define INC_KPC_1	kpc = (kpc & 0xff0000) + ((kpc + 1) & 0xffff);
 #define INC_KPC_2	kpc = (kpc & 0xff0000) + ((kpc + 2) & 0xffff);
 #define INC_KPC_3	kpc = (kpc & 0xff0000) + ((kpc + 3) & 0xffff);
@@ -328,26 +327,6 @@ extern word32 g_slow_mem_changed[];
 		ptr[2] = (val) >> 16;					\
 	}
 
-void
-check_breakpoints(word32 addr, double *fcycs_ptr, word32 type)
-{
-	int	count;
-	int	i;
-
-	count = g_num_breakpoints;
-	for(i = 0; i < count; i++) {
-		if((addr >= (g_break_pts[i].start_addr & 0xffffff)) &&
-			(addr <= (g_break_pts[i].end_addr & 0xffffff))) {
-			dbg_log_info(g_last_vbl_dcycs + *fcycs_ptr, addr, i,
-								0x6270);
-			halt2_printf("Hit breakpoint at %06x\n", addr);
-		}
-	}
-
-	if((type == 4) && ((addr == 0xe10000) || (addr == 0xe10004))) {
-		FINISH(RET_TOOLTRACE, 0);
-	}
-}
 
 word32
 get_memory8_io_stub(word32 addr, byte *stat, double *fcycs_ptr,
@@ -359,7 +338,7 @@ get_memory8_io_stub(word32 addr, byte *stat, double *fcycs_ptr,
 
 	wstat = PTR2WORD(stat) & 0xff;
 	if(wstat & BANK_BREAK) {
-		check_breakpoints(addr, fcycs_ptr, 1);
+		check_breakpoints(addr, fcycs_ptr, 0, 1);
 	}
 	fcycles = *fcycs_ptr;
 	if(wstat & BANK_IO2_TMP) {
@@ -437,7 +416,7 @@ set_memory8_io_stub(word32 addr, word32 val, byte *stat, double *fcycs_ptr,
 
 	wstat = PTR2WORD(stat) & 0xff;
 	if(wstat & (1 << (31 - BANK_BREAK_BIT))) {
-		check_breakpoints(addr, fcycs_ptr, 2);
+		check_breakpoints(addr, fcycs_ptr, 0, 2);
 	}
 	ptr = stat - wstat + ((addr) & 0xff);
 	fcycles = *fcycs_ptr;
@@ -877,7 +856,7 @@ get_remaining_operands(word32 addr, word32 opcode, word32 psr, double *cyc_ptr,
 	if((wstat & (1 << (31-BANK_IO_BIT))) || ((addr & 0xff) > 0xfc)) {\
 		if(wstat & BANK_BREAK) {				\
 			fcycles_tmp1 = fcycles;				\
-			check_breakpoints(addr, &fcycles_tmp1, 4);	\
+			check_breakpoints(addr, &fcycles_tmp1, stack, 4); \
 		}							\
 		if((addr & 0xfffff0) == 0x00c700) {			\
 			if(addr == 0xc700) {				\

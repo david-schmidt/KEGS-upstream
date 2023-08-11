@@ -62,7 +62,7 @@ Gotchas to watch out for
 KEGS aggressively makes the directory match the ProDOS volume.  If you erase a
 file using GS/OS (as an example), KEGS will erase that file from the directory
 you selected.  If you format the volume, KEGS will erase all files in the
-directory you selected.  So: be careful what you points KEGS at!
+directory you selected.  So: be careful what you point KEGS at!
 
 How it works
 ------------

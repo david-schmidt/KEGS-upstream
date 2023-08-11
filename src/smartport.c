@@ -1,4 +1,4 @@
-const char rcsid_smartport_c[] = "@(#)$KmKId: smartport.c,v 1.51 2022-01-23 18:39:20+00 kentd Exp $";
+const char rcsid_smartport_c[] = "@(#)$KmKId: smartport.c,v 1.52 2022-04-03 13:38:18+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -413,7 +413,8 @@ do_c70d(word32 arg0)
 			printf("Performing a reset on unit %d\n", unit);
 			break;
 		default:
-			halt_printf("control code: %02x unknown!\n", ctl_code);
+			halt_printf("control code: %02x ptr:%06x unknown!\n",
+							ctl_code, ctl_ptr);
 		}
 		// printf("CONTROL, ctl_code:%02x\n", ctl_code);
 

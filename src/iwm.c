@@ -1,8 +1,8 @@
-const char rcsid_iwm_c[] = "@(#)$KmKId: iwm.c,v 1.165 2022-01-23 18:38:27+00 kentd Exp $";
+const char rcsid_iwm_c[] = "@(#)$KmKId: iwm.c,v 1.196 2023-03-10 03:34:07+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2022 by Kent Dickey		*/
+/*			Copyright 2002-2023 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -26,6 +26,13 @@ const char rcsid_iwm_c[] = "@(#)$KmKId: iwm.c,v 1.165 2022-01-23 18:38:27+00 ken
 // dsk->fd >= 0 indicates a valid disk.  dsk->raw_data != 0 indicates this is
 //  a compressed disk mounted read-only, and ignore dsk->fd (which will always
 //  be 0, to indicate a valid disk).
+// fbit_pos encodes head position on track in increments of 1/64 usecs for 5.25"
+//  { byte_offset, bit[2:0], sub_bit[8:0] }, so fbit_pos >> 12 gives byte offset
+// fbit_mult turns dcycs into fbit_pos, where (512/fbit_mult) = the bit cell
+//  5.25" bit cell of 4usec has fbit_mult=128; cell of 3.75usec has mult=136.
+// For 3.5", fbit_mult=256 indicates a 2usec bit cell.
+// https://support.apple.com/kb/TA39910?locale=en_US&viewlocale=en_US gives
+//  the RPMs of 800KB disks
 
 #include "defc.h"
 
@@ -70,12 +77,13 @@ int	g_track_bytes_35[] = {
 	0x200*8
 };
 
-int	g_track_nibs_35[] = {
-	816*12,
-	816*11,
-	816*10,
-	816*9,
-	816*8
+int	g_track_bits_35[] = {
+	// Do 1.001 * (1020484 * (60/rpm)) / 2 usec = bits per track
+	77779,			// Trks 0-15: 394 rpm
+	71433,			// Trks 16-31: 429 rpm
+	64926,			// Trks 32-47: 472 rpm
+	58371,			// Trks 48-63: 525 rpm
+	51940			// Trks 64-79: 590 rpm
 };
 
 int	g_fast_disk_emul_en = 1;
@@ -90,15 +98,13 @@ int	g_from_disk_byte_valid = 0;
 
 Iwm	g_iwm;
 
-extern int g_c031_disk35;
-
 int	g_iwm_motor_on = 0;
 // g_iwm_motor_on is set when drive turned on, 0 when $c0e8 is touched.
 //  Use this to throttle speed to 1MHz.
 // g_iwm.motor_on=1 means drive is spinning.  g_iwm.motor_off=1 means we're
 //  in the 1-second countdown of g_iwm.motor_off_vbl_count.
 
-int	g_check_nibblization = 0;
+int	g_check_nibblization = 1;
 
 void
 iwm_init_drive(Disk *dsk, int smartport, int drive, int disk_525)
@@ -121,16 +127,19 @@ iwm_init_drive(Disk *dsk, int smartport, int drive, int disk_525)
 	dsk->smartport = smartport;
 	dsk->disk_525 = disk_525;
 	dsk->drive = drive;
-	dsk->cur_qtr_track = 0;
+	dsk->cur_frac_track = 0;
 	dsk->image_type = 0;
 	dsk->vol_num = 254;
 	dsk->write_prot = 1;
 	dsk->write_through_to_unix = 0;
 	dsk->disk_dirty = 0;
 	dsk->just_ejected = 0;
-	dsk->last_phase = 0;
-	dsk->cur_qbit_pos = 0;
-	dsk->cur_track_qbits = 0;
+	dsk->last_phases = 0;
+	dsk->cur_fbit_pos = 0;
+	dsk->fbit_mult = 128;			// 128 for 5.25", 256 for 3.5"
+	dsk->cur_track_bits = 0;
+	dsk->raw_bptr_malloc = 0;
+	dsk->cur_trk_ptr = 0;
 	dsk->num_tracks = 0;
 	dsk->trks = 0;
 	if(!smartport) {
@@ -142,9 +151,10 @@ iwm_init_drive(Disk *dsk, int smartport, int drive, int disk_525)
 		for(i = 0; i < num_tracks; i++) {
 			dsk->trks[i].raw_bptr = 0;
 			dsk->trks[i].sync_ptr = 0;
-			dsk->trks[i].track_qbits = 0;
 			dsk->trks[i].dunix_pos = 0;
 			dsk->trks[i].unix_len = 0;
+			dsk->trks[i].dirty = 0;
+			dsk->trks[i].track_bits = 0;
 		}
 		// num_tracks != 0 indicates a valid disk, do not set it here
 	}
@@ -194,56 +204,65 @@ iwm_init()
 void
 iwm_reset()
 {
-	g_iwm.q6 = 0;
-	g_iwm.q7 = 0;
-	g_iwm.motor_on = 0;
-	g_iwm.motor_on35 = 0;
-	g_iwm.motor_off = 0;
+	int	i;
+
+	g_iwm.state = 0;
 	g_iwm.motor_off_vbl_count = 0;
-	g_iwm.step_direction35 = 0;
-	g_iwm.head35 = 0;
-	g_iwm.last_sel35 = 0;
-	g_iwm.drive_select = 0;
-	g_iwm.iwm_mode = 0;
-	g_iwm.enable2 = 0;
-	g_iwm.reset = 0;
-	g_iwm.iwm_phase[0] = 0;
-	g_iwm.iwm_phase[1] = 0;
-	g_iwm.iwm_phase[2] = 0;
-	g_iwm.iwm_phase[3] = 0;
+	g_iwm.forced_sync_bit = 32*12345;
+	g_iwm.last_rd_bit = 32*12345;
 	g_iwm.write_val = 0;
-	g_iwm.qbit_wr_start = 32*12345;
-	g_iwm.qbit_wr_last = 0;
-	g_iwm.forced_sync_qbit = 0;
+	for(i = 0; i < 5; i++) {
+		g_iwm.wr_last_bit[i] = 0;
+		g_iwm.wr_qtr_track[i] = 0;
+		g_iwm.wr_num_bits[i] = 0;
+		g_iwm.wr_prior_num_bits[i] = 0;
+		g_iwm.wr_delta[i] = 0;
+	}
+	g_iwm.num_active_writes = 0;
 
 	g_iwm_motor_on = 0;
-	g_c031_disk35 = 0;
+}
+
+word32
+iwm_get_default_track_bits(Disk *dsk, word32 qtr_trk)
+{
+	word32	track_bits, extra;
+
+	extra = (qtr_trk + (qtr_trk >> 5)) & 0xf;
+		// up to 15 extra bits
+	if(dsk->disk_525) {
+		track_bits = NIB_LEN_525 * 8;		// 0x18f2 = 51088
+	} else {
+		track_bits = g_track_bits_35[qtr_trk >> 5];
+	}
+	return track_bits + extra;
 }
 
 void
 draw_iwm_status(int line, char *buf)
 {
 	char	*flag[2][2];
-	int	apple35_sel;
+	int	apple35_sel, drive_select;
 
 	flag[0][0] = " ";
 	flag[0][1] = " ";
 	flag[1][0] = " ";
 	flag[1][1] = " ";
 
-	apple35_sel = (g_c031_disk35 >> 6) & 1;
-	if(g_iwm.motor_on) {
-		flag[apple35_sel][g_iwm.drive_select] = "*";
+	apple35_sel = (g_iwm.state >> IWM_BIT_C031_APPLE35SEL) & 1;
+	drive_select = (g_iwm.state >> IWM_BIT_DRIVE_SEL) & 1;
+	if(g_iwm.state & IWM_STATE_MOTOR_ON) {
+		flag[apple35_sel][drive_select] = "*";
 	}
 
 	sprintf(buf, "s6d1:%2d%s   s6d2:%2d%s   s5d1:%2d/%d%s   "
 		"s5d2:%2d/%d%s fast_disk_emul:%d,%d c036:%02x",
-		g_iwm.drive525[0].cur_qtr_track >> 2, flag[0][0],
-		g_iwm.drive525[1].cur_qtr_track >> 2, flag[0][1],
-		g_iwm.drive35[0].cur_qtr_track >> 1,
-		g_iwm.drive35[0].cur_qtr_track & 1, flag[1][0],
-		g_iwm.drive35[1].cur_qtr_track >> 1,
-		g_iwm.drive35[1].cur_qtr_track & 1, flag[1][1],
+		g_iwm.drive525[0].cur_frac_track >> 18, flag[0][0],
+		g_iwm.drive525[1].cur_frac_track >> 18, flag[0][1],
+		g_iwm.drive35[0].cur_frac_track >> 17,
+		(g_iwm.drive35[0].cur_frac_track >> 16) & 1, flag[1][0],
+		g_iwm.drive35[1].cur_frac_track >> 17,
+		(g_iwm.drive35[1].cur_frac_track >> 16) & 1, flag[1][1],
 		g_fast_disk_emul, g_slow_525_emul_wr, g_c036_val_speed);
 
 	video_update_status_line(line, buf);
@@ -253,14 +272,8 @@ void
 iwm_flush_cur_disk()
 {
 	Disk	*dsk;
-	int	drive;
 
-	drive = g_iwm.drive_select;
-	if(g_c031_disk35 & 0x40) {
-		dsk = &(g_iwm.drive35[drive]);
-	} else {
-		dsk = &(g_iwm.drive525[drive]);
-	}
+	dsk = iwm_get_dsk(g_iwm.state);
 	iwm_flush_disk_to_unix(dsk);
 }
 
@@ -269,6 +282,7 @@ iwm_flush_disk_to_unix(Disk *dsk)
 {
 	byte	buffer[0x4000];
 	int	ret;
+	int	i;
 
 	if((dsk->disk_dirty == 0) || (dsk->write_through_to_unix == 0)) {
 		return;
@@ -278,17 +292,19 @@ iwm_flush_disk_to_unix(Disk *dsk)
 	}
 
 	printf("Writing disk %s to Unix\n", dsk->name_ptr);
-	dsk->disk_dirty = 0;
 
-	ret = disk_track_to_unix(dsk, &(buffer[0]));
+	for(i = 0; i < 160; i++) {
+		ret = iwm_track_to_unix(dsk, i, &(buffer[0]));
 
-	if((ret != 1) && (ret != 0)) {
-		printf("iwm_flush_disk_to_unix ret: %d, cannot write "
-				"image to unix\n", ret);
-		halt_printf("Adjusting image not to write through!\n");
-		dsk->write_through_to_unix = 0;
-		return;
+		if((ret != 1) && (ret != 0)) {
+			printf("iwm_flush_disk_to_unix ret: %d, cannot write "
+				"image to unix, qtrk:%04x\n", ret, i);
+			halt_printf("Converting to WOZ format!\n");
+			woz_reparse_woz(dsk);
+			return;		// Don't clear dsk->disk_dirty
+		}
 	}
+	dsk->disk_dirty = 0;
 
 }
 
@@ -299,14 +315,19 @@ int	g_iwm_dynapro_last_vbl_count = 0;
 void
 iwm_vbl_update()
 {
+	word32	state;
 	int	i;
 
-	if(g_iwm.motor_on && g_iwm.motor_off) {
+	state = g_iwm.state;
+	if((state & IWM_STATE_MOTOR_ON) && (state & IWM_STATE_MOTOR_OFF)) {
 		if(g_iwm.motor_off_vbl_count <= g_vbl_count) {
 			printf("Disk timer expired, drive off: %08x\n",
 				g_vbl_count);
-			g_iwm.motor_on = 0;
-			g_iwm.motor_off = 0;
+			iwm_flush_cur_disk();
+			g_iwm.state = state &
+				(~(IWM_STATE_MOTOR_ON | IWM_STATE_MOTOR_OFF));
+			g_iwm.drive525[0].dcycs_last_phases = 0;
+			g_iwm.drive525[1].dcycs_last_phases = 0;
 		}
 	}
 	if((g_vbl_count - g_iwm_dynapro_last_vbl_count) >= 60) {
@@ -330,32 +351,49 @@ iwm_update_fast_disk_emul(int fast_disk_emul_en)
 }
 
 void
-iwm_show_stats()
+iwm_show_stats(int slot_drive)
 {
-	dbg_printf("IWM stats: q7,q6: %d, %d, reset,en2:%d,%d, mode:%02x\n",
-		g_iwm.q7, g_iwm.q6, g_iwm.reset, g_iwm.enable2, g_iwm.iwm_mode);
-	dbg_printf("motor: %d,%d, motor35:%d drive: %d, c031:%02x "
-		"phs: %d %d %d %d\n",
-		g_iwm.motor_on, g_iwm.motor_off, g_iwm_motor_on,
-		g_iwm.drive_select, g_c031_disk35,
-		g_iwm.iwm_phase[0], g_iwm.iwm_phase[1], g_iwm.iwm_phase[2],
-		g_iwm.iwm_phase[3]);
+	Trk	*trkptr;
+	Disk	*dsk;
+	int	slot, drive;
+	int	i;
+
+	dbg_printf("IWM state: %07x (slot_drive:%d)\n", g_iwm.state,
+								slot_drive);
 	dbg_printf("g_iwm.drive525[0].fd: %d, [1].fd: %d\n",
 		g_iwm.drive525[0].fd, g_iwm.drive525[1].fd);
-	dbg_printf("g_iwm.drive525[0].last_phase: %d, [1].last_phase: %d\n",
-		g_iwm.drive525[0].last_phase, g_iwm.drive525[1].last_phase);
-	dbg_printf("g_iwm.write_val:%02x, qbit_wr_start:%06x, qbit_wr_last:"
-		"%06x, forced_sync_qbit:%06x\n", g_iwm.write_val,
-		g_iwm.qbit_wr_start, g_iwm.qbit_wr_last,
-		g_iwm.forced_sync_qbit);
+	dbg_printf("g_iwm.drive525[0].last_phases: %d, [1].last_phases: %d\n",
+		g_iwm.drive525[0].last_phases, g_iwm.drive525[1].last_phases);
+	dbg_printf("g_iwm.write_val:%02x, wr_num_bits[0]:%d, last_rd_bit:"
+		"%06x, forced_sync_bit:%06x\n", g_iwm.write_val,
+		g_iwm.wr_num_bits[0], g_iwm.last_rd_bit,
+		g_iwm.forced_sync_bit);
+	if(slot_drive < 0) {
+		return;
+	}
+	drive = slot_drive & 1;
+	slot = 5 + ((slot_drive >> 1) & 1);
+	dsk = iwm_get_dsk_from_slot_drive(slot, drive);
+	if(dsk->trks == 0) {
+		return;
+	}
+	for(i = 0; i < 160; i++) {
+		trkptr = &(dsk->trks[i]);
+		printf("Qtrk:%02x: bits:%05x dunix_pos:%08llx unix_len:%06x, "
+			"d:%d %p,%p\n", i, trkptr->track_bits,
+			trkptr->dunix_pos, trkptr->unix_len, trkptr->dirty,
+			trkptr->raw_bptr, trkptr->sync_ptr);
+	}
 }
 
 Disk *
-iwm_get_dsk(int drive)
+iwm_get_dsk(word32 state)
 {
 	Disk	*dsk;
+	int	drive;
 
-	if(g_c031_disk35 & 0x40) {
+	drive = (state >> IWM_BIT_DRIVE_SEL) & 1;
+	if(state & IWM_STATE_C031_APPLE35SEL) {
 		dsk = &(g_iwm.drive35[drive]);
 	} else {
 		dsk = &(g_iwm.drive525[drive]);
@@ -368,107 +406,121 @@ Disk *
 iwm_touch_switches(int loc, double dcycs)
 {
 	Disk	*dsk;
-	word32	track_qbits, qbit_pos;
-	int	phase, on, drive, cycs_passed;
+	dword64	dadd;
+	word32	track_bits, fbit_pos, forced_sync_bit, mask, mask_on, state;
+	int	phase, on, cycs_passed, motor_on;
 
-	if(g_iwm.reset) {
-		iwm_printf("IWM under reset: %d, enable2: %d\n", g_iwm.reset,
-			g_iwm.enable2);
+	if(g_iwm.state & IWM_STATE_RESET) {
+		iwm_printf("IWM under reset: %06x\n", g_iwm.state);
 	}
 
-	drive = g_iwm.drive_select;
-	dsk = iwm_get_dsk(drive);
+	dsk = iwm_get_dsk(g_iwm.state);
 
-	track_qbits = dsk->cur_track_qbits;
-	qbit_pos = track_qbits * 4;
-	if(g_iwm.motor_on) {
+	track_bits = dsk->cur_track_bits;
+	fbit_pos = track_bits * 4096;		// Set to an illegal value
+	motor_on = g_iwm.state & IWM_STATE_MOTOR_ON;
+	if(motor_on) {
 		cycs_passed = (long)(dcycs - dsk->dcycs_last_read);
 		dsk->dcycs_last_read = dcycs;
 
-		if(g_iwm.iwm_mode & 8) {		// 2-usec bit times
-			cycs_passed = cycs_passed << 1;
-		}
-		// track_qbits can be 0, indicating no valid data
-		if(track_qbits) {
-			if(cycs_passed >= (int)track_qbits) {
-				cycs_passed = cycs_passed % track_qbits;
+		// track_bits can be 0, indicating no valid data
+		dadd = cycs_passed * dsk->fbit_mult;
+		if(track_bits) {
+			if(dadd >= (track_bits * 512)) {
+				dadd = dadd % (track_bits * 512);
 			}
 		}
-		qbit_pos = dsk->cur_qbit_pos + cycs_passed;
-		if(qbit_pos >= track_qbits) {
-			qbit_pos -= track_qbits;
+		fbit_pos = dsk->cur_fbit_pos + dadd;
+		if(fbit_pos >= (track_bits * 512)) {
+			fbit_pos -= (track_bits * 512);
 		}
-		if(g_slow_525_emul_wr || g_iwm.q7 || !g_fast_disk_emul ||
-								!track_qbits) {
-			dsk->cur_qbit_pos = qbit_pos;
+		if(g_slow_525_emul_wr || (g_iwm.state & IWM_STATE_Q7) ||
+					!g_fast_disk_emul || !track_bits) {
+			dsk->cur_fbit_pos = fbit_pos;
 		} else {
-			qbit_pos = 4*track_qbits;
+			fbit_pos = track_bits << 12;	// out of range value
 		}
+#if 0
+		printf("dsk->cur_fbit:%08x, fbit_pos:%08x\n",
+					dsk->cur_fbit_pos, fbit_pos);
+#endif
 	}
 
-	dbg_log_info(dcycs, dsk->cur_qbit_pos * 8,
-		((loc & 0xff) << 24) | (drive << 23) |
-		(g_iwm.motor_on << 22) | (g_iwm.motor_off << 21) |
-		(g_iwm_motor_on << 20) | ((dsk->cur_qtr_track & 0x1ff) << 8) |
-		(g_c031_disk35 & 0xc0) |
-		(g_iwm.q7 << 1) | g_iwm.q6, 0xe0);		// t:e0
+	dbg_log_info(dcycs, dsk->cur_fbit_pos,
+		((loc & 0xff) << 24) | g_iwm.state,
+		((dsk->cur_frac_track + 0x8000) & 0x1ff0000) | 0xe0);
 
 	if(loc < 0) {
-		// Not a real access, just a way to update qbit_pos
+		// Not a real access, just a way to update fbit_pos
 		return dsk;
+	}
+
+	if(dsk->dcycs_last_phases) {
+		iwm525_update_head(dsk, dcycs);
 	}
 
 	on = loc & 1;
 	phase = loc >> 1;
+	state = g_iwm.state;
 	if(loc < 8) {
 		/* phase adjustments.  See if motor is on */
 
-		g_iwm.iwm_phase[phase] = on;
-		iwm_printf("Iwm phase %d=%d, all phases: %d %d %d %d (%f)\n",
-			phase, on, g_iwm.iwm_phase[0], g_iwm.iwm_phase[1],
-			g_iwm.iwm_phase[2], g_iwm.iwm_phase[3], dcycs);
+		mask = (1 << (phase & 3)) << IWM_BIT_PHASES;
+		mask_on = (on << (phase & 3)) << IWM_BIT_PHASES;
+		state = (state & (~mask)) | mask_on;
+		g_iwm.state = state;
+		iwm_printf("Iwm phase %d=%d, all phases: %06x (%f)\n",
+			phase, on, state, dcycs);
 
-		if(g_iwm.motor_on) {
-			if(g_c031_disk35 & 0x40) {
-				if(phase == 3 && on) {
+		if(state & IWM_STATE_MOTOR_ON) {
+			if(state & IWM_STATE_C031_APPLE35SEL) {
+				if((phase == 3) && on) {
 					iwm_do_action35(dcycs);
 				}
-			} else if(on) {
-				/* Move apple525 head */
-				iwm525_phase_change(drive, phase, dcycs);
+			} else {
+				// Move apple525 head
+				iwm525_update_phases(dsk, dcycs);
 			}
 		}
+		state = g_iwm.state;
 		/* See if enable or reset is asserted */
-		if(g_iwm.iwm_phase[0] && g_iwm.iwm_phase[2]) {
-			g_iwm.reset = 1;
+		if(((state >> IWM_BIT_PHASES) & 5) == 5) {	// Ph 0, 2 set
+			state |= IWM_STATE_RESET;
 			iwm_printf("IWM reset active\n");
 		} else {
-			g_iwm.reset = 0;
+			state &= (~IWM_STATE_RESET);
 		}
-		if(g_iwm.iwm_phase[1] && g_iwm.iwm_phase[3]) {
-			g_iwm.enable2 = 1;
+		if(((state >> IWM_BIT_PHASES) & 0xa) == 0xa) {	// Ph 1, 3 set
+			state |= IWM_STATE_ENABLE2;
 			iwm_printf("IWM ENABLE2 active\n");
 		} else {
-			g_iwm.enable2 = 0;
+			state &= (~IWM_STATE_ENABLE2);
 		}
+		g_iwm.state = state;
 	} else {
 		/* loc >= 8 */
 		switch(loc) {
 		case 0x8:
 			iwm_printf("Turning IWM motor off!\n");
-			if(g_iwm.iwm_mode & 0x04) {
+			if(g_iwm.state & 0x04) {		// iwm MODE
 				/* Turn off immediately */
-				g_iwm.motor_off = 0;
-				g_iwm.motor_on = 0;
+				state &= (~(IWM_STATE_MOTOR_ON |
+							IWM_STATE_MOTOR_OFF));
 			} else {
 				/* 1 second delay */
-				if(g_iwm.motor_on && !g_iwm.motor_off) {
-					g_iwm.motor_off = 1;
+				if((state & IWM_STATE_MOTOR_ON) &&
+						!(state & IWM_STATE_MOTOR_OFF)){
+					state |= IWM_STATE_MOTOR_OFF;
 					g_iwm.motor_off_vbl_count = g_vbl_count
 									+ 60;
 				}
 			}
+			g_iwm.state = state;
 
+#if 0
+			printf("IWM motor off, g_iwm_motor_on:%d, slow:%d\n",
+				g_iwm_motor_on, g_slow_525_emul_wr);
+#endif
 			if(g_iwm_motor_on || g_slow_525_emul_wr) {
 				/* recalc current speed */
 				g_fast_disk_emul = g_fast_disk_emul_en;
@@ -481,9 +533,11 @@ iwm_touch_switches(int loc, double dcycs)
 			break;
 		case 0x9:
 			iwm_printf("Turning IWM motor on!\n");
-			g_iwm.motor_on = 1;
-			g_iwm.motor_off = 0;
-			g_iwm.last_sel35 = (g_c031_disk35 >> 6) & 1;
+			state |= IWM_STATE_MOTOR_ON;
+			state &= (~IWM_STATE_MOTOR_OFF);
+			state &= (~IWM_STATE_LAST_SEL35);
+			state |= ((state >> 6) & 1) << IWM_BIT_LAST_SEL35;
+			g_iwm.state = state;
 			dsk->dcycs_last_read = dcycs;
 
 			if(g_iwm_motor_on == 0) {
@@ -498,40 +552,60 @@ iwm_touch_switches(int loc, double dcycs)
 			break;
 		case 0xa:
 		case 0xb:
-			if(g_iwm.drive_select != on) {
+			if(((state >> IWM_BIT_DRIVE_SEL) & 1) != on) {
 				iwm_flush_cur_disk();
 			}
-			dsk = iwm_get_dsk(on);
+			state &= (~IWM_STATE_DRIVE_SEL);
+			state |= (on << IWM_BIT_DRIVE_SEL);
+			g_iwm.state = state;
+			dsk = iwm_get_dsk(state);
 			if(dsk->wozinfo_ptr && g_iwm_motor_on) {
 				g_fast_disk_emul = 0;
 			} else {
 				g_fast_disk_emul = g_fast_disk_emul_en;
 			}
-			g_iwm.drive_select = on;
 			break;
 		case 0xc:
 		case 0xd:
-			if(g_iwm.q6 && !on && g_iwm.motor_on &&
-							!g_iwm.enable2) {
+			mask = IWM_STATE_Q6 | IWM_STATE_Q7 |
+					IWM_STATE_MOTOR_ON | IWM_STATE_ENABLE2;
+			mask_on = IWM_STATE_Q6 | IWM_STATE_MOTOR_ON;
+			if(((state & mask) == mask_on) && !on) {
+				// q6 on, q7 off, !on, motor_on, !enable2
 				// Switched from $c08d to $c08c, resync now
-				g_iwm.forced_sync_qbit = qbit_pos;
-				dbg_log_info(dcycs, qbit_pos * 8, 0, 0xed);
+				// If latch mode, back up one more bit
+				//  (for The School Speller - Tools.woz)
+				forced_sync_bit = iwm_calc_bit_sum(
+					fbit_pos >> 9, 0 - (state & 1),
+					track_bits);
+				g_iwm.forced_sync_bit = forced_sync_bit;
+				g_iwm.last_rd_bit = forced_sync_bit;
+				dbg_log_info(dcycs, forced_sync_bit*2, 0,
+								0x500ec);
 			}
-			g_iwm.q6 = on;
+			state &= (~IWM_STATE_Q6);
+			state |= (on << IWM_BIT_Q6);
+			g_iwm.state = state;
 			break;
 		case 0xe:
 		case 0xf:
-			if(g_iwm.q7 && !on && g_iwm.motor_on &&
-							!g_iwm.enable2) {
-#if 0
-				printf("q6:%d q7:%d and new q7:%d, write_end\n",
-					g_iwm.q6, g_iwm.q7, on);
+			mask = IWM_STATE_Q7 | IWM_STATE_MOTOR_ON |
+							IWM_STATE_ENABLE2;
+			mask_on = IWM_STATE_Q7 | IWM_STATE_MOTOR_ON;
+			if(((state & mask) == mask_on) && !on) {
+				// q7, !on, motor_on, !enable2
+#if 1
+				printf("state:%04x and new q7:%d, write_end\n",
+					state, on);
 #endif
+				dbg_log_info(dcycs, state, mask, 0xed);
 				iwm_write_end(dsk, dcycs);
 				// printf("write end complete, the track:\n");
 				// iwm_check_nibblization(dcycs);
 			}
-			g_iwm.q7 = on;
+			state &= (~IWM_STATE_Q7);
+			state |= (on << IWM_BIT_Q7);
+			g_iwm.state = state;
 			break;
 		default:
 			printf("iwm_touch_switches: loc: %02x unknown!\n", loc);
@@ -539,8 +613,8 @@ iwm_touch_switches(int loc, double dcycs)
 		}
 	}
 
-	if(!g_iwm.q7) {
-		g_iwm.qbit_wr_start = 32 * 12345;
+	if(!(state & IWM_STATE_Q7)) {
+		g_iwm.num_active_writes = 0;
 		if(g_slow_525_emul_wr) {
 			g_slow_525_emul_wr = 0;
 			engine_recalc_events();
@@ -551,37 +625,47 @@ iwm_touch_switches(int loc, double dcycs)
 }
 
 void
-iwm_move_to_track(Disk *dsk, int new_track)
+iwm_move_to_ftrack(Disk *dsk, word32 new_frac_track, int delta, double dcycs)
 {
-	word32	qbit_pos, track_qbits;
-	int	disk_525, drive;
+	Trk	*trkptr;
+	word32	track_bits, cur_frac_track;
+	int	disk_525, drive, new_track, cur_track, max_track;
 
 	if(dsk->smartport) {
 		return;
 	}
+	cur_frac_track = dsk->cur_frac_track;
+	if(delta != 0) {
+		// 3.5" move, clear out lower fractional track bits
+		new_frac_track = new_frac_track & (-0x10000);
+		if((delta < 0) && (new_frac_track < (word32)(-delta))) {
+			// Moving down past track 0...stop, but preserve side
+			new_frac_track = cur_frac_track & 0x10000;
+			delta = 0;
+		}
+	}
+	new_frac_track = new_frac_track + delta;
+
 	disk_525 = dsk->disk_525;
 #if 0
-	printf("iwm_move_to_track: %03x, num_tracks:%03x (cur:%04x)\n",
-		new_track, dsk->num_tracks, dsk->cur_qtr_track);
+	printf("iwm_move_to_track: %07x, num_tracks:%03x (cur:%07x) %f\n",
+		new_frac_track, dsk->num_tracks, dsk->cur_frac_track, dcycs);
 #endif
 
-	if(new_track < 0) {
-		new_track = 0;
+	max_track = 36*4 - 1;			// Go to track 35.75 on 5.25"
+	if(dsk->num_tracks >= (max_track + 1)) {
+		max_track = dsk->num_tracks - 1;
 	}
-	if(new_track >= dsk->num_tracks) {
-		if(disk_525) {
-			new_track = dsk->num_tracks - 4;
-		} else {
-			new_track = dsk->num_tracks - 2 + g_iwm.head35;
-		}
-
-		if(new_track <= 0) {
-			new_track = 0;
-		}
+	if(max_track >= 159) {
+		max_track = 159;		// Limit to 159 always
 	}
+	if(new_frac_track > (word32)(max_track << 16)) {
+		new_frac_track = max_track << 16;
+	}
+	new_track = (new_frac_track + 0x8000) >> 16;
 
-	if((dsk->cur_qtr_track != new_track) || (dsk->cur_trk_ptr == 0)) {
-		iwm_flush_disk_to_unix(dsk);
+	cur_track = (cur_frac_track + 0x8000) >> 16;
+	if((cur_track != new_track) || (dsk->cur_trk_ptr == 0)) {
 		drive = dsk->drive + 1;
 		if(1) {
 			// Don't do this printf
@@ -593,63 +677,191 @@ iwm_move_to_track(Disk *dsk, int new_track)
 				new_track >> 1, new_track & 1);
 		}
 
-		dsk->cur_qtr_track = new_track;
-		dsk->cur_trk_ptr = &(dsk->trks[new_track]);
-		track_qbits = dsk->cur_trk_ptr->track_qbits;
-		dsk->cur_track_qbits = track_qbits;
-		qbit_pos = dsk->cur_qbit_pos & -4;
-		if(track_qbits) {
-			// Moving to a valid track.  Ensure qbit_pos in range
-			qbit_pos = qbit_pos % track_qbits;
+		trkptr = &(dsk->trks[new_track]);
+		track_bits = trkptr->track_bits;
+		if((track_bits == 0) && disk_525) {
+			// Use an adjacent .25 track if it is valid
+			if((new_track > 0) && (trkptr[-1].track_bits != 0)) {
+				new_track--;
+				// printf("Moved dn to qtrk:%04x\n", new_track);
+			} else if((new_track < max_track) &&
+						(trkptr[1].track_bits != 0)) {
+				new_track++;
+				// printf("Moved up to qtrk:%04x\n", new_track);
+			}
 		}
-		dsk->cur_qbit_pos = qbit_pos;
+		iwm_flush_disk_to_unix(dsk);
+		iwm_move_to_qtr_track(dsk, new_track);
+		if(dcycs != 0.0) {
+			dbg_log_info(dcycs, cur_frac_track, new_frac_track,
+				(g_iwm.state << 16) | 0x00f000e1);
+#if 0
+			printf("Just moved from track %08x to %08x %f\n",
+				cur_frac_track, new_frac_track, dcycs);
+#endif
+		}
 	}
+	dsk->cur_frac_track = new_frac_track;
 }
 
 void
-iwm525_phase_change(int drive, int phase, double dcycs)
+iwm_move_to_qtr_track(Disk *dsk, word32 qtr_track)
 {
-	Disk	*dsk;
-	int	qtr_track, last_phase, phase_up, phase_down, delta;
+	Trk	*trkptr;
+	word32	track_bits, fbit_pos;
 
-	phase_up = (phase - 1) & 3;
-	phase_down = (phase + 1) & 3;
+	trkptr = &(dsk->trks[qtr_track]);
+	track_bits = trkptr->track_bits;
 
-	dsk = &(g_iwm.drive525[drive]);
-	last_phase = dsk->last_phase;
+	dsk->cur_trk_ptr = trkptr;
+	dsk->cur_track_bits = track_bits;
+	fbit_pos = dsk->cur_fbit_pos;
+	if(track_bits) {
+		// Moving to a valid track.  Ensure fbit_pos in range
+		fbit_pos = fbit_pos % (track_bits * 512);
+	}
+	dsk->cur_fbit_pos = fbit_pos;
+}
 
-	qtr_track = dsk->cur_qtr_track;
+void
+iwm525_update_phases(Disk *dsk, double dcycs)
+{
+	word32	ign_mask;
+	int	last_phases, new_phases, my_phase;
 
-	delta = 0;
-	if(last_phase == phase_up) {
-		delta = 2;
-		last_phase = phase;
-	} else if(last_phase == phase_down) {
-		delta = -2;
-		last_phase = phase;
+	// Decide if dsk->last_phases needs to change.
+	last_phases = dsk->last_phases;
+	new_phases = (g_iwm.state >> IWM_BIT_PHASES) & 0xf;
+	my_phase = (dsk->cur_frac_track >> 17) & 3;
+	ign_mask = 1 << ((2 + my_phase) & 3);
+	last_phases &= (~ign_mask);
+	new_phases &= (~ign_mask);
+	if(last_phases == new_phases) {
+		// Nothing to do
+		return;
 	}
 
-	if(delta && g_halt_arm_move) {
-		halt_printf("Halt on arm move\n");
-		g_halt_arm_move = 0;
+	// Update last_phases
+	iwm525_update_head(dsk, dcycs);
+
+	dsk->last_phases = new_phases;
+	dsk->dcycs_last_phases = dcycs;
+	dbg_log_info(dcycs, new_phases, dsk->cur_frac_track, 0x100e1);
+}
+
+void
+iwm525_update_head(Disk *dsk, double dcycs)
+{
+	double	diff_dcycs, dinc, dcycs_last_phases;
+	word32	cur_frac_track, frac_track, sum, num, phases, diff;
+	int	new_qtrk, cur_qtrk, my_phase, prev_phase, grind, inc;
+	int	i;
+
+	cur_frac_track = dsk->cur_frac_track;
+	my_phase = (dsk->cur_frac_track >> 17) & 3;
+
+	// If my_phase is 1, then phase 0 being on should decrement the trk
+	//  number, and phase 2 being on should increment the trk number
+	phases = dsk->last_phases & 0xf;	// one bit for each phase
+	phases = (phases << 4) | phases;
+	prev_phase = (my_phase + 4 - 1) & 3;
+	phases = (phases >> prev_phase) & 0xf;
+
+	// Now, phases[0] means decrement trk, phases[1] is where we are,
+	//  phases[2] means increment trk, and phases[3] MIGHT mean increment
+	sum = 0;
+	num = 0;
+	grind = 0;
+	for(i = 0; i < 4; i++) {
+		if(((phases >> i) & 1) == 0) {
+			continue;
+		}
+		frac_track = cur_frac_track & -0x20000;
+		switch(i) {
+		case 0:		// Previous phase is on, decrement trk
+			if(frac_track >= 0x20000) {
+				frac_track -= 0x20000;
+			} else {
+				frac_track = 0;
+			}
+			sum += frac_track;
+			num++;
+			if(cur_frac_track == 0) {
+				grind++;
+			}
+			break;
+		case 1:		// "our" phase, pull to aligned track
+			sum += frac_track;
+			num++;
+			break;
+		case 2:		// Next phase, increment track
+			sum += frac_track + 0x20000;
+			num++;
+			break;
+		case 3:		// Next next phase: might pull
+			// Phase is nominally 2 away...but if cur_frac_track
+			//  is just a little less than a new halftrack,
+			//  (0xxx1ffff), then it may be within a half track
+			//  and we'll let it pull us
+			frac_track += 0x20000;
+			if((frac_track - cur_frac_track) < 0x30000) {
+				sum += frac_track;
+				num++;
+			}
+		}
 	}
-	qtr_track += delta;
-	if(qtr_track < 0) {
-		printf("GRIND...GRIND...GRIND\n");
-		qtr_track = 0;
-		last_phase = 0;
+
+	frac_track = cur_frac_track;
+	dcycs_last_phases = dsk->dcycs_last_phases;
+	dsk->dcycs_last_phases = 0;
+	if(num) {
+		frac_track = sum / num;		// New desired track
+		// Now see if enough time has elapsed that we got to frac_track
+		diff_dcycs = dcycs - dcycs_last_phases;
+		dinc = 0x20000 / 1500.0;	// 1.5msec to move one phase
+		inc = (int)dinc;
+		if(cur_frac_track >= frac_track) {
+			diff = cur_frac_track - frac_track;
+			inc = -inc;
+		} else {
+			diff = frac_track - cur_frac_track;
+		}
+		if(g_fast_disk_emul) {
+			diff = 0;		// Always moved enough
+		}
+		// Add inc*diff_dcycs to cur_frac_track, unless we already reach
+		if(diff > (dinc * diff_dcycs)) {
+			// Enough time has NOT elapsed, so calc where head is
+			// Update frac_track to be cur_frac_track + inc * dcycs
+			frac_track = cur_frac_track + (inc * diff_dcycs);
+			dsk->dcycs_last_phases = dcycs;
+		}
 	}
 
-	dbg_log_info(dcycs, (last_phase << 8) | (phase << 4) | (delta & 0xf),
-							qtr_track, 0xe1);
-	iwm_move_to_track(dsk, qtr_track);
+	new_qtrk = (frac_track + 0x8000) >> 16;
+	cur_qtrk = (cur_frac_track + 0x8000) >> 16;
+	if(new_qtrk != cur_qtrk) {
+		if(g_halt_arm_move) {
+			halt_printf("Halt on arm move\n");
+			g_halt_arm_move = 0;
+		}
+		if(grind) {
+			printf("GRIND GRIND GRIND\n");
+		}
 
-	dsk->last_phase = last_phase;
+		dbg_log_info(dcycs, frac_track, dsk->cur_frac_track,
+							(phases << 16) | 0xe1);
+		iwm_move_to_ftrack(dsk, frac_track, 0, dcycs);
 
-	iwm_printf("Moving drive to qtr track: %04x (trk:%d.%02d), %d, %d, %d, "
-		"%d %d %d %d\n", qtr_track, qtr_track >> 2, 25*(qtr_track & 3),
-		phase, delta, last_phase, g_iwm.iwm_phase[0],
-		g_iwm.iwm_phase[1], g_iwm.iwm_phase[2], g_iwm.iwm_phase[3]);
+		if(new_qtrk > 2) {
+#if 0
+			printf("Moving to qtr track: %04x (trk:%d.%02d), %d, "
+				"%02x, %08x\n", new_qtrk, new_qtrk >> 2,
+				25*(new_qtrk & 3), my_phase, phases,
+				g_iwm.state);
+#endif
+		}
+	}
 
 #if 0
 	/* sanity check stepping algorithm */
@@ -666,47 +878,48 @@ int
 iwm_read_status35(double dcycs)
 {
 	Disk	*dsk;
-	int	drive, state, tmp;
+	word32	state;
+	int	drive, stat35, tmp;
 
-	drive = g_iwm.drive_select;
+	// This is usually done by STAT35 at ff/5fa4
+	//  This code is called on the rising edge of Q6 asserted
+	state = g_iwm.state;
+	drive = (state >> IWM_BIT_DRIVE_SEL) & 1;
 	dsk = &(g_iwm.drive35[drive]);
 
-	if(g_iwm.motor_on) {
-		/* Read status */
-		state = (g_iwm.iwm_phase[1] << 3) + (g_iwm.iwm_phase[0] << 2) +
-			((g_c031_disk35 >> 6) & 2) + g_iwm.iwm_phase[2];
+	if(state & IWM_STATE_MOTOR_ON) {
+		/* Read status: ph[1], ph[0], disk35, ph[2] */
+		stat35 = (((state >> IWM_BIT_PHASES) & 3) << 2) |
+			((state >> 6) & 2) |
+			(((state >> IWM_BIT_PHASES) >> 2) & 1);
 
 		iwm_printf("Iwm status read state: %02x\n", state);
-		dbg_log_info(dcycs, 0, state, 0xe2);
+		dbg_log_info(dcycs, state, stat35, 0xe7);
 
-		switch(state) {
+		switch(stat35) {
 		case 0x00:	/* step direction */
-			return g_iwm.step_direction35;
+			return (state >> IWM_BIT_STEP_DIRECTION35) & 1;
 			break;
 		case 0x01:	/* lower head activate */
 			/* also return instantaneous data from head */
-			if(g_iwm.head35) {
-				iwm_move_to_track(dsk,
-						(dsk->cur_qtr_track & (-2)));
-			}
-			g_iwm.head35 = 0;
-			return (dsk->cur_qbit_pos >> 6) & 1;
+			iwm_move_to_ftrack(dsk,
+					(dsk->cur_frac_track & (-0x20000)), 0,
+					dcycs);
+			return (dsk->cur_fbit_pos >> 15) & 1;
 			break;
 		case 0x02:	/* disk in place */
 			/* 1 = no disk, 0 = disk */
 			iwm_printf("read disk in place, num_tracks: %d\n",
 				dsk->num_tracks);
 			tmp = (dsk->num_tracks <= 0);
-			dbg_log_info(dcycs, 0, dsk->num_tracks, 0xe3);
+			dbg_log_info(dcycs, 0, dsk->num_tracks, 0x100e7);
 			return tmp;
 			break;
 		case 0x03:	/* upper head activate */
 			/* also return instantaneous data from head */
-			if(!g_iwm.head35) {
-				iwm_move_to_track(dsk, dsk->cur_qtr_track | 1);
-			}
-			g_iwm.head35 = 1;
-			return (dsk->cur_qbit_pos >> 6) & 1;
+			iwm_move_to_ftrack(dsk, dsk->cur_frac_track | 0x10000,
+					0, dcycs);
+			return (dsk->cur_fbit_pos >> 15) & 1;
 			break;
 		case 0x04:	/* disk is stepping? */
 			/* 1 = not stepping, 0 = stepping */
@@ -722,7 +935,7 @@ iwm_read_status35(double dcycs)
 			break;
 		case 0x08:	/* motor on */
 			/* 0 = on, 1 = off */
-			return !g_iwm.motor_on35;
+			return !(state & IWM_STATE_MOTOR_ON35);
 			break;
 		case 0x09:	/* number of sides */
 			/* 1 = 2 sides, 0 = 1 side */
@@ -730,13 +943,13 @@ iwm_read_status35(double dcycs)
 			break;
 		case 0x0a:	/* at track 0 */
 			/* 1 = not at track 0, 0 = there */
-			tmp = (dsk->cur_qtr_track != 0);
+			tmp = (dsk->cur_frac_track != 0);
 			iwm_printf("Read at track0_35: %d\n", tmp);
 			return tmp;
 			break;
 		case 0x0b:	/* disk ready??? */
 			/* 0 = ready, 1 = not ready? */
-			tmp = !g_iwm.motor_on35;
+			tmp = !(state & IWM_STATE_MOTOR_ON35);
 			iwm_printf("Read disk ready, ret: %d\n", tmp);
 			return tmp;
 			break;
@@ -750,7 +963,7 @@ iwm_read_status35(double dcycs)
 			return 1;
 		case 0x0e:	/* tachometer */
 			halt_printf("Reading tachometer!\n");
-			return (dsk->cur_qbit_pos & 1);
+			return (dsk->cur_fbit_pos >> 11) & 1;
 			break;
 		case 0x0f:	/* drive installed? */
 			/* 0 = drive exists, 1 = no drive */
@@ -761,7 +974,7 @@ iwm_read_status35(double dcycs)
 			return 0;
 			break;
 		default:
-			halt_printf("Read 3.5 status, state: %02x\n", state);
+			halt_printf("Read 3.5 status, stat35: %02x\n", stat35);
 			return 1;
 		}
 	} else {
@@ -774,28 +987,33 @@ void
 iwm_do_action35(double dcycs)
 {
 	Disk	*dsk;
-	int	drive, state;
+	word32	state;
+	int	drive, stat35;
 
-	drive = g_iwm.drive_select;
+	// Actions done by CONT35 routine at ff/5fae
+	//  This code is called on the rising edge of phase[3] asserted
+	state = g_iwm.state;
+	drive = (state >> IWM_BIT_DRIVE_SEL) & 1;
 	dsk = &(g_iwm.drive35[drive]);
 
-	if(dcycs || 1) {
-		state = 0;		// Use dcycs
-	}
-
-	if(g_iwm.motor_on) {
+	if(state & IWM_STATE_MOTOR_ON) {
 		/* Perform action */
-		state = (g_iwm.iwm_phase[1] << 3) + (g_iwm.iwm_phase[0] << 2) +
-			((g_c031_disk35 >> 6) & 2) + g_iwm.iwm_phase[2];
-		switch(state) {
-		case 0x00:	/* Set step direction inward */
-			/* towards higher tracks */
-			g_iwm.step_direction35 = 0;
+		/* stat35: ph[1], ph[0], disk35_ctrl, ph[2] */
+		stat35 = (((state >> IWM_BIT_PHASES) & 3) << 2) |
+			((state >> 6) & 2) |
+			(((state >> IWM_BIT_PHASES) >> 2) & 1);
+		dbg_log_info(dcycs, state, stat35, 0x100e7);
+
+		switch(stat35) {
+		case 0x00:	/* Set step direction inward (higher tracks) */
+			/* towards higher tracks, clear STEP_DIRECTION35 */
+			state &= (~IWM_STATE_STEP_DIRECTION35);
 			iwm_printf("Iwm set step dir35 = 0\n");
 			break;
-		case 0x01:	/* Set step direction outward */
+		case 0x01:	/* Set step direction outward (lower tracks) */
 			/* towards lower tracks */
-			g_iwm.step_direction35 = 1;
+			state |= IWM_STATE_STEP_DIRECTION35;
+			dbg_log_info(dcycs, state, stat35, 0x300e7);
 			iwm_printf("Iwm set step dir35 = 1\n");
 			break;
 		case 0x03:	/* reset disk-switched flag? */
@@ -803,23 +1021,26 @@ iwm_do_action35(double dcycs)
 			dsk->just_ejected = 0;
 			break;
 		case 0x04:	/* step disk */
-			if(g_iwm.step_direction35) {
-				iwm_move_to_track(dsk, dsk->cur_qtr_track - 2);
+			if(state & IWM_STATE_STEP_DIRECTION35) {
+				iwm_move_to_ftrack(dsk, dsk->cur_frac_track,
+					-0x20000, dcycs);
 			} else {
-				iwm_move_to_track(dsk, dsk->cur_qtr_track + 2);
+				iwm_move_to_ftrack(dsk, dsk->cur_frac_track,
+					0x20000, dcycs);
 			}
 			break;
 		case 0x08:	/* turn motor on */
 			iwm_printf("Iwm set motor_on35 = 1\n");
-			g_iwm.motor_on35 = 1;
+			state |= IWM_STATE_MOTOR_ON35;
 			break;
 		case 0x09:	/* turn motor off */
 			iwm_printf("Iwm set motor_on35 = 0\n");
-			g_iwm.motor_on35 = 0;
+			state &= (~IWM_STATE_MOTOR_ON35);
 			break;
 		case 0x0d:	/* eject disk */
 			printf("Action 0x0d, will eject disk\n");
-			iwm_eject_disk(dsk);
+			halt_printf("Action 0x0d, will eject disk\n");
+			// iwm_eject_disk(dsk);  HACK: uncomment me!
 			break;
 		case 0x02:
 		case 0x07:
@@ -833,33 +1054,36 @@ iwm_do_action35(double dcycs)
 		halt_printf("Set 3.5 status with drive off!\n");
 		return;
 	}
+	g_iwm.state = state;
+	dbg_log_info(dcycs, state, stat35, 0x400e7);
 }
 
 int
 read_iwm(int loc, double dcycs)
 {
 	Disk	*dsk;
-	word32	status, qbit_diff, track_qbits;
-	int	on, state, val;
+	word32	status, bit_diff, bit_pos, state;
+	int	on, q7_q6, val;
 
 	loc = loc & 0xf;
 	on = loc & 1;
 
 	dsk = iwm_touch_switches(loc, dcycs);
 
-	state = (g_iwm.q7 << 1) + g_iwm.q6;
+	state = g_iwm.state;
+	q7_q6 = (state >> IWM_BIT_Q6) & 3;
 
 	if(on) {
 		/* odd address, return 0 */
 		return 0;
 	} else {
 		/* even address */
-		switch(state) {
+		switch(q7_q6) {
 		case 0x00:	/* q7 = 0, q6 = 0 */
-			if(g_iwm.enable2) {
+			if(state & IWM_STATE_ENABLE2) {
 				return iwm_read_enable2(dcycs);
 			} else {
-				if(g_iwm.motor_on) {
+				if(state & IWM_STATE_MOTOR_ON) {
 					return iwm_read_data(dsk, dcycs);
 				} else {
 					iwm_printf("read iwm st 0, m off!\n");
@@ -871,36 +1095,34 @@ read_iwm(int loc, double dcycs)
 			break;
 		case 0x01:	/* q7 = 0, q6 = 1 */
 			/* read IWM status reg */
-			if(g_iwm.enable2) {
+			if(state & IWM_STATE_ENABLE2) {
 				iwm_printf("Read status under enable2: 1\n");
 				status = 1;
 			} else {
-				if(g_c031_disk35 & 0x40) {
+				if(state & IWM_STATE_C031_APPLE35SEL) {
 					status = iwm_read_status35(dcycs);
 				} else {
 					status = dsk->write_prot;
 				}
 			}
 
-			val = ((status & 1) << 7) | (g_iwm.motor_on << 5) |
-				g_iwm.iwm_mode;
+			val = ((status & 1) << 7) | (state & 0x3f);
+			// bit 5 is motor_on, bits[4:0] are iwm_mode
 			iwm_printf("Read status: %02x\n", val);
 
 			return val;
 			break;
 		case 0x02:	/* q7 = 1, q6 = 0 */
 			/* read handshake register */
-			if(g_iwm.enable2) {
+			if(state & IWM_STATE_ENABLE2) {
 				return iwm_read_enable2_handshake(dcycs);
 			} else {
 				status = 0xc0;
-				qbit_diff = dsk->cur_qbit_pos -
-							g_iwm.qbit_wr_last;
-				track_qbits = dsk->cur_track_qbits;
-				if(qbit_diff >= track_qbits) {
-					qbit_diff += track_qbits;
-				}
-				if(qbit_diff > 32) {
+				bit_pos = dsk->cur_fbit_pos >> 9;
+				bit_diff = iwm_calc_bit_diff(bit_pos,
+						g_iwm.wr_last_bit[0],
+						dsk->cur_track_bits);
+				if(bit_diff > 8) {
 					iwm_printf("Write underrun!\n");
 					status = status & 0xbf;
 				}
@@ -908,7 +1130,7 @@ read_iwm(int loc, double dcycs)
 			}
 			break;
 		case 0x03:	/* q7 = 1, q6 = 1 */
-			iwm_printf("read iwm state 3!\n");
+			iwm_printf("read iwm q7_q6=3!\n");
 			return 0;
 		break;
 		}
@@ -922,17 +1144,19 @@ void
 write_iwm(int loc, int val, double dcycs)
 {
 	Disk	*dsk;
-	int	on, state, drive, fast_writes;
+	word32	state;
+	int	on, q7_q6, drive, fast_writes;
 
 	loc = loc & 0xf;
 	on = loc & 1;
 
 	dsk = iwm_touch_switches(loc, dcycs);
 
-	state = (g_iwm.q7 << 1) + g_iwm.q6;
-	drive = g_iwm.drive_select;
+	state = g_iwm.state;
+	q7_q6 = (state >> IWM_BIT_Q6) & 3;
+	drive = (state >> IWM_BIT_DRIVE_SEL) & 1;
 	fast_writes = g_fast_disk_emul;
-	if(g_c031_disk35 & 0x40) {
+	if(state & IWM_STATE_C031_APPLE35SEL) {
 		dsk = &(g_iwm.drive35[drive]);
 	} else {
 		dsk = &(g_iwm.drive525[drive]);
@@ -941,10 +1165,10 @@ write_iwm(int loc, int val, double dcycs)
 
 	if(on) {
 		/* odd address, write something */
-		if(state == 0x03) {
+		if(q7_q6 == 3) {
 			/* q7, q6 = 1,1 */
-			if(g_iwm.motor_on) {
-				if(g_iwm.enable2) {
+			if(state & IWM_STATE_MOTOR_ON) {
+				if(state & IWM_STATE_ENABLE2) {
 					iwm_write_enable2(val);
 				} else {
 					iwm_write_data(dsk, val, dcycs);
@@ -957,37 +1181,37 @@ write_iwm(int loc, int val, double dcycs)
 				// bit 3: 2us bit timing
 				// bit 4: Divide input clock by 8 (instead of 7)
 				val = val & 0x1f;
-				g_iwm.iwm_mode = val;
+				state = (state & (~0x1f)) | val;
+				g_iwm.state = state;
 				if(val & 0x10) {
 					iwm_printf("set iwm_mode:%02x!\n",val);
 				}
 			}
 		} else {
-			if(g_iwm.enable2) {
+			if(state & IWM_STATE_ENABLE2) {
 				iwm_write_enable2(val);
 			} else {
 #if 0
 // Flobynoid writes to 0xc0e9 causing these messages...
 				printf("Write iwm1, st: %02x, loc: %x: %02x\n",
-					state, loc, val);
+					q7_q6, loc, val);
 #endif
 			}
 		}
 		return;
 	} else {
 		/* even address */
-		if(g_iwm.enable2) {
+		if(state & IWM_STATE_ENABLE2) {
 			iwm_write_enable2(val);
 		} else {
 			iwm_printf("Write iwm2, st: %02x, loc: %x: %02x\n",
-				state, loc, val);
+				q7_q6, loc, val);
 		}
 		return;
 	}
 
 	return;
 }
-
 
 
 int
@@ -1029,12 +1253,12 @@ word32
 iwm_fastemul_start_write(Disk *dsk, double dcycs)
 {
 	double	dcycs_passed, new_dcycs;
-	word32	qbit_pos, qbit_diff, track_qbits;
+	word32	fbit_pos, fbit_diff, track_bits;
 
 	// Nox Archaist doesn't finish reading sector header's checksum, but
 	//  instead waits for 7 bytes to pass and then writes.  This code
 	//  tries to allow fast_disk_emul mode to not overwrite the checksum.
-	// Move the qbit_pos forward to try to account for a delay from the
+	// Move the fbit_pos forward to try to account for a delay from the
 	//  last read to the current write.  But accesses to I/O locations
 	//  would still take a lot of time.  Let's assume there were
 	//  2 slow cycles, and clamp the skip to a min of 1 byte, max 3 bytes.
@@ -1043,244 +1267,211 @@ iwm_fastemul_start_write(Disk *dsk, double dcycs)
 	iwm_printf("start write, dcycs:%f, new_dcycs:%f, plus_1:%f\n",
 			dcycs_passed, new_dcycs, engine.fplus_ptr->plus_1);
 
+	fbit_diff = new_dcycs * dsk->fbit_mult;
 	if(new_dcycs < 0.0) {
-		qbit_diff = 32;
-	} else if(new_dcycs > (32.0*4)) {
-		qbit_diff = 4*32;
+		fbit_diff = 8*512;		// 8 bits
 	} else {
-		qbit_diff = (long)new_dcycs;		// each cycle is a qbit
-		if(qbit_diff < 32) {
-			qbit_diff = 32;
-		} else if(qbit_diff > (4*32)) {
-			qbit_diff = 4*32;
+		if(fbit_diff < 8*512) {		// 8 bits
+			fbit_diff = 8*512;
+		} else if(fbit_diff > (32*512)) {
+			fbit_diff = 32*512;
 		}
 	}
-	track_qbits = dsk->cur_track_qbits;
-	qbit_pos = dsk->cur_qbit_pos;
+	track_bits = dsk->cur_track_bits;
+	fbit_pos = dsk->cur_fbit_pos;
 
-	if(track_qbits == 0) {
-		return qbit_pos;
+	if(track_bits == 0) {
+		return fbit_pos;
 	}
 
-	qbit_pos = qbit_pos + qbit_diff;
-	if(qbit_pos >= track_qbits) {
-		qbit_pos = qbit_pos - track_qbits;
+	fbit_pos = fbit_pos + fbit_diff;
+	if(fbit_pos >= (track_bits * 512)) {
+		fbit_pos = fbit_pos - (track_bits * 512);
 	}
 #if 0
-	printf(" adjusted qbit_pos*8 from %06x to %06x\n",
-					dsk->cur_qbit_pos * 8, qbit_pos * 8);
+	printf(" adjusted fbit_pos from %07x to %07x\n",
+					dsk->cur_fbit_pos, fbit_pos);
 #endif
-	dsk->cur_qbit_pos = qbit_pos;
+	dbg_log_info(dcycs, fbit_pos, dsk->cur_fbit_pos, 0xee);
+	dsk->cur_fbit_pos = fbit_pos;
 
-	return qbit_pos;
+	return fbit_pos;
 }
 
 word32
 iwm_read_data_fast(Disk *dsk, double dcycs)
 {
-	byte	*bptr, *sync_ptr;
-	word32	qbit_pos, track_qbits, byte_pos, bit_pos, sync_info, val;
-	word32	lsb_bit_pos, shift, skip;
+	dword64	dval, dsync_val_tmp, dsync_val;
+	word32	bit_pos, new_bit_pos, track_bits, val;
+	int	msb, dec;
 
 	if(!g_fast_disk_unnib) {
 		g_iwm.dcycs_last_fastemul_read = dcycs;
 	}
+	track_bits = dsk->cur_track_bits;
+	bit_pos = dsk->cur_fbit_pos >> 9;
 
-	// qbit_pos points directly at the MSB bit we should be returning.
-	qbit_pos = dsk->cur_qbit_pos & -4;
-					// quarter-bits (32 qbits==8 bits)
-	track_qbits = dsk->cur_track_qbits;
-	byte_pos = qbit_pos >> 5;
-	bit_pos = (qbit_pos >> 2) & 7;
-		// bit pos is counting from the byte MSB which is 0 to the byte
-		//  LSB is 7
-	lsb_bit_pos = 7 - bit_pos;
+	// fbit_pos points just after the LSB of the last nibble.  Read +8
+	//  past to get the next nibble.  Get more to ensure a valid nibble
+	new_bit_pos = iwm_calc_bit_sum(bit_pos, 15, track_bits);
+	dval = iwm_get_raw_bits(dsk, new_bit_pos, 16, &dsync_val_tmp);
+	dsync_val = dsync_val_tmp;
 #if 0
-	printf("irdf: %06x track_qb:%06x, byte_pos:%04x, raw_bptr:%p\n",
-		qbit_pos, track_qbits, byte_pos,
-		&(dsk->cur_trk_ptr->raw_bptr[0]));
+	printf("fast %010llx syncs:%010llx bit:%07x\n", dval, dsync_val,
+							bit_pos * 2);
 #endif
-	sync_ptr = &(dsk->cur_trk_ptr->sync_ptr[2 + byte_pos]);
-	sync_info = sync_ptr[0];
-		// sync_info is the bit, counting from LSB bit, which is
-		//  the MSB of a synced byte, with the value 8 or 9 indicating
-		//  it's in the previous disk nibble
-	sync_info = sync_info & 0xf;
-	bptr = &(dsk->cur_trk_ptr->raw_bptr[2 + byte_pos]);
-	val = (bptr[0] << 16) | (bptr[1] << 8) | bptr[2];
-	// if lsb_bit_pos==sync_info, then this is the hi-bit of an 8-bit
-	//  byte, just return it.
-	shift = 9 + lsb_bit_pos;
-	if(sync_info == lsb_bit_pos) {
-		val = (val >> shift) & 0xff;
-		qbit_pos += 32;
-		if(qbit_pos >= track_qbits) {
-#if 0
-			printf("We were synced, qbit_pos*8:%06x will wrap to:"
-				"%06x, val:%02x\n", qbit_pos * 8,
-				(qbit_pos - track_qbits) * 8, val);
-#endif
-			qbit_pos -= track_qbits;
-		}
-		dsk->cur_qbit_pos = qbit_pos;
-		return val;
-	}
 
-	// Otherwise, we're not aligned (or there was a 10-/9-bit sync nibble)
-	if(sync_info < lsb_bit_pos) {
-		skip = lsb_bit_pos - sync_info;
-		shift = 9 + sync_info;
-	} else {
-		// It's in the next sync_info
-		sync_info = sync_ptr[1];
-		sync_info = sync_info & 0xf;
-		skip = ((8 + lsb_bit_pos) - sync_info) & 15;
-		shift = 1 + sync_info;
-		if(skip < 1) {
-			skip = 1;
-		}
-	}
-	val = (val >> (shift & 31)) & 0xff;
-	qbit_pos += 32 + (skip * 4);
 	if(!g_fast_disk_unnib) {
-		// Pull a trick to make disk motor-on test pass ($bd34
-		//  in RWTS): if this is a sync byte, don't return whole
-		//  byte, but fix qbit_pos so it's correct next time
-		val = val & 0x7f;
-		qbit_pos -= 32;
+		//dbg_log_info(dcycs, dval, dsync_val, 0xeb);
 	}
-	if(qbit_pos >= track_qbits) {
-		printf("qbit_pos*8 to %06x, wrap to: %06x, val:%02x\n",
-			qbit_pos * 8, (qbit_pos - track_qbits) * 8, val);
-		qbit_pos -= track_qbits;
+	// Find the sync val closest to 15 without going over
+	msb = (dsync_val >> 8) & 0xff;
+	if((msb > 15) || (msb == 0)) {
+		msb = dsync_val & 0xff;
 	}
-	dsk->cur_qbit_pos = qbit_pos;
+	if(msb > 15) {
+		msb = 8;	// Just return something
+	}
+	if(msb < 7) {
+		// This can happen when the arm is moved from a long track to a
+		//  shorter track, fbit_pos at an arbitrary position at the
+		//  track start, placing us at dsync_val=0x1006.  Just ignore
+		msb = 7;
+	}
+	val = dval >> (msb - 7);
 
-	return val;
+	// We've moved new_fbit_pos forward 15 bits, move back 7 bits for msb=15
+	dec = 15 - msb - 7;
+	if(!g_iwm_motor_on && (msb == 15) && !g_fast_disk_unnib) {
+		// Return this byte properly...but not the next one for the
+		//  DOS3.3 RWTS motor on detect code, which reads the drive
+		//  without enabling the motor, to see if the motor is on
+		dec--;
+	}
+	if((msb != 15) && !g_fast_disk_unnib) {
+		// Pull a trick to make the disk motor-on test pass ($bd34 in
+		//  DOS 3.3 RWTS): if this is a sync byte, don't return whole
+		//  byte, but return whole byte next time
+		val = val & 0x7f;
+		dec = dec - 8;
+	}
+	dsk->cur_fbit_pos = iwm_calc_bit_sum(new_bit_pos, dec, track_bits) << 9;
+#if 0
+	printf("  val:%02x fbit:%07x new_fbit:%07x dec:%d, msb:%d\n",
+		val & 0xff, dsk->cur_fbit_pos, new_fbit_pos, dec, msb);
+#endif
+	if(!g_fast_disk_unnib) {
+		dbg_log_info(dcycs, dsk->cur_fbit_pos,
+			(dec << 24) | (bit_pos * 2), (val << 16) | 0xeb);
+	}
+	return val & 0xff;
 }
 
 word32
-iwm_return_rand_data(Disk *dsk, word32 val, double dcycs)
+iwm_return_rand_data(Disk *dsk, double dcycs)
 {
-	dword64	dval;
+	dword64	dval, dval2;
 
 	if(dsk) {
 		// Use dsk
 	}
 	dval = (dword64)dcycs;
-	dval = (dval >> 8) ^ (dval >> 16);
-	return (val | dval) & 0xff;
+	dval2 = dval ^ (dval >> 16) ^ (dval << 10) ^ (dval << 26) ^
+							(dval << 41);
+	dval = dval2 & ((dval >> 6) ^ (dval >> 17));
+	return dval;
+}
+
+dword64
+iwm_get_raw_bits(Disk *dsk, word32 bit_pos, int num_bits, dword64 *dsyncs_ptr)
+{
+	byte	*bptr, *sync_ptr;
+	dword64	dval, dtmp_val, sync_dval;
+	word32	track_bits;
+	int	pos, bits, total_bits, sync_pos, sync;
+
+	track_bits = dsk->cur_track_bits;
+	if(track_bits == 0) {
+		halt_printf("iwm_get_raw_bits track_bits 0, %08x\n",
+						dsk->cur_frac_track);
+		return 0;
+	}
+	total_bits = 0;
+	bits = 1 + (bit_pos & 7);		// 1..8
+	pos = bit_pos >> 3;
+	dval = 0;
+	sync_dval = 0;
+	bptr = &(dsk->cur_trk_ptr->raw_bptr[0]);
+	sync_ptr = &(dsk->cur_trk_ptr->sync_ptr[0]);
+	sync_pos = 0;
+	if((bptr == 0) || (sync_ptr == 0)) {
+		halt_printf("bptr:%p, sync:%p, bit_pos:%08x, track_bits:%08x, "
+			"cur_trk_ptr eff:%05lx\n", bptr, sync_ptr, bit_pos,
+			track_bits, dsk->cur_trk_ptr - &(dsk->trks[0]));
+		*dsyncs_ptr = 0xffffffffffffffULL;
+		return 0;
+	}
+	while(total_bits < num_bits) {
+		dtmp_val = bptr[pos];
+		dtmp_val = dtmp_val >> (8 - bits);
+		dval = dval | (dtmp_val << total_bits);
+		sync = sync_ptr[pos];
+		if((sync < 8) && (sync >= (8 - bits))) {	// MSB is here
+			sync = sync - (8 - bits);
+			sync = sync + total_bits;
+			if((sync_pos < 64) && (sync != (sync_dval & 0xff))){
+				sync_dval |= ((dword64)sync & 0xff) << sync_pos;
+				sync_pos += 8;
+			}
+		}
+		total_bits += bits;
+		bits = 8;
+		pos--;
+		if(pos < 0) {
+			pos = (track_bits - 1) >> 3;
+			bits = 1 + ((track_bits - 1) & 7);
+		}
+	}
+
+	if(sync_pos == 0) {
+		sync_dval = 0xff;
+	}
+	*dsyncs_ptr = sync_dval;
+	return dval;
 }
 
 word32
-iwm_read_data(Disk *dsk, double dcycs)
+iwm_calc_bit_diff(word32 first, word32 last, word32 track_bits)
 {
-	byte	*bptr, *sync_ptr;
-	word32	track_qbits, ret, qbit_pos, lsb_qbit_pos, lsb_byte_pos, mask;
-	word32	lsb_bit_pos, lsb_bit_pos_le, sync0_info, sync0_tmp, sync_0_mask;
+	word32	val;
 
-	// Return read data from drive.  If !fast_disk_emul, then return
-	//  partial data if 32 qbits haven't passed.  qbit_pos points to just
-	//  after the most recent bit, so qbit_pos=4 means the first bit of
-	//  the track has just been latched.  5.25" holds data once MSB is set
-	//  for 7 cycles, which is 7 qbits, which is one bit plus 3 cycles.
-	//  By working with (qbit_pos - 4) as the LSb to return, we just allow
-	//  3 more cycles by rounding down qbit_pos, and then one full bit by
-	//  "reaching" to allow sync==8 to return as valid. If (iwm_mode & 1),
-	//  "latch mode", then hold data for 32 qbits (3.5" disks) using
-	//  g_iwm.qbit_wr_last to remember last read LSb.
-
-	g_iwm.qbit_wr_start = 32 * 12345;		// Not in a write
-	track_qbits = dsk->cur_track_qbits;
-
-	qbit_pos = dsk->cur_qbit_pos;
-	if((track_qbits == 0) || (dsk->cur_trk_ptr == 0)) {
-		ret = ((qbit_pos * 5) & 0xff);
-		iwm_printf("Reading c0ec, track_len 0, returning %02x\n", ret);
-		return ret;
+	val = first - last;
+	if(val >= track_bits) {
+		val = val + track_bits;
 	}
-
-	if(g_fast_disk_emul) {
-		return iwm_read_data_fast(dsk, dcycs);
-	}
-	if(g_iwm.iwm_mode & 1) {		// Latch mode (3.5" disk)
-		return iwm_read_data_latch(dsk, dcycs);
-	}
-
-	lsb_qbit_pos = (qbit_pos - 4) & -4;		// LSB to return
-	if(lsb_qbit_pos >= track_qbits) {	// unsigned underflow
-		lsb_qbit_pos = lsb_qbit_pos + track_qbits;
-	}
-	// Calculate the position of the LSb of the last
-	//  8 bit byte to pass under the drive head
-
-	lsb_byte_pos = lsb_qbit_pos >> 5;
-	lsb_bit_pos = (lsb_qbit_pos >> 2) & 7;
-	lsb_bit_pos_le = 7 - lsb_bit_pos;		// Convert to LE form
-
-	bptr = &(dsk->cur_trk_ptr->raw_bptr[2 + lsb_byte_pos]);
-	ret = (bptr[-2] << 16) | (bptr[-1] << 8) | bptr[0];
-	ret = ret >> lsb_bit_pos_le;		// Shift into position
-
-	sync_ptr = &(dsk->cur_trk_ptr->sync_ptr[2 + lsb_byte_pos]);
-	sync0_tmp = sync_ptr[0];
-	sync0_info = sync0_tmp & 0xf;
-	sync_0_mask = 0;
-	if(sync0_tmp & 0x10) {
-		sync_0_mask = ((2 << sync0_info) - 1) >> lsb_bit_pos_le;
-	}
-	if(sync0_info <= lsb_bit_pos_le) {
-		// sync is for the lsb, or after it.  Move to previous byte_pos
-		if(sync0_tmp & 0x20) {
-			sync_0_mask = 0xfff;
-		}
-		sync0_tmp = sync_ptr[-1] + 8;
-		sync0_info = sync0_tmp & 0xf;
-		if(sync0_tmp & 0x10) {
-			sync_0_mask |= 0xff;
-		}
-	}
-
-	mask = 0xff;
-	if(g_iwm.forced_sync_qbit < track_qbits) {
-		ret = iwm_calc_forced_sync(dsk, lsb_qbit_pos, dcycs);
-	} else {
-		sync0_info = sync0_info - lsb_bit_pos_le;
-		if(sync0_info >= 8) {
-			// IWM holds valid data for 7 cycles (7 qbit_pos), and
-			//  we rounded down 3 cycles, so if valid MSB was 9
-			//  bits ago (sync0_info==8), return it as valid data.
-			// IWM also holds data once MSB is set until a new 1
-			//  shifts in.  If sync0_info is > 8, then that has
-			//  happened so return it
-			ret = ret >> (sync0_info - 7);
-			sync_0_mask = sync_0_mask >> (sync0_info - 7);
-			sync0_info = 7;
-		}
-		mask = (2 << (sync0_info & 15)) - 1;		// So 7-->0xff
-	}
-
-	if(sync_0_mask) {
-		ret = iwm_return_rand_data(dsk, ret, dcycs);
-		dbg_log_info(dcycs, (sync0_tmp << 24) |
-			(qbit_pos * 8), (lsb_byte_pos << 16) |
-			((lsb_bit_pos_le & 0xff) << 8) | (ret & 0xff), 0xeb);
-	}
-	dbg_log_info(dcycs, (sync0_info << 24) | (qbit_pos * 8),
-			(lsb_byte_pos << 16) | ((lsb_bit_pos_le & 0xff) << 8) |
-						(ret & mask & 0xff), 0xec);
-	g_iwm.qbit_wr_last = lsb_qbit_pos & -4;
-
-	return ret & mask;
+	return val;
 }
 
 word32
-iwm_calc_forced_sync(Disk *dsk, word32 lsb_qbit_pos, double dcycs)
+iwm_calc_bit_sum(word32 bit_pos, int add_ival, word32 track_bits)
 {
-	byte	*bptr, *sync_ptr;
-	word32	track_qbits, forced_sync_qbit, ret, new_sync_qbit, val, bit;
-	word32	bit_val, qbit, sync, eff_sync;
-	int	i;
+	word32	val;
+
+	val = bit_pos + add_ival;
+	if(val >= track_bits) {
+		if(add_ival < 0) {
+			val = val + track_bits;
+		} else {
+			val = val - track_bits;
+		}
+	}
+	return val;
+}
+
+dword64
+iwm_calc_forced_sync(dword64 dval, int forced_bit)
+{
+	dword64	sync_dval;
 
 	// Something like the "E7" protection scheme has toggled
 	//  $c0ed in the middle of reading a nibble, causing a new sync.  This
@@ -1288,640 +1479,598 @@ iwm_calc_forced_sync(Disk *dsk, word32 lsb_qbit_pos, double dcycs)
 	//  nibble copiers (since a 36-cycle sync nibble cannot be
 	//  differentiated from a 40-cycle sync nibble in one read pass)
 	// Return these misaligned nibbles until we re-sync (then clear
-	//  g_wim.forced_sync_qbit.  Toggling $c0ed can set the data latch
+	//  g_iwm.forced_sync_bit.  Toggling $c0ed can set the data latch
 	//  to $ff is the disk is write-protected, but this gets cleared
 	//  to $00 within 4 CPU cycles always (or less).  A phantom 1 will
-	//  also shift in, which this code doesn't try to model
-	lsb_qbit_pos = lsb_qbit_pos & -4;
-	forced_sync_qbit = g_iwm.forced_sync_qbit & -4;
-	track_qbits = dsk->cur_track_qbits;
-	ret = 0;
-	bptr = &(dsk->cur_trk_ptr->raw_bptr[2]);
-	dbg_log_info(dcycs, forced_sync_qbit * 8, (dsk->cur_qbit_pos*8), 0xe4);
-	if(forced_sync_qbit == (dsk->cur_qbit_pos & -4)) {
-		// While Q6=1, the data latch becomes set (within 4 cycles) to
-		//  be the write-protect status in all 8 bits.
-		ret = (0xff * dsk->write_prot) & 0xff;	// 0xff if WP, else 0
-		return ret;			// Just started, nothing to do
-	}
+	//  also shift in
 
-	new_sync_qbit = forced_sync_qbit;
-	// After changing Q6 from 1 to 0, after 2-4 cycles, the data latch
-	//  is cleared, and 2 cycles later, a 1 bit is always shifted in.
-	//  So model it so the bit at forced_sync_qbit is always treated as 1
-	for(i = 0; i < 96; i++) {
-		if(forced_sync_qbit >= track_qbits) {
-			forced_sync_qbit -= track_qbits;
+	dval |= (1ULL << forced_bit);
+	sync_dval = 30;			// A default for the previous nibble
+	while(forced_bit >= 0) {
+		// Scan until this bit is set
+		if((dval >> forced_bit) & 1) {
+			// this bit is the MSB of a nibble, note it
+			sync_dval = (sync_dval << 8) | forced_bit;
+			forced_bit -= 7;
 		}
-		val = bptr[forced_sync_qbit >> 5];
-		bit = (forced_sync_qbit >> 2) & 7;
-		bit_val = ((val << bit) >> 7) & 1;
-		if(i == 0) {
-			bit_val = 1;
+		forced_bit--;
+	}
+	return sync_dval;
+}
+
+int
+iwm_calc_forced_sync_0s(dword64 sync_dval, int bits)
+{
+	int	sync, forced_bits, done;
+	int	i;
+
+	// Return number between 7 and bits as to the oldest valid sync bit
+	//  in the sync_dval array.  0xff in the first position means no syncs
+	if(bits <= 8) {
+		return bits;
+	}
+	forced_bits = 8;
+	done = 0;
+	if((sync_dval & 0xff) <= 7) {
+		sync_dval = sync_dval >> 8;
+	}
+	for(i = 0; i < 8; i++) {
+		sync = sync_dval & 0xff;
+		if(sync == 0xff) {
+			return bits;
 		}
-		// Model data latch: each new bit simply shifts in--except
-		//  if the data latch has the MSB set and the bit to shift in
-		//  is a 0, then don't shift it.
-		// Also model the data latch holding the valid data for 2 bit
-		//  times--allow latch to shift from having MSB set (0x80) to
-		//  having bit 9 set (0x100).  If it's set to 0x100, return it
-		//  shifted right 1.  If we shift to 0x200, then we've passed
-		//  this position, so update forced_sync_bit.
-		if(((ret & 0x180) == 0x80) && bit_val) {
-			new_sync_qbit = forced_sync_qbit;
-			dbg_log_info(dcycs, (new_sync_qbit * 8) + 1,
-						(i << 16) | ret, 0xe4);
+		sync_dval = sync_dval >> 8;
+		while(sync > bits) {
+			sync -= 8;		// Bring it back into range
+			done = 1;
 		}
-		if(((ret & 0x180) != 0x80) || bit_val) {
-			ret = (ret << 1) | bit_val;
-		}
-		if(ret & 0x200) {
-			// We are two bits past the nibble, form new nibble
-			g_iwm.forced_sync_qbit = new_sync_qbit;
-			dbg_log_info(dcycs, (new_sync_qbit * 8) + 2,
-						(i << 16) | ret, 0xe4);
-			ret = ret & 3;
-		}
-		dbg_log_info(dcycs, (forced_sync_qbit * 8) | (i & 7),
-				(lsb_qbit_pos * 8) | ((i >> 3) & 7), 0xe5);
-		if(forced_sync_qbit == lsb_qbit_pos) {
-			// We have caught up to the current head position, done
+		if(sync < forced_bits) {
 			break;
 		}
-		forced_sync_qbit += 4;
-		if(i > 90) {
-			// Too many bits to skip over, turn special resync off
-			g_iwm.forced_sync_qbit = 4*track_qbits;
+		if(sync < bits) {
+			forced_bits = sync;
+		}
+		if(done) {
 			break;
 		}
 	}
-
-	if(ret & 0x100) {
-		ret = ret >> 1;
-	}
-
-	// We'll return ret.  Check if current dsk->forced_sync_qbit matches
-	//  sync_ptr, and if it does, turn off forced_sync_qbit
-	qbit = g_iwm.forced_sync_qbit;
-	sync_ptr = &(dsk->cur_trk_ptr->sync_ptr[2]);
-	sync = sync_ptr[forced_sync_qbit >> 5];
-	eff_sync = 7 - ((qbit >> 2) & 7);
-	if(sync == eff_sync) {
-		// We are back in sync, turn off forced_sync_qbit
-		g_iwm.forced_sync_qbit = track_qbits * 4;
-		dbg_log_info(dcycs, (qbit * 8) + 3,
-			((sync & 0xff) << 24) | ((eff_sync & 0xff) << 16),
-			0xe4);
-		dbg_log_info(dcycs, (forced_sync_qbit * 8) + 4, 0, 0xe4);
-	}
-	dbg_log_info(dcycs, (g_iwm.forced_sync_qbit * 8) + 5,
-				(eff_sync << 24) | (sync << 16) | ret, 0xe4);
-
-	return ret;
+	return forced_bits;
 }
 
 word32
-iwm_return_bits_to_msb(Disk *dsk, word32 lsb_qbit_pos)
+iwm_read_data(Disk *dsk, double dcycs)
 {
-	byte	*sync_ptr;
-	word32	track_qbits, lsb_byte_pos, lsb_bit_pos, lsb_bit_pos_le;
-	word32	sync_info;
+	dword64	dval, sync_dval, dsync_val_tmp, dval0, dval2;
+	word32	track_bits, fbit_pos, bit_pos, val, forced_sync_bit;
+	int	msb_bit, bits, forced_bits, diff;
 
-	// Return number of bits from lsb_qbit_pos to the nearest MSB sync.
-	//  Return 0 if we point directly to a sync bit.
-	track_qbits = dsk->cur_track_qbits;
+	track_bits = dsk->cur_track_bits;
 
-	if(lsb_qbit_pos >= track_qbits) {	// unsigned underflow
-		lsb_qbit_pos = lsb_qbit_pos + track_qbits;
-	}
-	// Calculate the position of the LSb of the last
-	//  8 bit byte to pass under the drive head
-
-	lsb_byte_pos = lsb_qbit_pos >> 5;
-	lsb_bit_pos = (lsb_qbit_pos >> 2) & 7;
-	lsb_bit_pos_le = 7 - lsb_bit_pos;		// Convert to LE form
-
-	sync_ptr = &(dsk->cur_trk_ptr->sync_ptr[2 + lsb_byte_pos]);
-	sync_info = sync_ptr[0];
-	if(sync_info < lsb_bit_pos_le) {
-		// sync is for the lsb, or after it.  Move to previous byte_pos
-		sync_info = sync_ptr[-1] + 8;
+	fbit_pos = dsk->cur_fbit_pos;
+	bit_pos = fbit_pos >> 9;
+	if((track_bits == 0) || (dsk->cur_trk_ptr == 0)) {
+		val = ((fbit_pos * 25) >> 11) & 0xff;
+		iwm_printf("Reading c0ec, track_len 0, returning %02x\n", val);
+		return val;
 	}
 
-	return (sync_info - lsb_bit_pos_le);
-}
-
-word32
-iwm_read_data_latch(Disk *dsk, double dcycs)
-{
-	byte	*bptr;
-	word32	track_qbits, ret, qbit_pos, lsb_qbit_pos, lsb_byte_pos, mask;
-	word32	lsb_bit_pos, lsb_bit_pos_le, qbit_wr_last, qbit_diff, use_latch;
-	word32	bits_to_wr_last, bits_to_msb, bits_to_msb1;
-
-	track_qbits = dsk->cur_track_qbits;
-
-	qbit_pos = dsk->cur_qbit_pos;
-	lsb_qbit_pos = (qbit_pos - 4) & -4;		// LSB to return
-	if(lsb_qbit_pos >= track_qbits) {	// unsigned underflow
-		lsb_qbit_pos = lsb_qbit_pos + track_qbits;
-	}
-	bits_to_msb = iwm_return_bits_to_msb(dsk, lsb_qbit_pos);
-	bits_to_msb1 = iwm_return_bits_to_msb(dsk,
-					lsb_qbit_pos - 4*bits_to_msb - 4);
-	bits_to_msb1 = bits_to_msb1 + bits_to_msb + 1;
-	if(bits_to_msb >= 8) {
-		bits_to_msb1 = bits_to_msb;
+	if(g_fast_disk_emul) {
+		return iwm_read_data_fast(dsk, dcycs);
 	}
 
-	use_latch = 0;
-	qbit_wr_last = g_iwm.qbit_wr_last;
-	bits_to_wr_last = 32;
-	if(qbit_wr_last >= track_qbits) {
-		use_latch = 1;
-	} else {
-		qbit_diff = lsb_qbit_pos - qbit_wr_last;
-		if(qbit_diff >= track_qbits) {
-			qbit_diff += track_qbits;
+	// First, get the last few bytes of data
+	bits = iwm_calc_bit_diff(bit_pos, g_iwm.last_rd_bit, track_bits) + 10;
+	if(bits < 25) {
+		bits = 25;
+	} else if(bits > 60) {
+		bits = 60;
+	}
+	forced_sync_bit = g_iwm.forced_sync_bit;
+	forced_bits = -1;
+	if(forced_sync_bit < track_bits) {
+		forced_bits = iwm_calc_bit_diff(bit_pos, forced_sync_bit,
+								track_bits);
+		if(forced_bits >= 64) {
+			forced_bits = 63;
 		}
-		bits_to_wr_last = (qbit_diff >> 2);
-		if(bits_to_wr_last <= (bits_to_msb1 - 7)) {
-			use_latch = 0;
+		if(forced_bits > bits) {
+			bits = forced_bits;
+		}
+	}
+	dval = iwm_get_raw_bits(dsk, bit_pos, bits, &dsync_val_tmp);
+	sync_dval = dsync_val_tmp;
+
+	// See if there are runs of more than three 0 bits...introduce noise
+	dval0 = (1ULL << bits) | dval;
+	dval0 = dval0 | (dval0 >> 1) | (dval0 >> 2) | (dval0 >> 3);
+	dval0 = (~dval0) & ((1ULL << bits) - 1);
+
+	if(dval0) {
+		// Each set bit of dval0 indicates the previous 3 bits are 0
+		dval2 = dval0 | (dval0 << 1);
+		dval2 = dval0 & iwm_return_rand_data(dsk, dcycs);
+#if 0
+		printf("dval0 is %016llx, dval2:%016llx, bits:%d\n", dval0,
+						dval2, bits);
+#endif
+		dval = dval ^ dval2;
+		if(forced_bits < 0) {
+			forced_bits = iwm_calc_forced_sync_0s(sync_dval, bits);
+			g_iwm.forced_sync_bit = iwm_calc_bit_sum(bit_pos,
+					0 - forced_bits, track_bits);
+			dbg_log_info(dcycs, g_iwm.forced_sync_bit * 2,
+				(forced_bits << 24) | (bit_pos * 2), 0x400ec);
+#if 0
+			printf("Forced bits are %d at %06x, %016llx "
+				"%016llx\n", forced_bits, bit_pos * 2, dval,
+				sync_dval);
+#endif
+		}
+	}
+	if(forced_bits >= 0) {
+		sync_dval = iwm_calc_forced_sync(dval, forced_bits);
+		dval = dval & ((2ULL << forced_bits) - 1LL);
+		dbg_log_info(dcycs, dval, forced_sync_bit * 32,
+						(forced_bits << 16) | 0xea);
+		if(((dsync_val_tmp & 0xff) == (sync_dval & 0xff)) && (!dval0)) {
+			// Only clear it if there are no 0's in the dval,
+			//  otherwise we'll reenter and could calc a diff sync
+			g_iwm.forced_sync_bit = 234567*4;
+			//printf("cleared forced_sync\n");
 		} else {
-			use_latch = 1;
+			g_iwm.forced_sync_bit = iwm_calc_bit_sum(bit_pos,
+					0 - (sync_dval & 0xf), track_bits);
+		}
+
+#if 0
+		printf("Forced_bits were %d, sync_was %016llx\n",
+						forced_bits, dsync_val_tmp);
+#endif
+	}
+#if 0
+	printf(" Raw bits: %016llx, dsync:%016llx, fbit:%08x\n", dval,
+					sync_dval, fbit_pos);
+#endif
+
+	dbg_log_info(dcycs, dval, (bits << 24) | (sync_dval & 0x00ffffffUL),
+								0x300ec);
+	msb_bit = sync_dval & 0xff;
+	if(g_iwm.state & 1) {		// Latch mode (3.5" disk)
+		// last_rd_bit points just past the last bit read (it is
+		//  fbit_pos normally, which is one bit past the read bit).
+		// Use latched data if that bit is before the latched LSB
+		diff = iwm_calc_bit_diff(bit_pos, g_iwm.last_rd_bit,
+								track_bits);
+		diff = diff + 8;		// Calc to the MSB
+		msb_bit = (sync_dval >> 8) & 0xff;
+		if((msb_bit >= 8) && (diff > msb_bit)) {
+			// We've not seen the LSB of this data: ret latched data
+			dbg_log_info(dcycs, bit_pos * 2,
+					(msb_bit << 16) | (diff & 0xffff),
+								0x2200ec);
+			bit_pos = iwm_calc_bit_sum(bit_pos, -msb_bit + 8,
+								track_bits);
+			dbg_log_info(dcycs, bit_pos * 2, g_iwm.last_rd_bit*2,
+								0x200ec);
+		} else {
+			msb_bit = sync_dval & 0xff;
+			if(diff <= msb_bit) {
+				// Handle case of 10-bit nibble which we've
+				//  already returned...don't return it again!
+				msb_bit = 1;
+			}
+		}
+#if 0
+		printf("Latch mode diff:%d, msb_bit:%d, new_msb:%d\n",
+					diff, msb_bit, (int)(sync_dval & 0xff));
+#endif
+		dbg_log_info(dcycs, ((word32)diff << 12) | (msb_bit & 0xff),
+						sync_dval, 0x100ec);
+	} else {
+		if((sync_dval & 0xff) <= 1) {
+			// The LSbit or the next one is a sync bit--but we need
+			//  to ignore it.  The LSbit is not valid yet, and
+			//  the next bit being the MSB of the next nibble will
+			//  be ignored to make the 7usec hold time of the
+			//  previous nibble work
+			sync_dval = sync_dval >> 8;
+			msb_bit = sync_dval & 0xff;
 		}
 	}
-	dbg_log_info(dcycs, ((bits_to_msb & 0xff) << 24) |
-			((bits_to_msb1 & 0xff) << 16) |
-			((bits_to_wr_last & 0xff) << 8) | use_latch,
-			lsb_qbit_pos * 8, 0xe6);
-
-	if(use_latch) {
-		bits_to_msb = 7;
-		lsb_qbit_pos = lsb_qbit_pos - 4*bits_to_msb1 + 7*4;
+	val = dval;
+	if(msb_bit < 8) {
+		// We only have a partial byte
+		val = val & ((2ULL << msb_bit) - 1);
+	} else if(msb_bit < 63) {
+		val = dval >> (msb_bit - 8);
 	}
-	if(lsb_qbit_pos >= track_qbits) {
-		lsb_qbit_pos += track_qbits;
+
+	// val is now valid from bit 8 down to bit 1
+	// We've allowed in to dval an extra bit which we must toss
+	val = val >> 1;
+
+	g_iwm.last_rd_bit = bit_pos;
+	dbg_log_info(dcycs, (msb_bit << 24) | (fbit_pos >> 8),
+			(dval0 << 8) | (val & 0xff), 0xec);
+#if 0
+	if(forced_bits >= 0) {
+		printf("Forced bits, msb:%d, val:%02x, dval:%016llx b_p:%06x\n",
+			msb_bit, val, dval, bit_pos * 2);
 	}
-	lsb_byte_pos = lsb_qbit_pos >> 5;
-	lsb_bit_pos = (lsb_qbit_pos >> 2) & 7;
-	lsb_bit_pos_le = 7 - lsb_bit_pos;		// Convert to LE form
-
-	bptr = &(dsk->cur_trk_ptr->raw_bptr[2 + lsb_byte_pos]);
-	ret = (bptr[-2] << 16) | (bptr[-1] << 8) | bptr[0];
-	ret = ret >> lsb_bit_pos_le;		// Shift into position
-
-	mask = (2 << (bits_to_msb & 15)) - 1;		// So 7-->0xff
-	dbg_log_info(dcycs, ((bits_to_msb & 0xff) << 24) | (qbit_pos * 8) | 2,
-			(lsb_byte_pos << 16) |
-			((lsb_bit_pos_le & 0xff) << 8) | (ret & 0xff), 0xe6);
-	g_iwm.qbit_wr_last = lsb_qbit_pos & -4;
-
-	return ret & mask & 0xff;
+#endif
+	return val & 0xff;
 }
 
 void
 iwm_write_data(Disk *dsk, word32 val, double dcycs)
 {
 	Trk	*trk;
-	word32	track_qbits, qbit_pos, qbit_last, tmp_val, qbit_diff;
+	word32	track_bits, bit_pos, fbit_pos, bit_last, tmp_val;
 	int	bits;
 
 	trk = dsk->cur_trk_ptr;
-	track_qbits = dsk->cur_track_qbits;
-	qbit_pos = dsk->cur_qbit_pos;
-
-	if((track_qbits == 0) || (trk == 0)) {
+	if((trk == 0) || dsk->write_prot) {
 		return;
 	}
+	track_bits = dsk->cur_track_bits;
+
+	bit_pos = (dsk->cur_fbit_pos + 511) >> 9;
+	if(track_bits && (bit_pos >= track_bits)) {
+		bit_pos = bit_pos - track_bits;
+		if(bit_pos >= track_bits) {
+			bit_pos = bit_pos % track_bits;
+		}
+	}
 #if 0
-	printf("iwm_write_data: %02x %f, qbit*8:%06x\n", val, dcycs,
-								qbit_pos *8);
+	printf("iwm_write_data: %02x %f, bit*2:%06x\n", val, dcycs, bit_pos *2);
 #endif
 	if(dsk->disk_525) {
 		if(!g_slow_525_emul_wr) {
 			g_slow_525_emul_wr = 1;
 			engine_recalc_events();
-			if(g_fast_disk_emul) {
-				qbit_pos = iwm_fastemul_start_write(dsk, dcycs);
+			if(track_bits && g_fast_disk_emul) {
+				fbit_pos = iwm_fastemul_start_write(dsk, dcycs);
+				bit_pos = fbit_pos >> 9;
 			}
 		}
 	}
-	qbit_pos = (qbit_pos + 3) & -4;
-	dsk->cur_qbit_pos = qbit_pos;
-	if(g_iwm.qbit_wr_start >= track_qbits) {
+	dsk->cur_fbit_pos = bit_pos * 512;
+	if(g_iwm.num_active_writes == 0) {
 		// No write was pending, enter write mode now
 		// printf("Starting write of data to the track, track now:\n");
 		// iwm_show_track(-1, -1, dcycs);
-		// printf("Write data to track at qbit*8:%06x\n", qbit_pos);
-		g_iwm.qbit_wr_start = qbit_pos;
-		g_iwm.qbit_wr_last = qbit_pos;
-		g_iwm.write_val = val;
+		// printf("Write data to track at bit*2:%06x\n", bit_pos);
+		iwm_start_write(dsk, bit_pos, val);
 		return;
 	}
-	if(g_iwm.iwm_mode & 2) {		// async handshake mode, 3.5"
+	if(track_bits == 0) {
+		halt_printf("Impossible: track_bits: 0\n");
+		return;
+	}
+	if(g_iwm.state & 2) {		// async handshake mode, 3.5"
 		iwm_write_data35(dsk, val, dcycs);
 		return;
 	}
 
 	// From here on, it's 5.25" disks only
-	qbit_last = g_iwm.qbit_wr_last;
-	qbit_diff = qbit_pos - qbit_last;
-	if(qbit_diff >= track_qbits) {
-		qbit_diff += track_qbits;
-	}
-	bits = qbit_diff >> 2;
-	tmp_val = g_iwm.write_val;
+	bit_last = g_iwm.wr_last_bit[0];
+	bits = iwm_calc_bit_diff(bit_pos, bit_last, track_bits);
 	if(bits >= 500) {
-		halt_printf("bits are %d. qbit*8:%06x, qbit_last*8:%06x\n",
-				bits, qbit_pos * 8, qbit_last * 8);
+		halt_printf("bits are %d. bit*2:%06x, bit_last*2:%06x\n",
+				bits, bit_pos * 2, bit_last * 2);
 		bits = 40;
 	}
-	if(bits <= 8) {
-		tmp_val = tmp_val >> (8 - bits);
-		disk_nib_out_raw(dsk, tmp_val, bits, qbit_last, dcycs);
-	} else {
-		qbit_last = disk_nib_out_raw(dsk, tmp_val, 8, qbit_last, dcycs);
-		disk_nib_out_zeroes(dsk, bits - 8, qbit_last, dcycs);
-	}
+	iwm_write_one_nib(dsk, bits, dcycs);
+
+	tmp_val = g_iwm.write_val;
+	dbg_log_info(dcycs, (g_iwm.wr_last_bit[0] << 25) | (bit_last * 2),
+		(bits << 16) | ((val & 0xff) << 8) | (tmp_val & 0xff), 0xed);
 	g_iwm.write_val = val;
-	g_iwm.qbit_wr_last = qbit_pos;
+}
+
+void
+iwm_start_write(Disk *dsk, word32 bit_pos, word32 val)
+{
+	int	num;
+
+	g_iwm.write_val = val;
+	num = 0;
+	num = iwm_start_write_act(dsk, bit_pos, num, 0);
+	num = iwm_start_write_act(dsk, bit_pos, num, -1);	// -0.25
+	num = iwm_start_write_act(dsk, bit_pos, num, +1);	// +0.25
+	num = iwm_start_write_act(dsk, bit_pos, num, -2);	// -0.50
+	num = iwm_start_write_act(dsk, bit_pos, num, +2);	// +0.50
+	g_iwm.num_active_writes = num;
+
+	woz_maybe_reparse(dsk);
+}
+
+int
+iwm_start_write_act(Disk *dsk, word32 bit_pos, int num, int delta)
+{
+	Trk	*trkptr;
+	word32	qtr_track, track_bits, bit_diff, prior_sum, allow_diff;
+
+	qtr_track = (dsk->cur_frac_track + 0x8000) >> 16;
+	qtr_track += delta;
+	if(qtr_track >= 160) {			// Could be unsigned wrap around
+		if(delta == 0) {
+			halt_printf("iwm_start_write_act0, qtr_track:%04x\n",
+								qtr_track);
+			g_iwm.num_active_writes = 0;
+		}
+		return num;
+	}
+	if(!dsk->disk_525 && delta) {
+		return num;		// 3.5" does not affect adjacent trks
+	}
+
+	trkptr = &(dsk->trks[qtr_track]);
+	track_bits = trkptr->track_bits;
+	if(track_bits == 0) {
+		if((delta == -2) || (delta == 2)) {
+			return num;		// Nothing to do
+		}
+		if((delta == -1) && (qtr_track > 0)) {
+			if(trkptr[-1].track_bits == 0) {
+				return num;	// Nothing to do
+			}
+		}
+		if((delta == 1) && (qtr_track < 159)) {
+			if(trkptr[1].track_bits == 0) {
+				return num;	// Nothing to do
+			}
+		}
+		// Otherwise, we need to create this track and write to it
+		track_bits = woz_add_a_track(dsk, qtr_track);
+	}
+	if(track_bits) {
+		bit_pos = bit_pos % track_bits;
+	}
+	bit_diff = iwm_calc_bit_diff(bit_pos, g_iwm.wr_last_bit[num],
+								track_bits);
+	prior_sum = 0;
+	allow_diff = 16 + (16 * g_fast_disk_emul);
+	if((g_iwm.wr_qtr_track[num] == qtr_track) && (bit_diff < allow_diff)) {
+		// consider this write a continuation of the previous write
+		prior_sum = g_iwm.wr_prior_num_bits[num] +
+					g_iwm.wr_num_bits[num] + bit_diff;
+		printf("prior_sum is %d, qtr_track:%04x, bit_diff:%d\n",
+			prior_sum, qtr_track, bit_diff);
+	} else {
+		printf("No prior_sum, qtr_track:%04x vs %04x, bit_diff:%08x, "
+			"bit_pos:%05x wr_last_bit:%05x\n",
+			g_iwm.wr_qtr_track[num], qtr_track, bit_diff,
+			bit_pos * 2, g_iwm.wr_last_bit[num]*2);
+	}
+	if(delta == 0) {
+		dsk->cur_fbit_pos = bit_pos << 9;
+		iwm_move_to_qtr_track(dsk, qtr_track);
+	}
+	g_iwm.wr_last_bit[num] = bit_pos;
+	g_iwm.wr_qtr_track[num] = qtr_track;
+	g_iwm.wr_num_bits[num] = 0;
+	g_iwm.wr_prior_num_bits[num] = prior_sum;
+	g_iwm.wr_delta[num] = abs(delta);		// 0, 1 or 2
+	return num + 1;
 }
 
 void
 iwm_write_data35(Disk *dsk, word32 val, double dcycs)
 {
-	word32	qbit_pos, qbit_last;
-
-	// Just always write 8 bits to the track, update qbit_wr_last
-	qbit_last = g_iwm.qbit_wr_last;
-	qbit_pos = disk_nib_out_raw(dsk, g_iwm.write_val, 8, qbit_last, dcycs);
+	// Just always write 8 bits to the track
+	iwm_write_one_nib(dsk, 8, dcycs);
 	g_iwm.write_val = val;
-	g_iwm.qbit_wr_last = qbit_pos;
-	dsk->cur_qbit_pos = qbit_pos;
+	dsk->cur_fbit_pos = g_iwm.wr_last_bit[0] * 512;
 }
 
 void
 iwm_write_end(Disk *dsk, double dcycs)
 {
+	Trk	*trkptr;
+	word32	last_bit, qtr_track, num_bits, bit_start, delta, track_bits;
+	word32	prior_sum;
+	int	num_active_writes;
+	int	i;
+
 	// Flush out previous write, then turn writing off
-	if(g_iwm.qbit_wr_start > dsk->cur_track_qbits) {
+	num_active_writes = g_iwm.num_active_writes;
+	printf("In iwm_write_end at %f, num:%d, %d\n", dcycs,
+					num_active_writes, dsk->disk_dirty);
+	if(num_active_writes == 0) {
 		return;			// Invalid, not in a write
 	}
 	iwm_write_data(dsk, 0, dcycs);
 
+	for(i = 0; i < num_active_writes; i++) {
+		last_bit = g_iwm.wr_last_bit[i];
+		qtr_track = g_iwm.wr_qtr_track[i];
+		num_bits = g_iwm.wr_num_bits[i];
+		delta = g_iwm.wr_delta[i];
+		printf(" end %d, last_bit:%05x, qtrk:%04x, num_b:%d, "
+			"delta:%d\n", i, last_bit * 2, qtr_track, num_bits,
+			delta);
+		if((num_bits == 0) || (qtr_track >= 160)) {
+			continue;
+		}
+		trkptr = &(dsk->trks[qtr_track]);
+		track_bits = trkptr->track_bits;
+		prior_sum = g_iwm.wr_prior_num_bits[i];
+		if((num_bits + prior_sum) >= track_bits) {
+			// Full track write.  If delta != 0, erase this track
+			printf("Full track write at qtrk:%04x %f\n",
+							qtr_track, dcycs);
 #if 0
-	printf("iwm_write_end, calling iwm_recalc_sync with qbit*8:%06x\n",
-		g_iwm.qbit_wr_start * 8);
+			if(qtr_track == 4) {
+				halt_printf("Full track at qtr_trk:4\n");
+			}
 #endif
-	iwm_recalc_sync(dsk, g_iwm.qbit_wr_start, dcycs);
-	g_iwm.qbit_wr_start = 32*12345;
+			if(delta != 0) {
+				woz_remove_a_track(dsk, qtr_track);
+				printf("TRACK %04x REMOVED\n", qtr_track);
+				continue;
+			}
+			g_iwm.wr_prior_num_bits[i] = 0;
+		}
+
+		// Otherwise, recalc sync for this track
+		if(num_bits >= track_bits) {
+			num_bits = num_bits % track_bits;
+		}
+		bit_start = iwm_calc_bit_sum(last_bit, -num_bits - 24,
+								track_bits);
+		iwm_recalc_sync_from(dsk, qtr_track, bit_start, dcycs);
+		printf("Wrote %d bits to qtrk:%04x at %05x %f, i:%d,%d, %d\n",
+			num_bits, qtr_track, bit_start*2, dcycs, i,
+			num_active_writes, dsk->disk_dirty);
+	}
+	g_iwm.num_active_writes = 0;
+
+	woz_maybe_reparse(dsk);
 }
 
 void
-iwm_fix_first_last_bytes(Disk *dsk)
+iwm_write_one_nib(Disk *dsk, int bits, double dcycs)
 {
-	byte	*bptr;
-	word32	track_bits, bit_end, val, shift, mask;
-	int	byte_pos;
+	word32	qtr_track, bit_pos, delta, val, track_bits;
+	int	num;
+	int	i;
 
-	// Fix up first bytes bptr[-2], bptr[-1] to be last 2 bytes (shifted)
-	track_bits = dsk->cur_track_qbits >> 2;
-	bptr = &(dsk->cur_trk_ptr->raw_bptr[2]);
-	byte_pos = (track_bits - 1) >> 3;	// Point to valid data
-	bit_end = (track_bits - 1) & 7;		// Point to last valid bit (0-7)
-	val = (bptr[byte_pos - 2] << 16) | (bptr[byte_pos - 1] << 8) |
-							bptr[byte_pos];
-	shift = 7 - bit_end;
-	val = val >> shift;
-	bptr[-1] = val;
-	bptr[-2] = val >> 8;
-#if 0
-	printf("Set [-2]:%02x [-1]:%02x, shift:%02x\n", bptr[-2], bptr[-1],
-								shift);
-#endif
-
-	// Copy from [0],[1] to byte_pos+1, byte_pos+2
-	val = (bptr[0] << 16) | (bptr[1] << 8) | bptr[2];
-	mask = 0xff >> (bit_end + 1);		// If bit_end==7, mask==0
-	val = val >> (bit_end + 1);
-	bptr[byte_pos + 2] = val;
-	bptr[byte_pos + 1] = val >> 8;
-	val = val >> 16;
-	bptr[byte_pos] = (bptr[byte_pos] & (~mask)) | (val & mask);
-#if 0
-	printf("byte_pos:%02x, %02x, %02x, mask:%04x, val:%06x, bit_end:%d\n",
-		bptr[byte_pos], bptr[byte_pos + 1], bptr[byte_pos + 2], mask,
-		val, bit_end);
-#endif
+	num = g_iwm.num_active_writes;
+	val = g_iwm.write_val;
+	for(i = 0; i < num; i++) {
+		qtr_track = g_iwm.wr_qtr_track[i];
+		bit_pos = g_iwm.wr_last_bit[i];
+		delta = g_iwm.wr_delta[i];
+		dbg_log_info(dcycs, val, bit_pos * 2, 0x200ed);
+		if(delta == 2) {		// Trk +0.50 and -0.50: corrupt
+			val = (val & 0x7f) ^ i ^ 0x0c;
+		}
+		bit_pos = disk_nib_out_raw(dsk, qtr_track, val, bits, bit_pos,
+									dcycs);
+		track_bits = dsk->trks[qtr_track].track_bits;
+		if(bit_pos >= track_bits) {
+			bit_pos = bit_pos - track_bits;
+		}
+		g_iwm.wr_last_bit[i] = bit_pos;
+		g_iwm.wr_num_bits[i] += bits;
+		dbg_log_info(dcycs, (bits << 24) | (bit_pos * 2),
+			2*iwm_calc_bit_sum(bit_pos, -g_iwm.wr_num_bits[i],
+							track_bits), 0x300ed);
+	}
 }
 
 void
-iwm_recalc_sync(Disk *dsk, word32 qbit_pos, double dcycs)
+iwm_recalc_sync_from(Disk *dsk, word32 qtr_track, word32 bit_pos, double dcycs)
 {
-	byte	*sync_ptr;
-	word32	track_qbits, byte_pos, sync_val;
+	Trk	*trkptr;
+	byte	*bptr, *sync_ptr;
+	word32	track_bits, val, this_sync, sync0;
+	int	pos, next_pos, wrap, bit, last_bit, last_byte, match, this_bits;
 
-	track_qbits = dsk->cur_track_qbits;
-
-	// Loop through all newly written bytes (check sync_ptr == 0xff), and
-	//  ensure there are not too many 0's.
-	byte_pos = qbit_pos >> 5;
-	sync_ptr = &(dsk->cur_trk_ptr->sync_ptr[2]);
-
-	iwm_fix_first_last_bytes(dsk);
-
-	// Now, prepare
-	qbit_pos -= 4*10;
-	if(qbit_pos <= 31) {		// Near the start--just go to the end
-		dsk->cur_trk_ptr->sync_ptr[2+0] = 0xff;
-		dsk->cur_trk_ptr->sync_ptr[2+1] = 0xff;
-		qbit_pos -= 32;		// Move one byte
+	// We are called with a bit_pos 3 bytes before the desired byte.
+	//  Look at pos, pos-1, pos+1 in a safe way, and find a valid sync_num
+	if(dcycs) {
+		// printf("new sync from bit %d, %f %p\n", bit_pos, dcycs, dsk);
 	}
-	if(qbit_pos >= track_qbits) {
-		qbit_pos += track_qbits;
-	}
-#if 0
-	printf("iwm_recalc_sync, qbit_pos*8:%06x, track_qbits*8:%06x\n",
-					qbit_pos *8, track_qbits * 8);
-#endif
-	byte_pos = qbit_pos >> 5;
-	sync_ptr = &(dsk->cur_trk_ptr->sync_ptr[2 + byte_pos]);
-	sync_val = sync_ptr[0];
-#if 0
-	printf(" byte_pos:%04x, sync_val:%02x, sync[-1]:%02x\n", byte_pos,
-						sync_val, sync_ptr[-1]);
-#endif
-	if((sync_val == 0xff) || (sync_ptr[-1] == 0xff)) {
-		iwm_find_any_sync(dsk, dcycs);
+	if(qtr_track >= 160) {
+		halt_printf("iwm_recalc_sync_from bad qtr:%04x bit_pos:%06x\n",
+							qtr_track, bit_pos);
 		return;
 	}
-	if(sync_val >= 8) {
-		byte_pos--;
-		sync_val -= 8;
-		if(byte_pos >= 0x5000) {
-			halt_printf("iwm_recalc_sync byte_pos:%08x "
-				"qbit_pos*8:%06x\n", byte_pos, qbit_pos);
-		}
+	trkptr = &(dsk->trks[qtr_track]);
+
+	track_bits = trkptr->track_bits;
+	if(track_bits == 0) {
+		halt_printf("iwm_recalc_sync_from track_bits 0 for %04x\n",
+			qtr_track);
+		return;
 	}
-	sync_val = (7 - sync_val) & 7;
-#if 0
-	printf("sync_val:%02x, byte_pos:%05x, sync_ptr[0]:%02x\n", sync_val,
-		byte_pos, sync_ptr[0]);
-#endif
-	iwm_recalc_sync_from(dsk, (byte_pos * 32) + (sync_val * 4), dcycs);
-}
+	last_byte = (track_bits - 1) >> 3;
+	last_bit = ((track_bits - 1) & 7) + 1;		// 1...8
 
-void
-iwm_recalc_sync_from(Disk *dsk, word32 qbit_pos, double dcycs)
-{
-	byte	*bptr, *sync_ptr;
-	word32	track_bits, bits, val, mask, last_sync, sync, hunting;
-	word32	bit_pos, bit_end, val1, val2, sync_0_mask;
-	int	byte_pos, matches, wraps, bad_cnt;
-
-#if 0
-	printf("iwm_recalc_sync_from %06x for dsk: %p\n", qbit_pos * 8, dsk);
-#endif
-
-	track_bits = dsk->cur_track_qbits >> 2;
-	sync_ptr = &(dsk->cur_trk_ptr->sync_ptr[2]);
-	bptr = &(dsk->cur_trk_ptr->raw_bptr[2]);
-
-	bit_pos = qbit_pos >> 2;
-
-	// We are told qbit_pos points to a sync bit (MSB of an 8-bit disk
-	//  nibble).  Work through the track, wrapping as needed, finding
-	//  the next nibbles, and update the sync_ptr[] bytes with the
-	//  MSB bit positions.  One a sync_ptr is found which matches what
-	//  we would write in for 3 times, we are done, stop.
-
-	matches = 0;
-	wraps = 0;
-	last_sync = 0x17;
-	hunting = 0;		// Not searching for next 1 bit
+	sync_ptr = &(trkptr->sync_ptr[0]);
+	bptr = &(trkptr->raw_bptr[0]);
+	pos = bit_pos >> 3;
+	bit = bit_pos & 7;	// 0...7
+	sync0 = sync_ptr[pos];
+	if(sync0 >= 8) {
+		if(pos > 0) {
+			pos--;
+		} else {
+			pos++;		// pos is now 1
+		}
+		sync0 = sync_ptr[pos];
+	}
+	bit = (7 - sync0) & 7;
+	match = 0;
+	wrap = 0;
+	next_pos = pos + 1;
+	// cnt = 0;
+	// printf("recalc_sync_from pos:%04x, bit:%d\n", pos, bit);
 	while(1) {
-		if(bit_pos >= track_bits) {
-			bit_pos -= track_bits;
-			wraps++;
-			if(wraps >= 3) {
-				// Looping through twice has not resulted in a
-				//  stable sync.  This can only happen if the
-				//  track never has 8 sync bits in adjacent
-				//  nibbles.  Just use bit_pos.
-				break;
+		val = bptr[pos];
+		this_bits = 8;
+		this_sync = sync_ptr[pos];
+		sync_ptr[pos] = 0x20;
+		next_pos = pos + 1;
+		if(pos >= last_byte) {
+#if 0
+			printf("At last_byte, val:%02x, pos:%04x, last_bit:%d, "
+				"bit:%d\n", val, pos, last_bit, bit);
+#endif
+			this_bits = last_bit;
+			val = val & (0xff00 >> last_bit);
+			next_pos = 0;
+			wrap++;
+			if(wrap >= 3) {
+				halt_printf("no stable sync found\n");
+				return;
 			}
-			if((track_bits & 7) && (last_sync < 16)) {
-				// Track is not a multiple of 8 bits.  Adjust
-				//  last_sync to account for these extra bits
-				last_sync = last_sync - (7 - (track_bits & 7));
-			}
-		}
-		byte_pos = bit_pos >> 3;
-		val = bptr[byte_pos];
-		val1 = (bptr[byte_pos - 1] << 8) | val;
-		val2 = (val1 | (val1 >> 1) | (val1 >> 2) | (val1 >> 3)) & 0xff;
-		val2 = (~val2) & 0xff;		// has '1' after each 4-bit==0
-#if 0
-		printf("  pos:%05x_%d, val:%02x cur_sync:%02x\n", bit_pos >> 3,
-			bit_pos & 7, val, sync_ptr[bit_pos >> 3]);
-#endif
-		mask = 0x80 >> (bit_pos & 7);
-		sync = sync_ptr[byte_pos];
-		sync_0_mask = 0;
-		if(val2) {
-			// There were too many 0's in this byte
-			if((val2 > mask) && !hunting) {
-				// These 0's would interfere with the previous
-				//  nibble.
-				sync_0_mask |= 0x20;
-				val |= mask;		// Just force this bit
-				sync_ptr[byte_pos - 1] |= 0x10;
-			}
-			if((val2 & (mask - 1)) || (mask <= 1)) {
-				// These 0's would interfere with this nibble
-				sync_0_mask |= 0x10;
-			}
-#if 0
-				printf("byte_pos:%04x, val2:%03x, sync_0:%02x "
-					"dcycs:%f\n", byte_pos, val2,
-					sync_0_mask, dcycs);
-				printf("val:%02x, mask:%02x, last_sync:%02x\n",
-					val, mask, last_sync);
-#endif
-			dbg_log_info(dcycs, bit_pos * 32,
-					(byte_pos << 8) | sync_0_mask, 0xe7);
-			//g_halt_arm_move = 1;
-			//val = val | val2;		// Find some 1's
-		}
-		if(val & mask) {
-			sync = 7 - (bit_pos & 7);
-		} else {
-			sync_ptr[byte_pos] = last_sync | sync_0_mask;
-			bit_pos++;
-			hunting = 1;
-			continue;
-		}
-		sync |= sync_0_mask;
-		if((sync == sync_ptr[byte_pos]) && (sync < 16)) {
-			matches++;
-			if(matches >= 3) {
-				break;
-			}
-		} else {
-			matches = 0;
-		}
-		sync_ptr[byte_pos] = sync;
-#if 0
-		if((bit_pos <= 23) || (bit_pos >= (track_bits - 24))) {
-			printf("sync_ptr[%04x]=%02x (%05x)\n", bit_pos >> 3,
-								sync, bit_pos);
-		}
-		printf("Set sync[%04x]=%02x\n", bit_pos >> 3, sync);
-#endif
-		last_sync = (sync + 8) & 0xf;
-		bit_pos += 8;
-		hunting = 0;
-	}
-
-	// printf("sync done at qbit*8=%06x\n", bit_pos * 4 * 8);
-
-	// Fix up sync[track_bits/8], which may not have been written
-	byte_pos = (track_bits - 1) >> 3;	// Point to valid data
-	bit_end = (track_bits - 1) & 7;		// Point to last valid bit
-	bits = bit_end + 1;			// num valid bits at byte_pos
-	sync = sync_ptr[byte_pos];
-	// printf("sync[byte_pos,%04x]=%02x\n", byte_pos, sync);
-	if(sync & 0x80) {			// Not set
-		sync = sync_ptr[0] - bits;
-		if(sync & 0x80) {			// unsigned overflow
-			sync = sync_ptr[byte_pos - 1] + 8;
-		}
-		sync_ptr[byte_pos] = sync;
-#if 0
-		printf("Set sync_ptr[byte_pos]=%02x, [byte_pos-1]:%02x, [0]="
-			"%02x, bits:%d\n", sync, sync_ptr[byte_pos - 1],
-			sync_ptr[0], bits);
-#endif
-	}
-
-	// Fix up sync[byte_pos+1] as well
-	sync = 8 + sync_ptr[0] - bits;	// guaranteed to be from 0..14
-	if((sync & 0xf) < 8) {
-		sync_ptr[byte_pos + 1] = sync;
-	} else {
-		sync = sync_ptr[1] - bits;
-		if(sync & 0x80) {			// unsigned overflow
-			sync = sync_ptr[0] + 8 - bits;
-		}
-		sync_ptr[byte_pos + 1] = sync;
-	}
-
-	// Fix up sync[-1], sync[-2]
-	if((sync_ptr[0] & 0xf) >= 8) {
-		sync_ptr[-1] = sync_ptr[0] - 8;
-		printf("sync[0] was >= 8, so [-1]=%02x\n", sync_ptr[-1]);
-	} else {
-		sync = sync - (8 - bits);
-			// converts byte_pos sync to be relative to sync_ptr[0]
-		// printf(" sync is now:%03x\n", sync);
-		if(sync & 0x80) {		// unsigned overflow
-			// [byte_pos] indicates a sync_ptr[0] bit.  Go back
-			sync = sync_ptr[byte_pos - 1] + bits;
-		}
-		sync_ptr[-1] = sync;
-#if 0
-		printf("Set [-1]=%02x, bits:%d, [byte_pos-1]:%02x\n", sync,
-			bits, sync_ptr[byte_pos - 1]);
-#endif
-	}
-	sync_ptr[-2] = 0;		// Should not be used
-
-	byte_pos = ((track_bits + 7) >> 3) + 2;
-	bad_cnt = 0;
-#if 0
-	for(i = 0; i < byte_pos; i++) {
-		if(sync_ptr[i - 2] & 0x80) {
-			printf("sync at %05x:%02x\n", i - 2, sync_ptr[i - 2]);
-			bad_cnt++;
-		}
-	}
-#endif
-	if(bad_cnt) {
-		iwm_show_track(-1, -1, dcycs);
-		halt_printf("Exiting\n");
-		//exit(1);
-	}
-}
-
-void
-iwm_find_any_sync(Disk *dsk, double dcycs)
-{
-	byte	*bptr, *sync_ptr;
-	word32	mask, new_mask, this_val, slide;
-	int	track_bytes;
-	int	i, j;
-
-	track_bytes = (dsk->cur_track_qbits + 31) >> 5;
-	sync_ptr = &(dsk->cur_trk_ptr->sync_ptr[2]);
-	bptr = &(dsk->cur_trk_ptr->raw_bptr[2]);
-
-	// printf("iwm_find_any_sync\n");
-
-	// We need to start at all 8 bit positions of byte 0 on the track,
-	//  and move forward until all 8 agree on the same position.
-	mask = 0xff;
-	slide = 0;
-	for(i = 0; i < track_bytes; i++) {
-		new_mask = 0;
-		this_val = bptr[i];
-		if(this_val == 0xff) {
-			continue;
-		}
-		//printf("bptr[%04x]=%02x, mask:%02x, slide:%02x\n", i,
-		//					this_val, mask, slide);
-		for(j = 7; j >= 0; j--) {
-			if((this_val >> j) & 1) {
-				new_mask |= (slide << j) | (mask & (1 << j));
-				slide = 0;
-			} else {
-				slide = slide | ((mask >> j) & 1);
+			if(bit >= this_bits) {
+				// Skip over this partial byte to byte 0
+				bit -= this_bits;
+				pos = 0;
+				continue;
 			}
 		}
-		mask = new_mask;
-		// printf("   now mask=%02x\n", mask);
-		if(((mask & (mask - 1)) == 0) && (slide == 0)) {
-			// We've got it.
-			for(j = 0; j < 8; j++) {
-				mask = mask >> 1;
-				if(mask == 0) {
-					sync_ptr[i] = j;
 #if 0
-					printf("Set sync_ptr[%04x]=%02x\n",
-						i, j);
+		if(wrap || (pos >= 0x2630)) {
+			printf("pos:%04x, bit:%d, val:%04x, this_bits:%d\n",
+				pos, bit, val, this_bits);
+		}
 #endif
-					iwm_recalc_sync_from(dsk, i << 5,
-									dcycs);
+#if 0
+		if((cnt++ < 10) && (dsk->cur_frac_track == 0)) {
+			printf("sync[%04x]=%02x, val:%02x bit:%d, this_b:%d\n",
+				pos, this_sync, val, bit, this_bits);
+		}
+#endif
+		// bit is within this byte.  Find next set bit
+		while(bit < this_bits) {
+			if(((val << bit) & 0x80) == 0) {
+				// Slide to next bit
+				bit++;
+				continue;
+			}
+			sync_ptr[pos] = 7 - bit;
+			if(this_sync == (word32)(7 - bit)) {
+				match++;
+				if(match >= 7) {
+#if 0
+					printf("match %d at pos:%04x wrap:%d\n",
+						match, pos, wrap);
+#endif
 					return;
 				}
+			} else {
+				match = 0;
 			}
+			break;
 		}
+		bit = (bit + 8 - this_bits) & 7;
+		pos = next_pos;
 	}
-
-	// Entire track is all ff's (or close to it) so there's no reliable
-	//  singular sync bit.  So just return whatever.
-	this_val = bptr[0];
-	for(i = 0; i < 8; i++) {
-		if((this_val >> i) & 1) {
-			sync_ptr[0] = i;
-			iwm_recalc_sync_from(dsk, 0, dcycs);
-			return;
-		}
-	}
-
-	sync_ptr[0] = 1;
-	halt_printf("No sync found and first byte was 0!\n");
-	exit(2);
 }
 
 /* c600 */
@@ -1975,26 +2124,26 @@ disk_unnib_4x4(Disk *dsk)
 }
 
 int
-iwm_denib_track525(Disk *dsk, byte *outbuf)
+iwm_denib_track525(Disk *dsk, word32 qtr_track, byte *outbuf)
 {
 	byte	aux_buf[0x80];
 	int	sector_done[16];
 	byte	*buf;
-	word32	val, val2, prev_val;
+	word32	val, val2, prev_val, save_frac_track;
 	int	track_len, vol, track, phys_sec, log_sec, cksum, x, my_nib_cnt;
-	int	qtr_track, save_qbit_pos, tmp_qbit_pos, status, ret;
-	int	num_sectors_done;
+	int	save_fbit_pos, tmp_fbit_pos, status, ret, num_sectors_done;
 	int	i;
 
 	//printf("iwm_denib_track525\n");
 
-	save_qbit_pos = dsk->cur_qbit_pos;
+	save_fbit_pos = dsk->cur_fbit_pos;
+	save_frac_track = dsk->cur_frac_track;
+	iwm_move_to_qtr_track(dsk, qtr_track);
 
-	dsk->cur_qbit_pos = 0;
-	qtr_track = dsk->cur_qtr_track;
+	dsk->cur_fbit_pos = 0;
 	g_fast_disk_unnib = 1;
 
-	track_len = dsk->cur_track_qbits >> 5;
+	track_len = (dsk->cur_track_bits + 7) >> 3;
 
 	for(i = 0; i < 16; i++) {
 		sector_done[i] = 0;
@@ -2084,9 +2233,8 @@ iwm_denib_track525(Disk *dsk, byte *outbuf)
 		}
 
 		if(i >= NIBS_FROM_ADDR_TO_DATA) {
-			printf("No data header, track %02x, sec %02x\n",
-				qtr_track>>2, phys_sec);
-			printf("qbit_pos*8: %08x\n", dsk->cur_qbit_pos * 8);
+			printf("No data header, track %02x, sec %02x at %07x\n",
+				qtr_track>>2, phys_sec, dsk->cur_fbit_pos);
 			break;
 		}
 
@@ -2100,8 +2248,8 @@ iwm_denib_track525(Disk *dsk, byte *outbuf)
 			if(val2 >= 0x100) {
 				printf("Bad data area1, val:%02x,val2:%03x\n",
 								val, val2);
-				printf(" i:%03x, qbit_pos*8:%06x\n", i,
-							dsk->cur_qbit_pos * 8);
+				printf(" i:%03x, fbit_pos:%08x\n", i,
+							dsk->cur_fbit_pos);
 				break;
 			}
 			prev_val = val2 ^ prev_val;
@@ -2114,8 +2262,7 @@ iwm_denib_track525(Disk *dsk, byte *outbuf)
 			val2 = g_from_disk_byte[val];
 			if(val2 >= 0x100) {
 				printf("Bad data area2, read: %02x\n", val);
-				printf("  qbit_pos*8: %06x\n",
-							dsk->cur_qbit_pos * 8);
+				printf("  fbit_pos: %07x\n", dsk->cur_fbit_pos);
 				break;
 			}
 			prev_val = val2 ^ prev_val;
@@ -2127,27 +2274,27 @@ iwm_denib_track525(Disk *dsk, byte *outbuf)
 		val2 = g_from_disk_byte[val];
 		if(val2 >= 0x100) {
 			printf("Bad data area3, read: %02x\n", val);
-			printf("  qbit_pos*8: %04x\n", dsk->cur_qbit_pos * 8);
+			printf("  fbit_pos: %07x\n", dsk->cur_fbit_pos);
 			break;
 		}
 		if(val2 != prev_val) {
 			printf("Bad data cksum, got %02x, wanted: %02x\n",
 				val2, prev_val);
-			printf("  qbit_pos*8: %04x\n", dsk->cur_qbit_pos * 8);
+			printf("  fbit_pos: %07x\n", dsk->cur_fbit_pos);
 			break;
 		}
 
 		val = iwm_read_data_fast(dsk, 0);
 		if(val != 0xde) {
 			printf("No 0xde at end of sector data:%02x\n", val);
-			printf("  qbit_pos*8: %04x\n", dsk->cur_qbit_pos * 8);
+			printf("  fbit_pos: %07x\n", dsk->cur_fbit_pos);
 			break;
 		}
 
 		val = iwm_read_data_fast(dsk, 0);
 		if(val != 0xaa) {
 			printf("No 0xde,0xaa at end of sector:%02x\n", val);
-			printf("  qbit_pos*8: %04x\n", dsk->cur_qbit_pos * 8);
+			printf("  fbit_pos: %07x\n", dsk->cur_fbit_pos);
 			break;
 		}
 
@@ -2174,36 +2321,39 @@ iwm_denib_track525(Disk *dsk, byte *outbuf)
 		}
 	}
 
-	tmp_qbit_pos = dsk->cur_qbit_pos;
-	dsk->cur_qbit_pos = save_qbit_pos;
+	tmp_fbit_pos = dsk->cur_fbit_pos;
 	g_fast_disk_unnib = 0;
 
-	if(status == 0) {
+	ret = 0;
+	if(status != 0) {
+		printf("Nibblization not done, %02x sectors found qtrk %04x, "
+			"drive:%d, slot:%d\n", num_sectors_done, qtr_track,
+			dsk->drive, dsk->disk_525 + 5);
+		printf("my_nib_cnt: %05x, fbit_pos:%07x, trk_len:%05x\n",
+			my_nib_cnt, tmp_fbit_pos, track_len);
+		ret = 16;
+		for(i = 0; i < 16; i++) {
+			printf("sector_done[%d] = %d\n", i, sector_done[i]);
+			if(sector_done[i]) {
+				ret--;
+			}
+		}
+		iwm_show_a_track(dsk, dsk->cur_trk_ptr, 0.0);
+		if(!ret) {
+			ret = -1;
+		}
+	} else {
 		//printf("iwm_denib_track525 succeeded\n");
-		return 0;
 	}
 
-	printf("Nibblization not done, %02x sectors found on track %02x, "
-		"drive:%d, slot:%d\n", num_sectors_done, qtr_track >> 2,
-		dsk->drive, dsk->disk_525 + 5);
-	printf("my_nib_cnt: %05x, qbit_pos*8:%06x, trk_len:%05x\n", my_nib_cnt,
-		tmp_qbit_pos * 8, track_len);
-	ret = 16;
-	for(i = 0; i < 16; i++) {
-		printf("sector_done[%d] = %d\n", i, sector_done[i]);
-		if(sector_done[i]) {
-			ret--;
-		}
-	}
-	iwm_show_a_track(dsk, dsk->cur_trk_ptr, 0.0);
-	if(ret) {
-		return ret;
-	}
-	return -1;
+	dsk->cur_fbit_pos = save_fbit_pos;
+	iwm_move_to_ftrack(dsk, save_frac_track, 0, 0.0);
+
+	return ret;
 }
 
 int
-iwm_denib_track35(Disk *dsk, byte *outbuf)
+iwm_denib_track35(Disk *dsk, word32 qtr_track, byte *outbuf)
 {
 	word32	buf_c00[0x100];
 	word32	buf_d00[0x100];
@@ -2211,23 +2361,26 @@ iwm_denib_track35(Disk *dsk, byte *outbuf)
 	int	sector_done[16];
 	byte	*buf;
 	word32	tmp_5c, tmp_5d, tmp_5e, tmp_66, tmp_67, val, val2;
+	word32	save_frac_track;
 	int	num_sectors_done, track_len, phys_track, phys_sec, phys_side;
 	int	phys_capacity, cksum, tmp, track, side, num_sectors, x, y;
-	int	carry, my_nib_cnt, qtr_track, save_qbit_pos, status;
+	int	carry, my_nib_cnt, save_fbit_pos, status, ret;
 	int	i;
 
-	save_qbit_pos = dsk->cur_qbit_pos;
+	save_fbit_pos = dsk->cur_fbit_pos;
+	save_frac_track = dsk->cur_frac_track;
+	iwm_move_to_qtr_track(dsk, qtr_track);
+
 	if(dsk->cur_trk_ptr == 0) {
 		return 0;
 	}
 
-	qtr_track = dsk->cur_qtr_track;
-	dsk->cur_qbit_pos = 0;
+	dsk->cur_fbit_pos = 0;
 	g_fast_disk_unnib = 1;
 
-	track_len = dsk->cur_track_qbits >> 5;
+	track_len = dsk->cur_track_bits >> 3;
 
-	num_sectors = g_track_bytes_35[dsk->cur_qtr_track >> 5] >> 9;
+	num_sectors = g_track_bytes_35[qtr_track >> 5] >> 9;
 
 	for(i = 0; i < num_sectors; i++) {
 		sector_done[i] = 0;
@@ -2320,7 +2473,7 @@ iwm_denib_track35(Disk *dsk, byte *outbuf)
 		if(val != 0xaa) {
 			printf("Bad data hdr1,val:%02x trk %02x.%x, sec %02x\n",
 				val, track, side, phys_sec);
-			printf("qbit_pos*8: %08x\n", dsk->cur_qbit_pos * 8);
+			printf("fbit_pos: %08x\n", dsk->cur_fbit_pos);
 			break;
 		}
 
@@ -2328,8 +2481,7 @@ iwm_denib_track35(Disk *dsk, byte *outbuf)
 		if(val != 0xad) {
 			printf("Bad data hdr2,val:%02x trk %02x.%x, sec %02x\n",
 				val, track, side, phys_sec);
-			printf("dsk->cur_qbit_pos*8:%06x\n",
-					dsk->cur_qbit_pos * 8);
+			printf("dsk->cur_fbit_pos:%07x\n", dsk->cur_fbit_pos);
 			break;
 		}
 
@@ -2356,8 +2508,8 @@ iwm_denib_track35(Disk *dsk, byte *outbuf)
 			val2 = g_from_disk_byte[val];
 			if(val2 >= 0x100) {
 				printf("Bad data area1b, read: %02x\n", val);
-				printf(" i:%03x, qbit_pos*8:%04x\n", i,
-							dsk->cur_qbit_pos * 8);
+				printf(" i:%03x, fbit_pos:%07x\n", i,
+							dsk->cur_fbit_pos);
 				break;
 			}
 			tmp_66 = val2;
@@ -2449,7 +2601,7 @@ iwm_denib_track35(Disk *dsk, byte *outbuf)
 		if(val != 0xde) {
 			printf("Bad data epi1,val:%02x trk %02x.%x, sec %02x\n",
 				val, track, side, phys_sec);
-			printf("qbit_pos*8: %08x\n", dsk->cur_qbit_pos * 8);
+			printf("fbit_pos: %08x\n", dsk->cur_fbit_pos);
 			break;
 		}
 
@@ -2492,44 +2644,45 @@ iwm_denib_track35(Disk *dsk, byte *outbuf)
 		val = 0;
 	}
 
-	if(status < 0) {
-		printf("dsk->qbit_pos*8: %06x, status: %d\n",
-						dsk->cur_qbit_pos * 8, status);
+	g_fast_disk_unnib = 0;
+
+	ret = 0;
+	if(status != 0) {
+		printf("dsk->fbit_pos: %07x, status: %d\n", dsk->cur_fbit_pos,
+								status);
 		for(i = 0; i < num_sectors; i++) {
 			printf("sector done[%d] = %d\n", i, sector_done[i]);
 		}
+		printf("Nibblization not done, %02x blocks found qtrk %04x\n",
+			num_sectors_done, qtr_track);
+
+		ret = -1;
 	}
 
-	dsk->cur_qbit_pos = save_qbit_pos;
-	g_fast_disk_unnib = 0;
+	dsk->cur_fbit_pos = save_fbit_pos;
+	iwm_move_to_ftrack(dsk, save_frac_track, 0, 0.0);
 
-	if(status == 0) {
-		return 0;
-	}
+	return ret;
 
-	printf("Nibblization not done, %02x blocks found on track %02x.%d\n",
-		num_sectors_done, qtr_track >> 1, qtr_track & 1);
-	return -1;
 }
 
 /* ret = 1 -> dirty data written out */
 /* ret = 0 -> not dirty, no error */
 /* ret < 0 -> error */
 int
-disk_track_to_unix(Disk *dsk, byte *outbuf)
+iwm_track_to_unix(Disk *dsk, word32 qtr_track, byte *outbuf)
 {
 	Trk	*trk;
 	dword64	dunix_pos, dret, unix_len;
 	int	ret;
 
-	trk = dsk->cur_trk_ptr;
-	if(trk == 0) {
-		return -1;
-	}
-	if(trk->track_qbits == 0) {
+	trk = &(dsk->trks[qtr_track]);
+	if((trk->track_bits == 0) || (trk->dirty == 0)) {
 		return 0;
 	}
 
+	printf("iwm_track_to_unix dirty qtr:%04x, dirty:%d\n", qtr_track,
+							trk->dirty);
 #if 0
 	if((qtr_track & 3) && disk_525) {
 		halt_printf("You wrote to phase %02x!  Can't wr bk to unix!\n",
@@ -2542,10 +2695,18 @@ disk_track_to_unix(Disk *dsk, byte *outbuf)
 	if(dsk->wozinfo_ptr) {				// WOZ disk
 		outbuf = trk->raw_bptr;
 		ret = 0;
-	} else if(dsk->disk_525) {
-		ret = iwm_denib_track525(dsk, outbuf);
 	} else {
-		ret = iwm_denib_track35(dsk, outbuf);
+		if(dsk->disk_525) {
+			if(qtr_track & 3) {
+				// Not a valid track
+				ret = -1;
+			} else {
+				ret = iwm_denib_track525(dsk, qtr_track,
+									outbuf);
+			}
+		} else {
+			ret = iwm_denib_track35(dsk, qtr_track, outbuf);
+		}
 	}
 
 	if(ret != 0) {
@@ -2553,28 +2714,33 @@ disk_track_to_unix(Disk *dsk, byte *outbuf)
 	}
 
 	/* Write it out */
-	trk = dsk->cur_trk_ptr;
 	dunix_pos = trk->dunix_pos;
 	unix_len = trk->unix_len;
 	if(unix_len < 0x1000) {
-		halt_printf("Disk:%s trk:%d, dunix_pos:%08llx, len:%08llx\n",
-			dsk->name_ptr, dsk->cur_qtr_track, dunix_pos, unix_len);
+		halt_printf("Disk:%s trk:%06x, dunix_pos:%08llx, len:%08llx\n",
+			dsk->name_ptr, dsk->cur_frac_track, dunix_pos,
+			unix_len);
 		return -1;
 	}
 
+	trk->dirty = 0;
 	if(dsk->dynapro_info_ptr) {
 		return dynapro_write(dsk, outbuf, dunix_pos, unix_len);
 	}
-	dret = lseek(dsk->fd, dunix_pos, SEEK_SET);
-	if(dret != dunix_pos) {
-		halt_printf("lseek 525: %08llx, errno: %d\n", dret, errno);
+
+	dret = cfg_write_to_fd(dsk->fd, outbuf, dunix_pos, unix_len);
+	printf("Write: qtr_trk:%04x, dunix_pos:%08llx, %s\n", qtr_track,
+			dunix_pos, dsk->name_ptr);
+	if(dret != unix_len) {
+		printf("write: %08llx, errno:%d, trk: %06x, disk: %s\n",
+			dret, errno, dsk->cur_frac_track, dsk->name_ptr);
 		return -1;
 	}
-
-	dret = write(dsk->fd, &(outbuf[0]), unix_len);
-	if(dret != unix_len) {
-		printf("write: %08llx, errno:%d, qtrk: %02x, disk: %s\n",
-			dret, errno, dsk->cur_qtr_track, dsk->name_ptr);
+	if(dsk->wozinfo_ptr) {				// WOZ disk
+		printf("Wrote track %07x to fd:%d off:%08llx, len:%07llx\n",
+			dsk->cur_frac_track, dsk->fd, dunix_pos, unix_len);
+		woz_rewrite_crc(dsk, 0);
+		woz_check_file(dsk);
 	}
 
 	return 1;
@@ -2593,7 +2759,6 @@ show_hex_data(byte *buf, int count)
 			buf[i+8], buf[i+9], buf[i+10], buf[i+11],
 			buf[i+12], buf[i+13], buf[i+14], buf[i+15]);
 	}
-
 }
 
 void
@@ -2602,12 +2767,12 @@ iwm_check_nibblization(double dcycs)
 	Disk	*dsk;
 	int	slot, drive, sel35;
 
-	drive = g_iwm.drive_select;
+	drive = (g_iwm.state >> IWM_BIT_DRIVE_SEL) & 1;
 	slot = 6;
-	if(g_iwm.motor_on) {
-		sel35 = (g_c031_disk35 >> 6) & 1;
+	if(g_iwm.state & IWM_STATE_MOTOR_ON) {
+		sel35 = (g_iwm.state >> IWM_BIT_C031_APPLE35SEL) & 1;
 	} else {
-		sel35 = g_iwm.last_sel35 & 1;
+		sel35 = (g_iwm.state >> IWM_BIT_LAST_SEL35) & 1;
 	}
 	if(sel35) {
 		dsk = &(g_iwm.drive35[drive]);
@@ -2623,6 +2788,7 @@ void
 disk_check_nibblization(Disk *dsk, byte *in_buf, int size, double dcycs)
 {
 	byte	buffer[0x3000];
+	word32	qtr_track;
 	int	ret, ret2;
 	int	i;
 
@@ -2638,10 +2804,16 @@ disk_check_nibblization(Disk *dsk, byte *in_buf, int size, double dcycs)
 	//printf("About to call iwm_denib_track*, here's the track:\n");
 	//iwm_show_a_track(dsk, dsk->cur_trk_ptr, dcycs);
 
+	qtr_track = dsk->cur_trk_ptr - &(dsk->trks[0]);
+	if(qtr_track >= 160) {
+		halt_printf("cur_trk_ptr points to bad qtr_track:%08x\n",
+								qtr_track);
+		return;
+	}
 	if(dsk->disk_525) {
-		ret = iwm_denib_track525(dsk, &(buffer[0]));
+		ret = iwm_denib_track525(dsk, qtr_track, &(buffer[0]));
 	} else {
-		ret = iwm_denib_track35(dsk, &(buffer[0]));
+		ret = iwm_denib_track35(dsk, qtr_track, &(buffer[0]));
 	}
 
 	ret2 = -1;
@@ -2657,20 +2829,20 @@ disk_check_nibblization(Disk *dsk, byte *in_buf, int size, double dcycs)
 	}
 
 	if((ret != 0) || (ret2 >= 0)) {
-		printf("disk_check_nib ret:%d, ret2:%d for q_track %03x\n",
-			ret, ret2, dsk->cur_qtr_track);
+		printf("disk_check_nib ret:%d, ret2:%d for track %06x\n",
+			ret, ret2, dsk->cur_frac_track);
 		if(in_buf) {
 			show_hex_data(in_buf, 0x1000);
 		}
-		show_hex_data(buffer, 0x1000);
+		show_hex_data(buffer, size);
 		iwm_show_a_track(dsk, dsk->cur_trk_ptr, dcycs);
 		if(ret == 16) {
 			printf("No sectors found, ignore it\n");
 			return;
 		}
 
-		//halt_printf("Stop\n");
-		//exit(2);
+		halt_printf("Stop\n");
+		exit(2);
 	}
 }
 
@@ -2755,17 +2927,19 @@ disk_unix_to_nib(Disk *dsk, int qtr_track, dword64 dunix_pos, word32 unix_len,
 	}
 #endif
 
-	dsk->cur_qbit_pos = 0;		/* for consistency */
+	dsk->cur_fbit_pos = 0;		/* for consistency */
+	dsk->raw_bptr_malloc = 1;
 
 	trk = &(dsk->trks[qtr_track]);
 	num_bytes = 2 + ((len_bits + 7) >> 3) + 4;
-	trk->track_qbits = len_bits * 4;
+	trk->track_bits = len_bits;
 	trk->dunix_pos = dunix_pos;
 	trk->unix_len = unix_len;
+	trk->dirty = 0;
 	trk->raw_bptr = (byte *)malloc(num_bytes);
 	trk->sync_ptr = (byte *)malloc(num_bytes);
 
-	iwm_move_to_track(dsk, qtr_track);
+	iwm_move_to_ftrack(dsk, qtr_track << 16, 0, dcycs);
 
 	/* create nibblized image */
 
@@ -2777,6 +2951,9 @@ disk_unix_to_nib(Disk *dsk, int qtr_track, dword64 dunix_pos, word32 unix_len,
 		iwm_nibblize_track_35(dsk, track_buf, qtr_track, unix_len,
 									dcycs);
 	}
+
+	//printf("For qtr_track:%04x, trk->dirty:%d\n", qtr_track, trk->dirty);
+	trk->dirty = 0;
 }
 
 void
@@ -2791,22 +2968,18 @@ iwm_nibblize_track_nib525(Disk *dsk, byte *track_buf, int qtr_track,
 	//  per track, but there's no sync information.  Just mark each byte
 	//  as being sync=7
 	len = unix_len;
-	bptr = &(dsk->cur_trk_ptr->raw_bptr[2]);
+	bptr = &(dsk->cur_trk_ptr->raw_bptr[0]);
 	sync_ptr = &(dsk->cur_trk_ptr->sync_ptr[0]);
 	for(i = 0; i < len; i++) {
 		bptr[i] = track_buf[i];
 	}
-	bptr[-1] = bptr[len - 1];
-	bptr[-2] = bptr[len - 2];
-	bptr[len] = bptr[0];
-	bptr[len + 1] = bptr[1];
-	for(i = 0; i < len + 4; i++) {
+	for(i = 0; i < len; i++) {
 		sync_ptr[i] = 7;
 	}
-	if(dsk->cur_track_qbits != (unix_len * 32)) {
-		fatal_printf("Track %d.%02d of nib image should be qbit*8:%06x "
+	if(dsk->cur_track_bits != (unix_len * 8)) {
+		fatal_printf("Track %d.%02d of nib image should be bits:%06x "
 			"but it is: %06x\n", qtr_track >> 2, (qtr_track & 3)*25,
-			unix_len * 256, dsk->cur_track_qbits * 8);
+			unix_len * 8, dsk->cur_track_bits);
 	}
 
 	iwm_printf("Nibblized q_track %02x\n", qtr_track);
@@ -2907,13 +3080,9 @@ iwm_nibblize_track_35(Disk *dsk, byte *track_buf, int qtr_track,
 	int	interleave, x, y;
 	int	i, phys_sec;
 
-	if(dsk->cur_track_qbits & 3) {
-		halt_printf("track_len*8: %08x is not bit aligned\n",
-				dsk->cur_track_qbits*8);
-	}
-	if(dsk->cur_qbit_pos & 3) {
-		halt_printf("qbit_pos*8:%06x is not bit-aligned!\n",
-							dsk->cur_qbit_pos);
+	if(dsk->cur_fbit_pos & 511) {
+		halt_printf("fbit_pos:%07x is not bit-aligned!\n",
+							dsk->cur_fbit_pos);
 	}
 
 	num_sectors = (unix_len >> 9);
@@ -2960,7 +3129,7 @@ iwm_nibblize_track_35(Disk *dsk, byte *track_buf, int qtr_track,
 			disk_nib_out(dsk, 0xff, 10);
 		}
 
-		disk_nib_out(dsk, 0xd5, 10);		/* prolog */
+		disk_nib_out(dsk, 0xd5, 8);		/* prolog */
 		disk_nib_out(dsk, 0xaa, 8);		/* prolog */
 		disk_nib_out(dsk, 0x96, 8);		/* prolog */
 
@@ -2982,7 +3151,7 @@ iwm_nibblize_track_35(Disk *dsk, byte *track_buf, int qtr_track,
 		for(i = 0; i < 5; i++) {
 			disk_nib_out(dsk, 0xff, 10);
 		}
-		disk_nib_out(dsk, 0xd5, 10);	/* data prolog */
+		disk_nib_out(dsk, 0xd5, 8);	/* data prolog */
 		disk_nib_out(dsk, 0xaa, 8);	/* data prolog */
 		disk_nib_out(dsk, 0xad, 8);	/* data prolog */
 		disk_nib_out(dsk, to_disk_byte[log_sec], 8);	/* sec again */
@@ -3127,14 +3296,12 @@ disk_4x4_nib_out(Disk *dsk, word32 val)
 void
 disk_nib_out(Disk *dsk, word32 val, int size)
 {
-	word32	qbit_pos;
+	word32	bit_pos;
 
-	qbit_pos = dsk->cur_qbit_pos;
-
-	if(size > 8) {
-		val = val << (size - 8);
-	}
-	dsk->cur_qbit_pos = disk_nib_out_raw(dsk, val, size, qbit_pos, 0.0);
+	bit_pos = dsk->cur_fbit_pos >> 9;
+	dsk->cur_fbit_pos = disk_nib_out_raw(dsk,
+		(dsk->cur_frac_track + 0x8000) >> 16, val, size, bit_pos, 0.0) *
+									512;
 }
 
 void
@@ -3142,122 +3309,101 @@ disk_nib_end_track(Disk *dsk, double dcycs)
 {
 	// printf("disk_nib_end_track %p\n", dsk);
 
-	dsk->cur_qbit_pos = 0;
+	dsk->cur_fbit_pos = 0;
 	dsk->disk_dirty = 0;
-	iwm_recalc_sync(dsk, 0, dcycs);
-}
-
-void
-disk_nib_out_zeroes(Disk *dsk, int bits, word32 qbit_pos, double dcycs)
-{
-	int	this_bits;
-
-	while(bits > 0) {
-		this_bits = 8;
-		if(bits < this_bits) {
-			this_bits = bits;
-		}
-		qbit_pos = disk_nib_out_raw(dsk, 0, this_bits, qbit_pos, dcycs);
-		bits -= this_bits;
-	}
+	iwm_recalc_sync_from(dsk, dsk->cur_trk_ptr - &(dsk->trks[0]), 0,
+								dcycs);
 }
 
 word32
-disk_nib_out_raw(Disk *dsk, word32 val, int bits, word32 qbit_pos, double dcycs)
+disk_nib_out_raw(Disk *dsk, word32 qtr_track, word32 val, int bits,
+				word32 bit_pos, double dcycs)
 {
-	word32	track_qbits, bits_left, tmp_val;
-
-	qbit_pos = qbit_pos & -4;			// Align to a bit
-
-	track_qbits = dsk->cur_track_qbits;
-	if(track_qbits < 1) {
-		printf("track_qbits:%05x!\n", track_qbits);
-		return qbit_pos;
-	}
-	if(dcycs != 0.0) {
-		dbg_log_info(dcycs, (bits << 24) | (qbit_pos << 3),
-				(track_qbits << 14) | val, 0xea);
-#if 0
-		printf("disk_nib_out_raw %02x, bits:%d, qbit_pos*8:%06x, "
-			"track_qbits*8:%06x\n", val, bits, qbit_pos * 8,
-			track_qbits * 8);
-#endif
-	}
-
-	bits_left = (track_qbits - qbit_pos) >> 2;
-	if(bits_left < (word32)bits) {
-		tmp_val = val >> (bits - bits_left);
-		disk_nib_out_raw_act(dsk, tmp_val, bits_left, qbit_pos, dcycs);
-#if 0
-		printf("At end, split: bits:%d, bits_left:%d, qbit*8:%06x, "
-			"val:%02x, tmp_val:%02x\n", bits, bits_left,
-			qbit_pos * 8, val, tmp_val);
-#endif
-		bits -= bits_left;
-		qbit_pos = 0;
-	}
-	return disk_nib_out_raw_act(dsk, val, bits, qbit_pos, dcycs);
-}
-
-word32
-disk_nib_out_raw_act(Disk *dsk, word32 val, int bits, word32 qbit_pos,
-								double dcycs)
-{
+	Trk	*trkptr;
 	byte	*bptr, *sync_ptr;
-	word32	track_qbits, shift, mask, val1;
-	word32	byte_pos, bit_pos, mask0, mask1, mask2;
+	word32	track_bits, tmp, mask;
+	int	pos, next_pos, bit, to_do, shift_left, shift_right, last_byte;
+	int	this_bits;
+	int	do_print;
 
-	// We're guaranteed not to overflow off the end, so just write in bits
-	// Write in val upper bits at qbit_pos (so first valid bit is
-	//  val & 0x80)
-	track_qbits = dsk->cur_track_qbits;
-#if 0
-	printf("disk_nib_out: %03x, bits:%d, %f, qbit_b_q:%04x_%d_%d, trk_qb:"
-		"%05x_%d_%d\n", val, bits, dcycs, qbit_pos >> 5,
-		(qbit_pos >> 2) & 7, qbit_pos & 3, track_qbits >> 5,
-		(track_qbits >> 2) & 7, track_qbits & 3);
-#endif
-	if(bits >= 16) {
-		halt_printf("BAD write, bits:%d\n", bits);
-		return qbit_pos;
+	// write bits from val[7:x].  If bits=3 and val=0xaf, write bits 101.
+	// If bits=10 and val=0xaf, write 0xaf then bits 00.
+
+	if(qtr_track >= 160) {
+		return bit_pos;
+	}
+	trkptr = &(dsk->trks[qtr_track]);
+	track_bits = trkptr->track_bits;
+	if(track_bits == 0) {
+		halt_printf("disk_nib_out_raw track_bits=0, %04x\n", qtr_track);
+		return bit_pos;
 	}
 
-	bit_pos = (qbit_pos >> 2) & 7;
-	byte_pos = (qbit_pos >> 5);
-	bptr = &(dsk->cur_trk_ptr->raw_bptr[2 + byte_pos]);
-	sync_ptr = &(dsk->cur_trk_ptr->sync_ptr[2 + byte_pos]);
-
-	shift = (24 - bits - bit_pos) & 31;
-	mask = ((1 << bits) - 1) << shift;
-	val1 = val << shift;
-	mask0 = (mask >> 16) & 0xff;
-	bptr[0] = (bptr[0] & (~mask0)) | ((val1 >> 16) & mask0);
-	mask1 = (mask >> 8) & 0xff;
-	bptr[1] = (bptr[1] & (~mask1)) | ((val1 >> 8) & mask1);
-	mask2 = mask & 0xff;
-	bptr[2] = (bptr[2] & (~mask2)) | (val1 & mask2);
-	if(dcycs != 0) {
-#if 0
-		printf(" set [%04x]=%02x,%02x,%02x mask:%06x, bit_pos:%d, "
-			"val:%02x dcycs:%f\n", byte_pos, bptr[0], bptr[1],
-			bptr[2], mask, bit_pos, val, dcycs);
-#endif
+	last_byte = (track_bits - 1) >> 3;
+	bit = bit_pos & 7;
+	pos = bit_pos >> 3;
+	bptr = &(trkptr->raw_bptr[0]);
+	sync_ptr = &(trkptr->sync_ptr[0]);
+	if(dcycs != 0.0) {
+		dbg_log_info(dcycs, (bits << 24) | (bit_pos << 1),
+				(track_bits << 16) | (val & 0xffff), 0x100ed);
 	}
-
-	sync_ptr[0] = 0xff;
-	sync_ptr[1] = 0xff;
-	sync_ptr[2] = 0xff;
-
-	qbit_pos += (4 * bits);
-	if(qbit_pos >= track_qbits) {
-		qbit_pos -= track_qbits;
-	}
-#if 0
-	printf(" new qbit*8:%06x\n", qbit_pos * 8);
-#endif
 	dsk->disk_dirty = 1;
-
-	return qbit_pos;
+	trkptr->dirty = 1;
+	do_print = ((pos <= 0x10) || (pos >= 0x18e0)) &&
+					(dsk->cur_frac_track == 0xb0000);
+	do_print = 0;
+	if(do_print) {
+		printf("disk_nib_out %02x, %d, %06x\n", val, bits, bit_pos*2);
+	}
+	while(1) {
+		this_bits = 8;
+		next_pos = pos + 1;
+		if(pos >= last_byte) {
+			this_bits = ((track_bits - 1) & 7) + 1;	// 1..8
+			next_pos = 0;
+		}
+		this_bits = (this_bits - bit);		// 1..8
+		to_do = bits;				// 1...inf
+		if(to_do > this_bits) {
+			to_do = this_bits;		// 1..8
+		}
+		shift_left = (8 - bit - to_do) & 7;
+		shift_right = 8 - to_do;
+		mask = (1U << to_do) - 1;
+		tmp = (val >> shift_right) & mask;
+		mask = mask << shift_left;
+		if(do_print) {
+			printf(" pos:%04x bit:%d tmp:%02x mask:%02x bits:%d "
+				"bptr[]=%02x new:%02x todo:%d, r:%d l:%d\n",
+				pos, bit, tmp, mask, bits, bptr[pos],
+				(bptr[pos] & (~mask)) |
+						((tmp << shift_left) & mask),
+				to_do, shift_right, shift_left);
+		}
+		bptr[pos] = (bptr[pos] & (~mask)) |
+						((tmp << shift_left) & mask);
+		sync_ptr[pos] = 0xff;
+		bits -= to_do;
+		if(bits <= 0) {
+			pos = (pos * 8) + bit + to_do;
+			if((bit + to_do) >= 8) {
+				pos = next_pos * 8;
+			}
+			if((word32)pos >= track_bits) {
+				pos -= track_bits;
+			}
+			if(do_print) {
+				printf(" returning %05x, bits:%d orig:%05x "
+					"%05x\n",
+					pos*2, bits, bit_pos*2, last_byte);
+			}
+			return pos;
+		}
+		val = (val << to_do) & 0xff;
+		bit = 0;
+		pos = next_pos;
+	}
 }
 
 Disk *
@@ -3284,6 +3430,29 @@ iwm_get_dsk_from_slot_drive(int slot, int drive)
 	}
 
 	return dsk;
+}
+
+void
+iwm_toggle_lock(Disk *dsk)
+{
+	printf("iwm_toggle_lock: write_prot:%d, write_through:%d\n",
+		dsk->write_prot, dsk->write_through_to_unix);
+	if((dsk->write_prot == 2) || (dsk->raw_data != 0) || (dsk->fd < 0)) {
+		// nothing to do
+		return;
+	}
+
+	if(dsk->write_prot) {
+		dsk->write_prot = 0;
+	} else {
+		dsk->write_prot = 1;
+	}
+	printf("New dsk->write_prot: %d\n", dsk->write_prot);
+	if(dsk->wozinfo_ptr) {
+		woz_rewrite_lock(dsk);
+		printf("Called woz_rewrite_lock()\n");
+		return;
+	}
 }
 
 void
@@ -3326,6 +3495,7 @@ void
 iwm_eject_disk(Disk *dsk)
 {
 	Woz_info *wozinfo_ptr;
+	word32	state;
 	int	motor_on;
 	int	i;
 
@@ -3337,9 +3507,10 @@ iwm_eject_disk(Disk *dsk)
 
 	g_config_kegs_update_needed = 1;
 
-	motor_on = g_iwm.motor_on;
-	if(g_c031_disk35 & 0x40) {
-		motor_on = g_iwm.motor_on35;
+	state = g_iwm.state;
+	motor_on = state & IWM_STATE_MOTOR_ON;
+	if(state & IWM_STATE_C031_APPLE35SEL) {
+		motor_on = state & IWM_STATE_MOTOR_ON35;
 	}
 	if(motor_on) {
 		halt_printf("Try eject dsk:%s, but motor_on!\n", dsk->name_ptr);
@@ -3354,15 +3525,18 @@ iwm_eject_disk(Disk *dsk)
 
 	/* free the tracks first */
 	if(dsk->trks != 0) {
-		for(i = 0; i < dsk->num_tracks; i++) {
-			free(dsk->trks[i].raw_bptr);
+		for(i = 0; i < MAX_TRACKS; i++) {
+			if(dsk->raw_bptr_malloc) {
+				free(dsk->trks[i].raw_bptr);
+			}
 			free(dsk->trks[i].sync_ptr);
 			dsk->trks[i].raw_bptr = 0;
 			dsk->trks[i].sync_ptr = 0;
-			dsk->trks[i].track_qbits = 0;
+			dsk->trks[i].track_bits = 0;
 		}
 	}
 	dsk->num_tracks = 0;
+	dsk->raw_bptr_malloc = 0;
 
 	wozinfo_ptr = dsk->wozinfo_ptr;
 	if(wozinfo_ptr) {
@@ -3388,8 +3562,8 @@ iwm_eject_disk(Disk *dsk)
 	dsk->raw_data = 0;
 	dsk->dimage_start = 0;
 	dsk->dimage_size = 0;
-	dsk->cur_qbit_pos = 0;
-	dsk->cur_track_qbits = 0;
+	dsk->cur_fbit_pos = 0;
+	dsk->cur_track_bits = 0;
 	dsk->disk_dirty = 0;
 	dsk->write_through_to_unix = 0;
 	dsk->write_prot = 1;
@@ -3403,16 +3577,16 @@ iwm_show_track(int slot_drive, int track, double dcycs)
 {
 	Disk	*dsk;
 	Trk	*trk;
-	int	drive;
-	int	sel35;
-	int	qtr_track;
+	word32	state;
+	int	drive, sel35, qtr_track;
 
+	state = g_iwm.state;
 	if(slot_drive < 0) {
-		drive = g_iwm.drive_select;
-		if(g_iwm.motor_on) {
-			sel35 = (g_c031_disk35 >> 6) & 1;
+		drive = (state >> IWM_BIT_DRIVE_SEL) & 1;
+		if(state & IWM_STATE_MOTOR_ON) {
+			sel35 = (state >> IWM_BIT_C031_APPLE35SEL) & 1;
 		} else {
-			sel35 = g_iwm.last_sel35 & 1;
+			sel35 = (state >> IWM_BIT_LAST_SEL35) & 1;
 		}
 	} else {
 		drive = slot_drive & 1;
@@ -3425,17 +3599,17 @@ iwm_show_track(int slot_drive, int track, double dcycs)
 	}
 
 	if(track < 0) {
-		qtr_track = dsk->cur_qtr_track;
+		qtr_track = dsk->cur_frac_track >> 16;
 	} else {
 		qtr_track = track;
 	}
-	if(dsk->trks == 0) {
+	if((dsk->trks == 0) || (qtr_track >= 160)) {
 		return;
 	}
 	trk = &(dsk->trks[qtr_track]);
 
-	if(trk->track_qbits == 0) {
-		dbg_printf("Track_qbits: %d\n", trk->track_qbits);
+	if(trk->track_bits == 0) {
+		dbg_printf("Track_bits: %d\n", trk->track_bits);
 		dbg_printf("No track for type: %d, drive: %d, qtrk:0x%02x\n",
 			sel35, drive, qtr_track);
 		return;
@@ -3452,13 +3626,13 @@ iwm_show_a_track(Disk *dsk, Trk *trk, double dcycs)
 {
 	byte	*bptr;
 	byte	*sync_ptr;
-	word32	val, track_qbits, len, shift, line_len, sync;
+	word32	val, track_bits, len, shift, line_len, sync;
 	int	i, j;
 
-	track_qbits = trk->track_qbits;
-	dbg_printf("  Showtrack:track_qbits*8: %06x, qbit_pos*8: %06x, "
-		"qtrk:%03x, dcycs:%f\n", track_qbits*8, dsk->cur_qbit_pos*8,
-		dsk->cur_qtr_track, dcycs);
+	track_bits = trk->track_bits;
+	dbg_printf("  Showtrack:track_bits*2: %06x, fbit_pos: %07x, "
+		"trk:%06x, dcycs:%f\n", track_bits*2, dsk->cur_fbit_pos,
+		dsk->cur_frac_track, dcycs);
 	dbg_printf("  disk_525:%d, drive:%d name:%s fd:%d, dimage_start:"
 		"%08llx, dimage_size:%08llx\n", dsk->disk_525, dsk->drive,
 		dsk->name_ptr, dsk->fd, dsk->dimage_start, dsk->dimage_size);
@@ -3466,10 +3640,10 @@ iwm_show_a_track(Disk *dsk, Trk *trk, double dcycs)
 		"write_through:%d, disk_dirty:%d\n", dsk->image_type,
 		dsk->vol_num, dsk->write_prot, dsk->write_through_to_unix,
 		dsk->disk_dirty);
-	dbg_printf("  just_ejected:%d, last_phase:%d, num_tracks:%d\n",
-		dsk->just_ejected, dsk->last_phase, dsk->num_tracks);
+	dbg_printf("  just_ejected:%d, last_phases:%d, num_tracks:%d\n",
+		dsk->just_ejected, dsk->last_phases, dsk->num_tracks);
 
-	len = (track_qbits + 31) >> 5;
+	len = (track_bits + 7) >> 3;
 	if(len >= 0x3000) {
 		len = 0x3000;
 		dbg_printf("len too big, using %04x\n", len);
@@ -3477,10 +3651,6 @@ iwm_show_a_track(Disk *dsk, Trk *trk, double dcycs)
 
 	bptr = trk->raw_bptr;
 	sync_ptr = trk->sync_ptr;
-	dbg_printf("-2,-1: %02x %02x.  Syncs: %02x %02x\n", bptr[0], bptr[1],
-				sync_ptr[0], sync_ptr[1]);
-	bptr += 2;
-	sync_ptr += 2;
 
 	len = len + 2;		// Show an extra 2 bytes
 	for(i = 0; i < (int)len; i += 16) {
@@ -3492,7 +3662,7 @@ iwm_show_a_track(Disk *dsk, Trk *trk, double dcycs)
 		dbg_printf("%04x:  ", i);
 		for(j = 0; j < (int)line_len; j++) {
 			dbg_printf(" %02x", bptr[i + j]);
-			if(((i + j) * 32U) >= track_qbits) {
+			if(((i + j) * 8U) >= track_bits) {
 				dbg_printf("*");
 			}
 		}

@@ -1,8 +1,8 @@
-const char rcsid_clock_c[] = "@(#)$KmKId: clock.c,v 1.36 2020-06-14 02:49:53+00 kentd Exp $";
+const char rcsid_clock_c[] = "@(#)$KmKId: clock.c,v 1.37 2022-04-03 13:38:08+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2019 by Kent Dickey		*/
+/*			Copyright 2002-2022 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -183,13 +183,14 @@ update_cur_time()
 	tm_ptr = localtime(&cur_time);
 	secs = mktime(tm_ptr);
 
+	secs2 = secs2 - secs;		// this is the timezone offset
 #ifdef MAC
 	/* Mac OS X's mktime function modifies the tm_ptr passed in for */
 	/*  the CDT timezone and breaks this algorithm.  So on a Mac, we */
 	/*  will use the tm_ptr->gmtoff member to correct the time */
 	secs = secs + tm_ptr->tm_gmtoff;
 #else
-	secs = (unsigned long)cur_time - (secs2 - secs);
+	secs = (unsigned long)cur_time - secs2;
 
 	if(tm_ptr->tm_isdst) {
 		/* adjust for daylight savings time */

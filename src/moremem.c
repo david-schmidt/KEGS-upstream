@@ -1,4 +1,4 @@
-const char rcsid_moremem_c[] = "@(#)$KmKId: moremem.c,v 1.277 2022-02-09 02:55:23+00 kentd Exp $";
+const char rcsid_moremem_c[] = "@(#)$KmKId: moremem.c,v 1.283 2022-05-06 21:47:30+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -32,6 +32,7 @@ extern Page_info page_info_rd_wr[];
 extern int Verbose;
 extern int g_rom_version;
 extern int g_user_page2_shadow;
+extern Iwm g_iwm;
 
 
 /* from iwm.c */
@@ -50,7 +51,6 @@ int	g_c023_val = 0;
 int	g_c029_val_some = 0x41;
 int	g_c02b_val = 0x08;
 int	g_c02d_int_crom = 0;
-int	g_c031_disk35 = 0;
 int	g_c033_data = 0;
 int	g_c034_val = 0;
 int	g_c035_shadow_reg = 0x08;
@@ -91,7 +91,6 @@ Emustate_intlist g_emustate_intlist[] = {
 	EMUSTATE(g_c029_val_some),
 	EMUSTATE(g_c02b_val),
 	EMUSTATE(g_c02d_int_crom),
-	EMUSTATE(g_c031_disk35),
 	EMUSTATE(g_c033_data),
 	EMUSTATE(g_c034_val),
 	EMUSTATE(g_c035_shadow_reg),
@@ -311,7 +310,8 @@ fixup_intcx()
 		}
 		for(j = 0xc8; j < 0xd0; j++) {
 			/* c800 - cfff */
-			if(((g_c02d_int_crom & (1 << 3)) == 0) || intcx) {
+			if(((g_c02d_int_crom & (1 << 3)) == 0) || intcx ||
+							(g_rom_version == 0)) {
 				rom_inc = rom10000 + (j << 8);
 			} else {
 				/* c800 space not necessarily mapped */
@@ -1142,6 +1142,9 @@ io_read(word32 loc, double *cyc_ptr)
 			return IOR((g_cur_a2_stat & ALL_STAT_ST80));
 		case 0x19: /* c019: rdvblbar: MSB set if in VBL */
 			tmp = in_vblank(dcycs);
+			if(g_rom_version == 0) {	// Apple //e
+				tmp = tmp ^ 1;		// 1=not in VBL on //e
+			}
 			return IOR(tmp);
 		case 0x1a: /* c01a: rdtext */
 			return IOR(g_cur_a2_stat & ALL_STAT_TEXT);
@@ -1205,7 +1208,7 @@ io_read(word32 loc, double *cyc_ptr)
 			return doc_read_c030(dcycs);
 		case 0x31: /* 0xc031 */
 			/* 3.5" control */
-			return g_c031_disk35;
+			return g_iwm.state & 0xc0;
 		case 0x32: /* 0xc032 */
 			/* scan int */
 			return 0;
@@ -1750,12 +1753,13 @@ io_write(word32 loc, int val, double *cyc_ptr)
 			(void)doc_read_c030(dcycs);
 			return;
 		case 0x31: /* 0xc031 */
-			tmp = val ^ g_c031_disk35;
-			if(tmp & 0x40) {
+			tmp = val ^ g_iwm.state;
+			iwm_flush_cur_disk();	// In case APPLE35SEL changes
+			g_iwm.state = (g_iwm.state & (~0xc0)) | (val & 0xc0);
+			if(tmp & IWM_STATE_C031_APPLE35SEL) {
 				/* apple35_sel changed, maybe speed change */
 				engine_recalc_events();
 			}
-			g_c031_disk35 = val & 0xc0;
 			return;
 		case 0x32: /* 0xc032 */
 			tmp = g_c023_val & 0x7f;
@@ -2177,9 +2181,11 @@ io_write(word32 loc, int val, double *cyc_ptr)
 		break;
 	case 1: case 2: case 5: case 6: case 7:
 		/* c1000 - c7ff (but not c3xx,c4xx) */
+		if((loc & 0xff) == 0) {		// Frogger writes $ff to $Cx00
+			return;
+		}
 		UNIMPL_WRITE;
 	case 3:
-		voc_devsel_write(loc, val, dcycs);
 		return;
 	case 4:
 		if((g_c02d_int_crom & 0x10) && !(g_c068_statereg & 1)) {
@@ -2255,7 +2261,7 @@ in_vblank(double dcycs)
 	lines_since_vbl = get_lines_since_vbl(dcycs);
 
 	if(lines_since_vbl >= 0xc000) {
-		return 1;
+		return 1;		// 1=in VBL
 	}
 
 	return 0;

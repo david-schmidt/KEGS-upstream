@@ -1,8 +1,8 @@
-const char rcsid_sound_c[] = "@(#)$KmKId: sound.c,v 1.140 2021-08-01 15:47:37+00 kentd Exp $";
+const char rcsid_sound_c[] = "@(#)$KmKId: sound.c,v 1.145 2023-02-26 17:46:34+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2023 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -394,7 +394,7 @@ open_sound_file()
 	char	name[256];
 	int	fd;
 
-	sprintf(name, "snd.out.%d", g_sound_file_num);
+	snprintf(name, sizeof(name), "snd.out.%d", g_sound_file_num);
 
 	fd = open(name, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0x1ff);
 	if(fd < 0) {
@@ -1774,7 +1774,8 @@ doc_read_c03d(double dcycs)
 			g_doc_saved_val = rptr->vol;
 			break;
 		case 0x3:	/* data register */
-			/* HACK: make this call sound_play sometimes */
+			dsamps = dcycs * g_dsamps_per_dcyc;
+			sound_play(dsamps);		// Fix for Paperboy GS
 			g_doc_saved_val = rptr->last_samp_val;
 			break;
 		case 0x4:	/* wave ptr register */
