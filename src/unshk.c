@@ -1,4 +1,4 @@
-const char rcsid_unshk_c[] = "@(#)$KmKId: unshk.c,v 1.13 2021-09-26 03:25:46+00 kentd Exp $";
+const char rcsid_unshk_c[] = "@(#)$KmKId: unshk.c,v 1.14 2023-05-19 13:57:52+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -478,7 +478,7 @@ unshk(Disk *dsk, const char *name_str)
 	if(fd < 0) {
 		return;
 	}
-	compr_size = cfg_get_fd_size(fd);
+	compr_size = (int)cfg_get_fd_size(fd);
 	printf("size: %d\n", compr_size);
 
 	cptr = malloc(compr_size + 0x1000);
@@ -528,7 +528,7 @@ unshk_dsk_raw_data(Disk *dsk)
 	dsk->raw_data = 0;
 	dsk->raw_dsize = 0;
 
-	compr_size = save_raw_dsize;
+	compr_size = (int)save_raw_dsize;
 	cptr = malloc(compr_size + 0x1000);
 	for(i = 0; i < 0x1000; i++) {
 		cptr[compr_size + i] = 0;

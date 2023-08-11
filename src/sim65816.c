@@ -1,8 +1,8 @@
-const char rcsid_sim65816_c[] = "@(#)$KmKId: sim65816.c,v 1.443 2022-04-24 15:19:24+00 kentd Exp $";
+const char rcsid_sim65816_c[] = "@(#)$KmKId: sim65816.c,v 1.457 2023-05-22 17:16:14+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2022 by Kent Dickey		*/
+/*			Copyright 2002-2023 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -70,7 +70,7 @@ extern int g_audio_enable;
 extern int g_preferred_rate;
 
 int	g_a2_fatal_err = 0;
-double	g_fcycles_end = 0.0;
+dword64	g_dcycles_end = 0;
 int	g_fcycles_end_for_event = 0;
 int	g_halt_sim = 0;
 int	g_rom_version = -1;
@@ -88,13 +88,13 @@ int	g_serial_out_masking = 0;
 int	g_serial_modem[2] = { 0, 1 };
 
 int	g_config_iwm_vbl_count = 0;
-const char g_kegs_version_str[] = "1.19";
+const char g_kegs_version_str[] = "1.26";
 
-double	g_last_vbl_dcycs = 0.0;
-double	g_cur_dcycs = 0.0001;
+dword64	g_last_vbl_dfcyc = 0;
+dword64	g_cur_dfcyc = 1;
 
-double	g_last_vbl_dadjcycs = 0.0;
-double	g_dadjcycs = 0.0;
+double	g_last_vbl_dadjcycs = 0;
+double	g_dadjcycs = 0;
 
 
 int	g_wait_pending = 0;
@@ -128,9 +128,9 @@ word32 g_natcycs_lastvbl = 0;
 int Verbose = 0;
 int Halt_on = 0;
 
-word32 g_mem_size_base = 256*1024;	/* size of motherboard memory */
+word32 g_mem_size_base = 128*1024;	/* size of motherboard memory */
 word32 g_mem_size_exp = 8*1024*1024;	/* size of expansion RAM card */
-word32 g_mem_size_total = 256*1024;	/* Total contiguous RAM from 0 */
+word32 g_mem_size_total = 128*1024;	/* Total contiguous RAM from 0 */
 
 extern word32 g_slow_mem_changed[];
 
@@ -216,14 +216,15 @@ toolbox_debug_4byte(word32 addr)
 }
 
 void
-toolbox_debug_c(word32 xreg, word32 stack, double *cyc_ptr)
+toolbox_debug_c(word32 xreg, word32 stack, dword64 *dcyc_ptr)
 {
 	int	pos;
 
 	pos = g_toolbox_log_pos;
 
 	stack += 9;
-	g_toolbox_log_array[pos][0] = g_last_vbl_dcycs + *cyc_ptr;
+	g_toolbox_log_array[pos][0] = (word32)
+					((g_last_vbl_dfcyc + *dcyc_ptr) >> 16);
 	g_toolbox_log_array[pos][1] = stack+1;
 	g_toolbox_log_array[pos][2] = xreg;
 	g_toolbox_log_array[pos][3] = toolbox_debug_4byte(stack+1);
@@ -267,7 +268,7 @@ show_toolbox_log()
 }
 
 word32
-get_memory_io(word32 loc, double *cyc_ptr)
+get_memory_io(word32 loc, dword64 *dcyc_ptr)
 {
 	int	tmp;
 
@@ -278,7 +279,7 @@ get_memory_io(word32 loc, double *cyc_ptr)
 
 	tmp = loc & 0xfef000;
 	if(tmp == 0xc000 || tmp == 0xe0c000) {
-		return(io_read(loc & 0xfff, cyc_ptr));
+		return(io_read(loc & 0xfff, dcyc_ptr));
 	}
 
 	/* Else it's an illegal addr...skip if memory sizing */
@@ -321,13 +322,13 @@ get_memory_io(word32 loc, double *cyc_ptr)
 }
 
 void
-set_memory_io(word32 loc, int val, double *cyc_ptr)
+set_memory_io(word32 loc, int val, dword64 *dcyc_ptr)
 {
 	word32	tmp;
 
 	tmp = loc & 0xfef000;
 	if(tmp == 0xc000 || tmp == 0xe0c000) {
-		io_write(loc, val, cyc_ptr);
+		io_write(loc, val, dcyc_ptr);
 		return;
 	}
 
@@ -384,8 +385,8 @@ show_regs_act(Engine_reg *eptr)
 
 	dbg_printf("  PC=%02x.%04x A=%04x X=%04x Y=%04x P=%03x",
 		kpc>>16, kpc & 0xffff ,tmp_acc,tmp_x,tmp_y,tmp_psw);
-	dbg_printf(" S=%04x D=%04x B=%02x,cyc:%.3f\n", stack, direct_page,
-		dbank, g_cur_dcycs);
+	dbg_printf(" S=%04x D=%04x B=%02x,cyc:%016llx\n", stack, direct_page,
+		dbank, g_cur_dfcyc);
 }
 
 void
@@ -433,9 +434,9 @@ do_reset()
 	adb_reset();
 	iwm_reset();
 	scc_reset();
-	sound_reset(g_cur_dcycs);
+	sound_reset(g_cur_dfcyc);
 	setup_pageinfo();
-	change_display_mode(g_cur_dcycs);
+	change_display_mode(g_cur_dfcyc);
 
 	g_irq_pending = 0;
 
@@ -457,44 +458,6 @@ do_reset()
 void
 check_engine_asm_defines()
 {
-	Fplus	fplus;
-	Fplus	*fplusptr;
-	Pc_log	pclog;
-	Pc_log	*pcptr;
-	Engine_reg ereg;
-	Engine_reg *eptr;
-	word32	val1;
-	word32	val2;
-
-	eptr = &ereg;
-	CHECK(eptr, eptr->fcycles, ENGINE_FCYCLES, val1, val2);
-	CHECK(eptr, eptr->fplus_ptr, ENGINE_FPLUS_PTR, val1, val2);
-	CHECK(eptr, eptr->acc, ENGINE_REG_ACC, val1, val2);
-	CHECK(eptr, eptr->xreg, ENGINE_REG_XREG, val1, val2);
-	CHECK(eptr, eptr->yreg, ENGINE_REG_YREG, val1, val2);
-	CHECK(eptr, eptr->stack, ENGINE_REG_STACK, val1, val2);
-	CHECK(eptr, eptr->dbank, ENGINE_REG_DBANK, val1, val2);
-	CHECK(eptr, eptr->direct, ENGINE_REG_DIRECT, val1, val2);
-	CHECK(eptr, eptr->psr, ENGINE_REG_PSR, val1, val2);
-	CHECK(eptr, eptr->kpc, ENGINE_REG_KPC, val1, val2);
-
-	pcptr = &pclog;
-	CHECK(pcptr, pcptr->dbank_kpc, LOG_PC_DBANK_KPC, val1, val2);
-	CHECK(pcptr, pcptr->instr, LOG_PC_INSTR, val1, val2);
-	CHECK(pcptr, pcptr->psr_acc, LOG_PC_PSR_ACC, val1, val2);
-	CHECK(pcptr, pcptr->xreg_yreg, LOG_PC_XREG_YREG, val1, val2);
-	CHECK(pcptr, pcptr->stack_direct, LOG_PC_STACK_DIRECT, val1, val2);
-	if(LOG_PC_SIZE != sizeof(pclog)) {
-		printf("LOG_PC_SIZE: %d != sizeof=%d\n", LOG_PC_SIZE,
-			(int)sizeof(pclog));
-		exit(2);
-	}
-
-	fplusptr = &fplus;
-	CHECK(fplusptr, fplusptr->plus_1, FPLUS_PLUS_1, val1, val2);
-	CHECK(fplusptr, fplusptr->plus_2, FPLUS_PLUS_2, val1, val2);
-	CHECK(fplusptr, fplusptr->plus_3, FPLUS_PLUS_3, val1, val2);
-	CHECK(fplusptr, fplusptr->plus_x_minus_1, FPLUS_PLUS_X_M1, val1, val2);
 }
 
 byte *
@@ -529,6 +492,9 @@ memory_ptr_init()
 	/* This routine may be called several times--each time the ROM file */
 	/*  changes this will be called */
 	mem_size = MY_MIN(0xdf0000, g_mem_size_base + g_mem_size_exp);
+	if(g_rom_version == 0) {			// Apple //e
+		mem_size = g_mem_size_base;
+	}
 	g_mem_size_total = mem_size;
 	if(g_memory_alloc_ptr) {
 		free(g_memory_alloc_ptr);
@@ -846,9 +812,9 @@ initialize_events()
 	g_event_list[MAX_EVENTS-1].next = 0;
 
 	g_event_start.next = 0;
-	g_event_start.dcycs = 0.0;
+	g_event_start.dfcyc = 0;
 
-	add_event_entry(DCYCS_IN_16MS, EV_60HZ);
+	add_event_entry(CYCLES_IN_16MS_RAW << 16, EV_60HZ);
 }
 
 void
@@ -867,8 +833,8 @@ check_for_one_event_type(int type)
 			count++;
 			if(count != 1) {
 				halt_printf("in check_for_1, type %d found at "
-					"depth: %d, count: %d, at %f\n",
-					type, depth, count, ptr->dcycs);
+					"depth: %d, count: %d, at %016llx\n",
+					type, depth, count, ptr->dfcyc);
 			}
 		}
 		ptr = ptr->next;
@@ -877,7 +843,7 @@ check_for_one_event_type(int type)
 
 
 void
-add_event_entry(double dcycs, int type)
+add_event_entry(dword64 dfcyc, int type)
 {
 	Event	*this_event;
 	Event	*ptr, *prev_ptr;
@@ -895,15 +861,15 @@ add_event_entry(double dcycs, int type)
 	this_event->type = type;
 
 	tmp_type = type & 0xff;
-	if((dcycs < 0.0) || (dcycs > (g_cur_dcycs + 50*1000*1000.0)) ||
-			((dcycs < g_cur_dcycs) && (tmp_type != EV_SCAN_INT))) {
-		halt_printf("add_event: dcycs: %f, type:%05x, cur_dcycs: %f!\n",
-			dcycs, type, g_cur_dcycs);
-		dcycs = g_cur_dcycs + 1000.0;
+	if((dfcyc > (g_cur_dfcyc + (50LL*1000*1000 << 16))) ||
+			((dfcyc < g_cur_dfcyc) && (tmp_type != EV_SCAN_INT))) {
+		halt_printf("add_event: dfcyc:%016llx, type:%05x, cur_dfcyc: "
+			"%016llx!\n", dfcyc, type, g_cur_dfcyc);
+		dfcyc = g_cur_dfcyc + (1000LL << 16);
 	}
 
 	ptr = g_event_start.next;
-	if(ptr && (dcycs < ptr->dcycs)) {
+	if(ptr && (dfcyc < ptr->dfcyc)) {
 		/* create event before next expected event */
 		/* do this by calling engine_recalc_events */
 		engine_recalc_events();
@@ -916,17 +882,17 @@ add_event_entry(double dcycs, int type)
 	while(!done) {
 		if(ptr == 0) {
 			this_event->next = ptr;
-			this_event->dcycs = dcycs;
+			this_event->dfcyc = dfcyc;
 			prev_ptr->next = this_event;
 			return;
 		} else {
-			if(ptr->dcycs < dcycs) {
+			if(ptr->dfcyc < dfcyc) {
 				/* step across this guy */
 				prev_ptr = ptr;
 				ptr = ptr->next;
 			} else {
 				/* go in front of this guy */
-				this_event->dcycs = dcycs;
+				this_event->dfcyc = dfcyc;
 				this_event->next = ptr;
 				prev_ptr->next = this_event;
 				return;
@@ -937,7 +903,7 @@ add_event_entry(double dcycs, int type)
 
 extern int g_doc_saved_ctl;
 
-double
+dword64
 remove_event_entry(int type)
 {
 	Event	*ptr, *prev_ptr;
@@ -956,7 +922,7 @@ remove_event_entry(int type)
 			ptr->next = g_event_free.next;
 			g_event_free.next = ptr;
 
-			return ptr->dcycs;
+			return ptr->dfcyc;
 		}
 		prev_ptr = ptr;
 		ptr = ptr->next;
@@ -971,71 +937,72 @@ remove_event_entry(int type)
 #endif
 	show_all_events();
 
-	return 0.0;
+	return 0;
 }
 
 void
-add_event_stop(double dcycs)
+add_event_stop(dword64 dfcyc)
 {
-	add_event_entry(dcycs, EV_STOP);
+	add_event_entry(dfcyc, EV_STOP);
 }
 
 void
-add_event_doc(double dcycs, int osc)
+add_event_doc(dword64 dfcyc, int osc)
 {
-	if(dcycs < g_cur_dcycs) {
-		dcycs = g_cur_dcycs;
-		//halt_printf("add_event_doc: dcycs: %f, cur_dcycs: %f\n",
-		//	dcycs, g_cur_dcycs);
+	if(dfcyc < g_cur_dfcyc) {
+		dfcyc = g_cur_dfcyc;
+		//halt_printf("add_event_doc: dfcyc:%016llx, cur_dfcyc:"
+		//	"%016llx\n", dfcyc, g_cur_dfcyc);
 	}
 
-	add_event_entry(dcycs, EV_DOC_INT + (osc << 8));
+	add_event_entry(dfcyc, EV_DOC_INT + (osc << 8));
 }
 
 void
-add_event_scc(double dcycs, int type)
+add_event_scc(dword64 dfcyc, int type)
 {
-	if(dcycs < g_cur_dcycs) {
-		dcycs = g_cur_dcycs;
+	if(dfcyc < g_cur_dfcyc) {
+		dfcyc = g_cur_dfcyc;
 	}
 
-	add_event_entry(dcycs, EV_SCC + (type << 8));
+	add_event_entry(dfcyc, EV_SCC + (type << 8));
 }
 
 void
 add_event_vbl()
 {
-	double	dcycs;
+	dword64	dfcyc;
 
-	dcycs = g_last_vbl_dcycs + (DCYCS_IN_16MS * (192.0/262.0));
-	add_event_entry(dcycs, EV_VBL_INT);
+	dfcyc = g_last_vbl_dfcyc + ((192*65LL) << 16);
+	add_event_entry(dfcyc, EV_VBL_INT);
 }
 
 void
 add_event_vid_upd(int line)
 {
-	double	dcycs;
+	dword64	dfcyc;
 
-	dcycs = g_last_vbl_dcycs + ((DCYCS_IN_16MS * line) / 262.0);
-	add_event_entry(dcycs, EV_VID_UPD + (line << 8));
+	dfcyc = g_last_vbl_dfcyc + (((line + 1) * 65LL) << 16);
+	add_event_entry(dfcyc, EV_VID_UPD + (line << 8));
+		// Redraw line when video counters first read video data
 }
 
 void
-add_event_mockingboard(double dcycs)
+add_event_mockingboard(dword64 dfcyc)
 {
-	if(dcycs < g_cur_dcycs) {
-		dcycs = g_cur_dcycs;
+	if(dfcyc < g_cur_dfcyc) {
+		dfcyc = g_cur_dfcyc;
 	}
-	add_event_entry(dcycs, EV_MOCKINGBOARD);
+	add_event_entry(dfcyc, EV_MOCKINGBOARD);
 }
 
-double
+dword64
 remove_event_doc(int osc)
 {
 	return remove_event_entry(EV_DOC_INT + (osc << 8));
 }
 
-double
+dword64
 remove_event_scc(int type)
 {
 	return remove_event_entry(EV_SCC + (type << 8));
@@ -1051,15 +1018,15 @@ void
 show_all_events()
 {
 	Event	*ptr;
+	dword64	dfcyc;
 	int	count;
-	double	dcycs;
 
 	count = 0;
 	ptr = g_event_start.next;
 	while(ptr != 0) {
-		dcycs = ptr->dcycs;
-		printf("Event: %02x: type: %05x, dcycs: %f (%f)\n",
-			count, ptr->type, dcycs, dcycs - g_cur_dcycs);
+		dfcyc = ptr->dfcyc;
+		printf("Event: %02x: type: %05x, dfcyc: %016llx (%08llx)\n",
+			count, ptr->type, dfcyc, dfcyc - g_cur_dfcyc);
 		ptr = ptr->next;
 		count++;
 	}
@@ -1088,6 +1055,7 @@ double	g_zip_pmhz = 8.0;
 double	g_sim_mhz = 100.0;
 int	g_line_ref_amt = 1;
 int	g_video_line_update_interval = 0;
+dword64	g_video_pixel_dcount = 0;
 
 Fplus	g_recip_projected_pmhz_slow;
 Fplus	g_recip_projected_pmhz_fast;
@@ -1105,7 +1073,7 @@ show_pmhz()
 void
 setup_zip_speeds()
 {
-	double	frecip;
+	dword64	drecip;
 	double	fmhz;
 	int	mult;
 
@@ -1119,15 +1087,15 @@ setup_zip_speeds()
 		fmhz = fmhz * 1.19;
 	}
 #endif
-	frecip = 1.0 / fmhz;
+	drecip = (dword64)(65536 / fmhz);
 	g_zip_pmhz = fmhz;
-	g_recip_projected_pmhz_zip.plus_1 = frecip;
-	g_recip_projected_pmhz_zip.plus_2 = 2.0 * frecip;
-	g_recip_projected_pmhz_zip.plus_3 = 3.0 * frecip;
-	if(frecip >= 0.5) {
-		g_recip_projected_pmhz_zip.plus_x_minus_1 = 1.01;
+	g_recip_projected_pmhz_zip.dplus_1 = drecip;
+	if(fmhz <= 2.0) {
+		g_recip_projected_pmhz_zip.dplus_x_minus_1 =
+						(dword64)(1.01 * 65536);
 	} else {
-		g_recip_projected_pmhz_zip.plus_x_minus_1 = 1.01 - frecip;
+		g_recip_projected_pmhz_zip.dplus_x_minus_1 =
+					(dword64)(1.01 * 65536 - drecip);
 	}
 }
 
@@ -1184,8 +1152,8 @@ run_a2_one_vbl()
 {
 	Fplus	*fplus_ptr;
 	Event	*this_event, *db1;
-	double	dcycs, now_dtime, prev_dtime, prerun_fcycles, fspeed_mult;
-	double	fcycles_stop;
+	double	now_dtime, prev_dtime, fspeed_mult;
+	dword64	dfcyc, dfcyc_stop, prerun_dfcyc;
 	word32	ret, zip_speed_0tof, zip_speed_0tof_new;
 	int	zip_en, zip_follow_cps, type, motor_on, iwm_1, iwm_25, fast;
 	int	limit_speed, apple35_sel, zip_speed, faster_than_28, unl_speed;
@@ -1194,15 +1162,12 @@ run_a2_one_vbl()
 
 	g_cur_sim_dtime = 0.0;
 
-	g_recip_projected_pmhz_slow.plus_1 = 1.0;
-	g_recip_projected_pmhz_slow.plus_2 = 2.0;
-	g_recip_projected_pmhz_slow.plus_3 = 3.0;
-	g_recip_projected_pmhz_slow.plus_x_minus_1 = 0.9;
+	g_recip_projected_pmhz_slow.dplus_1 = 0x10000;
+	g_recip_projected_pmhz_slow.dplus_x_minus_1 = (dword64)(0.9 * 0x10000);
 
-	g_recip_projected_pmhz_fast.plus_1 = (1.0 / 2.8);
-	g_recip_projected_pmhz_fast.plus_2 = (2.0 / 2.8);
-	g_recip_projected_pmhz_fast.plus_3 = (3.0 / 2.8);
-	g_recip_projected_pmhz_fast.plus_x_minus_1 = (1.98 - (1.0/2.8));
+	g_recip_projected_pmhz_fast.dplus_1 = (dword64)(0x10000 / 2.8);
+	g_recip_projected_pmhz_fast.dplus_x_minus_1 = (dword64)
+				((1.98 - (1.0/2.8)) * 0x10000);
 
 	zip_speed_0tof = g_zipgs_reg_c05a & 0xf0;
 	setup_zip_speeds();
@@ -1261,20 +1226,19 @@ run_a2_one_vbl()
 
 		engine.fplus_ptr = fplus_ptr;
 
-		prerun_fcycles = g_cur_dcycs - g_last_vbl_dcycs;
-		engine.fcycles = prerun_fcycles;
-		fcycles_stop = (g_event_start.next->dcycs - g_last_vbl_dcycs) +
-							0.001;
+		prerun_dfcyc = g_cur_dfcyc;
+		engine.dfcyc = prerun_dfcyc;
+		dfcyc_stop = g_event_start.next->dfcyc + 1;
 		if(g_stepping) {
-			fcycles_stop = prerun_fcycles;
+			dfcyc_stop = prerun_dfcyc + 1;
 		}
-		g_fcycles_end = fcycles_stop;
+		g_dcycles_end = dfcyc_stop;
 
 #if 0
 		printf("Enter engine, fcycs: %f, stop: %f\n",
 			prerun_fcycles, fcycles_stop);
-		printf("g_cur_dcycs: %f, last_vbl_dcyc: %f\n", g_cur_dcycs,
-			g_last_vbl_dcycs);
+		printf("g_cur_dfcyc:%016llx, last_vbl_dfcyc:%016llx\n",
+			g_cur_dfcyc, g_last_vbl_dfcyc);
 #endif
 
 		g_num_enter_engine++;
@@ -1286,17 +1250,16 @@ run_a2_one_vbl()
 
 		g_cur_sim_dtime += (now_dtime - prev_dtime);
 
-		dcycs = g_last_vbl_dcycs + (double)(engine.fcycles);
+		dfcyc = engine.dfcyc;
+		g_cur_dfcyc = dfcyc;
 
-		g_dadjcycs += (engine.fcycles - prerun_fcycles) *
+		g_dadjcycs += (engine.dfcyc - prerun_dfcyc) * (1/65536.0) *
 					fspeed_mult;
 
 #if 0
-		printf("...back, engine.fcycles: %f, dcycs: %f\n",
-			(double)engine.fcycles, dcycs);
+		printf("...back, engine.dfcyc: %016llx, dfcyc: %016llx\n",
+			(double)engine.dfcyc, dfcyc);
 #endif
-
-		g_cur_dcycs = dcycs;
 
 		if(ret != 0) {
 			g_engine_action++;
@@ -1304,46 +1267,46 @@ run_a2_one_vbl()
 		}
 
 		this_event = g_event_start.next;
-		while(dcycs >= this_event->dcycs) {
+		while(dfcyc >= this_event->dfcyc) {
 			/* Pop this guy off of the queue */
 			g_event_start.next = this_event->next;
 
 			type = this_event->type;
 			this_event->next = g_event_free.next;
 			g_event_free.next = this_event;
-			dbg_log_info(dcycs, type, 0, 0x101);
+			dbg_log_info(dfcyc, type, 0, 0x101);
 			switch(type & 0xff) {
 			case EV_60HZ:
-				update_60hz(dcycs, now_dtime);
+				update_60hz(dfcyc, now_dtime);
 				return 0;
 				break;
 			case EV_STOP:
 				printf("type: EV_STOP\n");
-				printf("next: %p, dcycs: %f\n",
-						g_event_start.next, dcycs);
+				printf("next: %p, dfcyc: %016llx\n",
+						g_event_start.next, dfcyc);
 				db1 = g_event_start.next;
-				halt_printf("next.dcycs: %f\n", db1->dcycs);
+				halt_printf("next.dfcyc:%016llx\n", db1->dfcyc);
 				break;
 			case EV_SCAN_INT:
 				g_engine_scan_int++;
 				irq_printf("type: scan int\n");
-				do_scan_int(dcycs, type >> 8);
+				do_scan_int(dfcyc, type >> 8);
 				break;
 			case EV_DOC_INT:
 				g_engine_doc_int++;
-				doc_handle_event(type >> 8, dcycs);
+				doc_handle_event(type >> 8, dfcyc);
 				break;
 			case EV_VBL_INT:
 				do_vbl_int();
 				break;
 			case EV_SCC:
-				do_scc_event(type >> 8, dcycs);
+				do_scc_event(type >> 8, dfcyc);
 				break;
 			case EV_VID_UPD:
 				video_update_event_line(type >> 8);
 				break;
 			case EV_MOCKINGBOARD:
-				mockingboard_event(dcycs);
+				mockingboard_event(dfcyc);
 				break;
 			default:
 				printf("Unknown event: %d!\n", type);
@@ -1391,12 +1354,11 @@ remove_irq(word32 irq_mask)
 void
 take_irq()
 {
-	word32	new_kpc;
-	word32	va;
+	word32	new_kpc, va;
 
-	irq_printf("Taking irq, at: %02x/%04x, psw: %02x, dcycs: %f\n",
-			engine.kpc>>16, engine.kpc & 0xffff, engine.psr,
-			g_cur_dcycs);
+	irq_printf("Taking irq, at: %02x/%04x, psw: %02x, dfcyc:%016llx\n",
+			engine.kpc >> 16, engine.kpc & 0xffff, engine.psr,
+			g_cur_dfcyc);
 
 	g_num_irq++;
 	if(g_wait_pending) {
@@ -1452,7 +1414,6 @@ double	g_dtime_expected = (1.0/VBL_RATE);	// Approximately 1.0/60.0
 
 int g_scan_int_events = 0;
 
-
 void
 show_dtime_array()
 {
@@ -1483,14 +1444,15 @@ show_dtime_array()
 
 
 void
-update_60hz(double dcycs, double dtime_now)
+update_60hz(dword64 dfcyc, double dtime_now)
 {
 	register word32 end_time;
 	char	status_buf[1024];
 	char	sim_mhz_buf[128];
 	char	total_mhz_buf[128];
 	char	*sim_mhz_ptr, *total_mhz_ptr, *code_str1, *code_str2, *sp_str;
-	double	eff_pmhz, planned_dcycs, predicted_pmhz, recip_predicted_pmhz;
+	dword64	planned_dcyc;
+	double	eff_pmhz, predicted_pmhz, recip_predicted_pmhz;
 	double	dtime_this_vbl_sim, dtime_diff_1sec, dratio, dtime_diff;
 	double	dtime_till_expected, dtime_this_vbl, dadjcycs_this_vbl;
 	double	dadj_cycles_1sec, dtmp1, dtmp2, dtmp3, dtmp4, dtmp5;
@@ -1501,14 +1463,14 @@ update_60hz(double dcycs, double dtime_now)
 	/* It's actually happening at the start of the border for line (-1) */
 	/* All other timings should be adjusted for this */
 
-	irq_printf("vbl_60hz: vbl: %d, dcycs: %f, last_vbl_dcycs: %f\n",
-		g_vbl_count, dcycs, g_last_vbl_dcycs);
+	irq_printf("vbl_60hz: vbl: %d, dfcyc:%016llx, last_vbl_dfcyc:%016llx\n",
+		g_vbl_count, dfcyc, g_last_vbl_dfcyc);
 
-	planned_dcycs = DCYCS_IN_16MS;
+	planned_dcyc = CYCLES_IN_16MS_RAW << 16;
 
-	g_last_vbl_dcycs = g_last_vbl_dcycs + planned_dcycs;
+	g_last_vbl_dfcyc = g_last_vbl_dfcyc + planned_dcyc;
 
-	add_event_entry(g_last_vbl_dcycs + planned_dcycs, EV_60HZ);
+	add_event_entry(g_last_vbl_dfcyc + planned_dcyc, EV_60HZ);
 	check_for_one_event_type(EV_60HZ);
 
 	cur_vbl_index = g_vbl_index_count;
@@ -1565,10 +1527,10 @@ update_60hz(double dcycs, double dtime_now)
 		default: sp_str = "Unlimited"; break;
 		}
 
-		snprintf(status_buf, sizeof(status_buf), "dcycs:%9.1f sim MHz:"
-			"%s Eff MHz:%s, sec:%1.3f vol:%02x Limit:%s",
-			dcycs/(1000.0*1000.0), sim_mhz_ptr, total_mhz_ptr,
-			dtime_diff_1sec, g_doc_vol, sp_str);
+		snprintf(status_buf, sizeof(status_buf), "dfcyc:%9.1f sim "
+			"MHz:%s Eff MHz:%s, sec:%1.3f vol:%02x Limit:%s",
+			(double)(dfcyc >> 20)/65536.0, sim_mhz_ptr,
+			total_mhz_ptr, dtime_diff_1sec, g_doc_vol, sp_str);
 		video_update_status_line(0, status_buf);
 
 		if(g_video_line_update_interval == 0) {
@@ -1592,12 +1554,13 @@ update_60hz(double dcycs, double dtime_now)
 		dtmp2 = (double)(g_cycs_in_check_input) / dnatcycs_1sec;
 		//dtmp3 = (double)(g_cycs_in_refresh_line) / dnatcycs_1sec;
 		dtmp3 = (double)(g_cycs_in_run_16ms) / dnatcycs_1sec;
-		dtmp4 = (double)(g_cycs_in_refresh_ximage) / dnatcycs_1sec;
+		dtmp4 = ((double)g_video_pixel_dcount) / VBL_RATE;
 		snprintf(status_buf, sizeof(status_buf), "xfer:%08x, %5.1f "
-			"ref_amt:%d ch_in:%4.1f%% ref_l:%4.1f%% ref_x:%4.1f%%",
+			"ref_amt:%d ch_in:%4.1f%% ref_l:%4.1f%% pix/fr:%6.0f",
 			g_refresh_bytes_xfer, g_dnatcycs_1sec/(1000.0*1000.0),
 			g_line_ref_amt, dtmp2, dtmp3, dtmp4);
 		video_update_status_line(1, status_buf);
+		g_video_pixel_dcount = 0;
 
 		snprintf(status_buf, sizeof(status_buf), "Ints:%3d I/O:%4dK "
 			"BRK:%3d COP:%2d Eng:%3d act:%3d rev:%3d esi:%3d "
@@ -1696,8 +1659,7 @@ update_60hz(double dcycs, double dtime_now)
 
 	g_dtime_expected += (1.0/VBL_RATE);	// Approx. 1/60
 
-	eff_pmhz = ((dadjcycs_this_vbl) / (dtime_this_vbl)) /
-							DCYCS_1_MHZ;
+	eff_pmhz = (dadjcycs_this_vbl / dtime_this_vbl) / DCYCS_1_MHZ;
 
 	/* using eff_pmhz, predict how many cycles can be run by */
 	/*  g_dtime_expected */
@@ -1721,18 +1683,18 @@ update_60hz(double dcycs, double dtime_now)
 		predicted_pmhz = 1.0;
 	}
 
-	if(!(predicted_pmhz < 1900.0)) {
+	if(!(predicted_pmhz < 4500.0)) {
 		irq_printf("predicted: %f, set to 1900.0\n", predicted_pmhz);
-		predicted_pmhz = 1900.0;
+		predicted_pmhz = 4500.0;
 	}
 
 	recip_predicted_pmhz = 1.0/predicted_pmhz;
 	g_projected_pmhz = predicted_pmhz;
 
-	g_recip_projected_pmhz_unl.plus_1 = 1.0*recip_predicted_pmhz;
-	g_recip_projected_pmhz_unl.plus_2 = 2.0*recip_predicted_pmhz;
-	g_recip_projected_pmhz_unl.plus_3 = 3.0*recip_predicted_pmhz;
-	g_recip_projected_pmhz_unl.plus_x_minus_1 = 1.01 - recip_predicted_pmhz;
+	g_recip_projected_pmhz_unl.dplus_1 = (dword64)
+						(65536 * recip_predicted_pmhz);
+	g_recip_projected_pmhz_unl.dplus_x_minus_1 =
+			(dword64)(65536 * (1.01 - recip_predicted_pmhz));
 
 	if(dtime_till_expected < -0.125) {
 		/* If we were way off, get back on track */
@@ -1743,14 +1705,14 @@ update_60hz(double dcycs, double dtime_now)
 
 		dtime_diff = -dtime_till_expected;
 
-		irq_printf("dtime_till_exp: %f, dtime_diff: %f, dcycs: %f\n",
-			dtime_till_expected, dtime_diff, dcycs);
+		irq_printf("dtime_till_exp:%f, dtime_diff:%f, dfcyc:%016llx\n",
+			dtime_till_expected, dtime_diff, dfcyc);
 
 		g_dtime_expected += dtime_diff;
 	}
 
 	g_dtime_sleep = 0.0;
-	if(dtime_till_expected > (3.0/VBL_RATE)) {
+	if(dtime_till_expected > (1.0/VBL_RATE)) {
 		/* we're running fast, usleep */
 		g_dtime_sleep = dtime_till_expected - (1.0/VBL_RATE);
 	}
@@ -1805,9 +1767,9 @@ update_60hz(double dcycs, double dtime_now)
 	iwm_vbl_update();
 	config_vbl_update(doit_3_persec);
 
-	sound_update(dcycs);
+	sound_update(dfcyc);
 	clock_update();
-	scc_update(dcycs);
+	scc_update(dfcyc);
 	paddle_update_buttons();
 }
 
@@ -1823,11 +1785,11 @@ do_vbl_int()
 }
 
 void
-do_scan_int(double dcycs, int line)
+do_scan_int(dword64 dfcyc, int line)
 {
 	int	c023_val;
 
-	if(dcycs) {
+	if(dfcyc) {
 		// Avoid unused param warning
 	}
 
@@ -1891,8 +1853,8 @@ check_scan_line_int(int cur_video_line)
 		}
 		if(g_slow_memory_ptr[0x19d00+i] & 0x40) {
 			irq_printf("Adding scan_int for line %d\n", i);
-			delay = (DCYCS_IN_16MS/262.0) * ((double)line);
-			add_event_entry(g_last_vbl_dcycs + delay, EV_SCAN_INT +
+			delay = 65 * line;
+			add_event_entry(g_last_vbl_dfcyc + delay, EV_SCAN_INT +
 					(line << 8));
 			g_scan_int_events = 1;
 			check_for_one_event_type(EV_SCAN_INT);
@@ -1902,11 +1864,11 @@ check_scan_line_int(int cur_video_line)
 }
 
 void
-check_for_new_scan_int(double dcycs)
+check_for_new_scan_int(dword64 dfcyc)
 {
 	int	cur_video_line;
 
-	cur_video_line = get_lines_since_vbl(dcycs) >> 8;
+	cur_video_line = get_lines_since_vbl(dfcyc) >> 8;
 	check_scan_line_int(cur_video_line);
 }
 
@@ -1920,9 +1882,7 @@ init_reg()
 	engine.direct = 0;
 	engine.psr = 0x134;
 	engine.fplus_ptr = 0;
-
 }
-
 
 void
 handle_action(word32 ret)
@@ -1958,7 +1918,7 @@ handle_action(word32 ret)
 		do_stp();
 		break;
 	case RET_TOOLTRACE:
-		dbg_log_info(g_cur_dcycs, engine.kpc, engine.xreg,
+		dbg_log_info(g_cur_dfcyc, engine.kpc, engine.xreg,
 						(engine.stack << 16) | 0xe100);
 		break;
 	default:
@@ -2062,10 +2022,16 @@ must_write(int fd, byte *bufptr, dword64 dsize)
 {
 	dword64	dlen;
 	long long ret;
+	word32	this_len;
 
 	dlen = dsize;
 	while(dlen != 0) {
-		ret = write(fd, bufptr, dlen);
+		// Support Windows64, which can only rd/wr 2GB max per call
+		this_len = (1UL << 30);
+		if(dlen < this_len) {
+			this_len = (word32)dlen;
+		}
+		ret = write(fd, bufptr, this_len);
 		if(ret >= 0) {
 			dlen -= ret;
 			bufptr += ret;
@@ -2099,5 +2065,15 @@ kegs_malloc_str(const char *in_str)
 	memcpy(str, in_str, len);
 
 	return str;
+}
+
+dword64
+kegs_lseek(int fd, dword64 offs, int whence)
+{
+#ifdef _WIN32
+	return _lseeki64(fd, offs, whence);
+#else
+	return lseek(fd, offs, whence);
+#endif
 }
 

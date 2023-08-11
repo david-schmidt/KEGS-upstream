@@ -11,7 +11,7 @@
 /************************************************************************/
 
 #ifdef INCLUDE_RCSID_C
-const char rcsid_protos_base_h[] = "@(#)$KmKId: protos_base.h,v 1.123 2023-03-05 22:14:01+00 kentd Exp $";
+const char rcsid_protos_base_h[] = "@(#)$KmKId: protos_base.h,v 1.136 2023-05-21 20:06:32+00 kentd Exp $";
 #endif
 
 #ifdef __GNUC__
@@ -29,24 +29,25 @@ int win_nonblock_read_stdin(int fd, char *bufptr, int len);
 /* special scc_macdriver.c prototypes */
 int scc_serial_mac_init(int port);
 void scc_serial_mac_change_params(int port);
-void scc_serial_mac_fill_readbuf(int port, int space_left, double dcycs);
+void scc_serial_mac_fill_readbuf(int port, int space_left, dword64 dfcyc);
 void scc_serial_mac_empty_writebuf(int port);
 
 /* special scc_windriver.c prototypes */
 int scc_serial_win_init(int port);
 void scc_serial_win_change_params(int port);
-void scc_serial_win_fill_readbuf(int port, int space_left, double dcycs);
+void scc_serial_win_fill_readbuf(int port, int space_left, dword64 dfcyc);
 void scc_serial_win_empty_writebuf(int port);
 
 /* special joystick_driver.c prototypes */
 void joystick_init(void);
-void joystick_update(double dcycs);
+void joystick_update(dword64 dfcyc);
 void joystick_update_buttons(void);
 
 /* END_HDR */
 
 /* adb.c */
 int adb_get_hide_warp_info(Kimage *kimage_ptr, int *warpptr);
+int adb_get_copy_requested(void);
 void adb_nonmain_check(void);
 void adb_init(void);
 void adb_reset(void);
@@ -75,8 +76,8 @@ int read_adb_ram(word32 addr);
 void write_adb_ram(word32 addr, int val);
 int adb_get_keypad_xy(int get_y);
 int adb_update_mouse(Kimage *kimage_ptr, int x, int y, int button_states, int buttons_valid);
-int mouse_read_c024(double dcycs);
-void mouse_compress_fifo(double dcycs);
+int mouse_read_c024(dword64 dfcyc);
+void mouse_compress_fifo(dword64 dfcyc);
 void adb_paste_update_state(void);
 int adb_paste_add_buf(word32 key);
 void adb_key_event(int a2code, int is_up);
@@ -86,20 +87,23 @@ word32 adb_read_c025(void);
 int adb_is_cmd_key_down(void);
 int adb_is_option_key_down(void);
 void adb_increment_speed(void);
+void adb_update_c025_mask(Kimage *kimage_ptr, word32 new_c025_val, word32 mask);
 int adb_ascii_to_a2code(int unicode_c, int a2code, int *shift_down_ptr);
-void adb_physical_key_update(Kimage *kimage_ptr, int a2code, word32 unicode_c, int is_up, int shift_down, int ctrl_down, int lock_down);
+void adb_physical_key_update(Kimage *kimage_ptr, int raw_a2code, word32 unicode_c, int is_up);
+void adb_maybe_virtual_key_update(int a2code, int is_up);
 void adb_virtual_key_update(int a2code, int is_up);
 void adb_kbd_repeat_off(void);
 void adb_mainwin_focus(int has_focus);
 
 
+
 /* engine_c.c */
-word32 get_memory8_io_stub(word32 addr, byte *stat, double *fcycs_ptr, double fplus_x_m1);
-word32 get_memory16_pieces_stub(word32 addr, byte *stat, double *fcycs_ptr, Fplus *fplus_ptr, int in_bank);
-word32 get_memory24_pieces_stub(word32 addr, byte *stat, double *fcycs_ptr, Fplus *fplus_ptr, int in_bank);
-void set_memory8_io_stub(word32 addr, word32 val, byte *stat, double *fcycs_ptr, double fplus_x_m1);
-void set_memory16_pieces_stub(word32 addr, word32 val, double *fcycs_ptr, double fplus_1, double fplus_x_m1, int in_bank);
-void set_memory24_pieces_stub(word32 addr, word32 val, double *fcycs_ptr, Fplus *fplus_ptr, int in_bank);
+word32 get_memory8_io_stub(word32 addr, byte *stat, dword64 *dcycs_ptr, dword64 dplus_x_m1);
+word32 get_memory16_pieces_stub(word32 addr, byte *stat, dword64 *dcycs_ptr, Fplus *fplus_ptr, int in_bank);
+word32 get_memory24_pieces_stub(word32 addr, byte *stat, dword64 *dcycs_ptr, Fplus *fplus_ptr, int in_bank);
+void set_memory8_io_stub(word32 addr, word32 val, byte *stat, dword64 *dcycs_ptr, dword64 dplus_x_m1);
+void set_memory16_pieces_stub(word32 addr, word32 val, dword64 *dcycs_ptr, dword64 dplus_1, dword64 dplus_x_m1, int in_bank);
+void set_memory24_pieces_stub(word32 addr, word32 val, dword64 *dcycs_ptr, Fplus *fplus_ptr, int in_bank);
 word32 get_memory_c(word32 addr);
 word32 get_memory16_c(word32 addr);
 word32 get_memory24_c(word32 addr);
@@ -113,8 +117,9 @@ word32 get_itimer(void);
 void engine_recalc_events(void);
 void set_halt_act(int val);
 void clr_halt_act(void);
-word32 get_remaining_operands(word32 addr, word32 opcode, word32 psr, double *cyc_ptr, Fplus *fplus_ptr);
+word32 get_remaining_operands(word32 addr, word32 opcode, word32 psr, dword64 *dcyc_ptr, Fplus *fplus_ptr);
 int enter_engine(Engine_reg *engine_ptr);
+
 
 
 /* clock.c */
@@ -131,7 +136,9 @@ void clock_write_c034(word32 val);
 void do_clock_data(void);
 
 
+
 /* compile_time.c */
+
 
 
 /* config.c */
@@ -145,6 +152,8 @@ void cfg_err_printf(const char *pre_str, const char *fmt, ...);
 void cfg_toggle_config_panel(void);
 void cfg_set_config_panel(int panel);
 void cfg_text_screen_dump(void);
+char *cfg_text_screen_str(void);
+char *cfg_get_current_copy_selection(void);
 void config_vbl_update(int doit_3_persec);
 void config_parse_option(char *buf, int pos, int len, int line);
 void config_parse_bram(char *buf, int pos, int len);
@@ -156,8 +165,8 @@ void config_generate_config_kegs_name(char *outstr, int maxlen, Disk *dsk, int w
 void config_write_config_kegs_file(void);
 void insert_disk(int slot, int drive, const char *name, int ejected, const char *partition_name, int part_num, word32 dynamic_blocks);
 dword64 cfg_get_fd_size(int fd);
-word32 cfg_read_from_fd(int fd, byte *bufptr, dword64 dpos, word32 size);
-word32 cfg_write_to_fd(int fd, byte *bufptr, dword64 dpos, word32 size);
+dword64 cfg_read_from_fd(int fd, byte *bufptr, dword64 dpos, dword64 dsize);
+dword64 cfg_write_to_fd(int fd, byte *bufptr, dword64 dpos, dword64 dsize);
 int cfg_partition_maybe_add_dotdot(void);
 int cfg_partition_name_check(const byte *name_ptr, int name_len);
 int cfg_partition_read_block(int fd, void *buf, dword64 blk, int blk_size);
@@ -218,14 +227,15 @@ int cfg_control_panel_update(void);
 int cfg_control_panel_update1(void);
 
 
+
 /* debugger.c */
 void debugger_init(void);
-void check_breakpoints(word32 addr, double *fcycs_ptr, word32 maybe_stack, word32 type);
-void debug_hit_bp(word32 addr, double *fcycs_ptr, word32 maybe_stack, word32 type, int pos);
+void check_breakpoints(word32 addr, dword64 dfcyc, word32 maybe_stack, word32 type);
+void debug_hit_bp(word32 addr, dword64 dfcyc, word32 maybe_stack, word32 type, int pos);
 int debugger_run_16ms(void);
-void dbg_log_info(double dcycs, word32 info1, word32 info2, word32 type);
+void dbg_log_info(dword64 dfcyc, word32 info1, word32 info2, word32 type);
 void debugger_update_list_kpc(void);
-void debugger_key_event(int a2code, int is_up, int shift_down, int ctrl_down, int lock_down);
+void debugger_key_event(Kimage *kimage_ptr, int a2code, int is_up);
 void debugger_page_updown(int isup);
 void debugger_redraw_screen(Kimage *kimage_ptr);
 void debug_draw_debug_line(Kimage *kimage_ptr, int line, int vid_line);
@@ -246,8 +256,8 @@ void debug_bp_setclr(const char *str, int is_set_clear);
 void debug_logpc(const char *str);
 void debug_logpc_on(const char *str);
 void debug_logpc_off(const char *str);
-void debug_logpc_out_data(FILE *pcfile, Data_log *log_data_ptr, double start_dcycs);
-Data_log *debug_show_data_info(FILE *pcfile, Data_log *log_data_ptr, double base_dcycs, double dcycs, double start_dcycs, int *data_wrap_ptr, int *count_ptr);
+void debug_logpc_out_data(FILE *pcfile, Data_log *log_data_ptr, dword64 start_dcyc);
+Data_log *debug_show_data_info(FILE *pcfile, Data_log *log_data_ptr, dword64 base_dcyc, dword64 dfcyc, dword64 start_dcyc, int *data_wrap_ptr, int *count_ptr);
 void debug_logpc_save(const char *cmd_str);
 void set_bp(word32 addr, word32 end_addr, word32 acc_type);
 void show_bp(void);
@@ -276,6 +286,7 @@ void halt_printf(const char *fmt, ...);
 void halt2_printf(const char *fmt, ...);
 
 
+
 /* scc.c */
 void scc_init(void);
 void scc_reset(void);
@@ -283,57 +294,61 @@ void scc_hard_reset_port(int port);
 void scc_reset_port(int port);
 void scc_regen_clocks(int port);
 void scc_port_init(int port);
-void scc_try_to_empty_writebuf(int port, double dcycs);
-void scc_try_fill_readbuf(int port, double dcycs);
-void scc_update(double dcycs);
-void do_scc_event(int type, double dcycs);
+void scc_try_to_empty_writebuf(int port, dword64 dfcyc);
+void scc_try_fill_readbuf(int port, dword64 dfcyc);
+void scc_update(dword64 dfcyc);
+void do_scc_event(int type, dword64 dfcyc);
 void show_scc_state(void);
-void scc_log(int regnum, word32 val, double dcycs);
+void scc_log(int regnum, word32 val, dword64 dfcyc);
 void show_scc_log(void);
-word32 scc_read_reg(int port, double dcycs);
-void scc_write_reg(int port, word32 val, double dcycs);
-void scc_maybe_br_event(int port, double dcycs);
+word32 scc_read_reg(int port, dword64 dfcyc);
+void scc_write_reg(int port, word32 val, dword64 dfcyc);
+void scc_maybe_br_event(int port, dword64 dfcyc);
 void scc_evaluate_ints(int port);
-void scc_maybe_rx_event(int port, double dcycs);
+void scc_maybe_rx_event(int port, dword64 dfcyc);
 void scc_maybe_rx_int(int port);
 void scc_clr_rx_int(int port);
 void scc_handle_tx_event(int port);
-void scc_maybe_tx_event(int port, double dcycs);
+void scc_maybe_tx_event(int port, dword64 dfcyc);
 void scc_clr_tx_int(int port);
 void scc_set_zerocnt_int(int port);
 void scc_clr_zerocnt_int(int port);
-void scc_add_to_readbuf(int port, word32 val, double dcycs);
-void scc_add_to_readbufv(int port, double dcycs, const char *fmt, ...);
+void scc_add_to_readbuf(int port, word32 val, dword64 dfcyc);
+void scc_add_to_readbufv(int port, dword64 dfcyc, const char *fmt, ...);
 void scc_transmit(int port, word32 val);
 void scc_add_to_writebuf(int port, word32 val);
-word32 scc_read_data(int port, double dcycs);
-void scc_write_data(int port, word32 val, double dcycs);
+word32 scc_read_data(int port, dword64 dfcyc);
+void scc_write_data(int port, word32 val, dword64 dfcyc);
+
 
 
 /* scc_socket_driver.c */
 void scc_socket_init(int port);
-void scc_socket_maybe_open_incoming(int port, double dcycs);
-void scc_socket_open_outgoing(int port, double dcycs);
-void scc_socket_make_nonblock(int port, double dcycs);
-void scc_socket_close(int port, int full_close, double dcycs);
-void scc_accept_socket(int port, double dcycs);
+void scc_socket_maybe_open_incoming(int port, dword64 dfcyc);
+void scc_socket_open_outgoing(int port, dword64 dfcyc);
+void scc_socket_make_nonblock(int port, dword64 dfcyc);
+void scc_socket_close(int port, int full_close, dword64 dfcyc);
+void scc_accept_socket(int port, dword64 dfcyc);
 void scc_socket_telnet_reqs(int port);
-void scc_socket_fill_readbuf(int port, int space_left, double dcycs);
-void scc_socket_recvd_char(int port, int c, double dcycs);
-void scc_socket_empty_writebuf(int port, double dcycs);
-void scc_socket_modem_write(int port, int c, double dcycs);
-void scc_socket_do_cmd_str(int port, double dcycs);
-void scc_socket_send_modem_code(int port, int code, double dcycs);
-void scc_socket_modem_hangup(int port, double dcycs);
-void scc_socket_modem_connect(int port, double dcycs);
-void scc_socket_modem_do_ring(int port, double dcycs);
-void scc_socket_do_answer(int port, double dcycs);
+void scc_socket_fill_readbuf(int port, int space_left, dword64 dfcyc);
+void scc_socket_recvd_char(int port, int c, dword64 dfcyc);
+void scc_socket_empty_writebuf(int port, dword64 dfcyc);
+void scc_socket_modem_write(int port, int c, dword64 dfcyc);
+void scc_socket_do_cmd_str(int port, dword64 dfcyc);
+void scc_socket_send_modem_code(int port, int code, dword64 dfcyc);
+void scc_socket_modem_hangup(int port, dword64 dfcyc);
+void scc_socket_modem_connect(int port, dword64 dfcyc);
+void scc_socket_modem_do_ring(int port, dword64 dfcyc);
+void scc_socket_do_answer(int port, dword64 dfcyc);
+
 
 
 /* scc_windriver.c */
 
 
+
 /* scc_macdriver.c */
+
 
 
 /* iwm.c */
@@ -349,64 +364,66 @@ void iwm_vbl_update(void);
 void iwm_update_fast_disk_emul(int fast_disk_emul_en);
 void iwm_show_stats(int slot_drive);
 Disk *iwm_get_dsk(word32 state);
-Disk *iwm_touch_switches(int loc, double dcycs);
-void iwm_move_to_ftrack(Disk *dsk, word32 new_frac_track, int delta, double dcycs);
+Disk *iwm_touch_switches(int loc, dword64 dfcyc);
+void iwm_move_to_ftrack(Disk *dsk, word32 new_frac_track, int delta, dword64 dfcyc);
 void iwm_move_to_qtr_track(Disk *dsk, word32 qtr_track);
-void iwm525_update_phases(Disk *dsk, double dcycs);
-void iwm525_update_head(Disk *dsk, double dcycs);
-int iwm_read_status35(double dcycs);
-void iwm_do_action35(double dcycs);
-int read_iwm(int loc, double dcycs);
-void write_iwm(int loc, int val, double dcycs);
-int iwm_read_enable2(double dcycs);
-int iwm_read_enable2_handshake(double dcycs);
+void iwm525_update_phases(Disk *dsk, dword64 dfcyc);
+void iwm525_update_head(Disk *dsk, dword64 dfcyc);
+int iwm_read_status35(dword64 dfcyc);
+void iwm_do_action35(dword64 dfcyc);
+int read_iwm(int loc, dword64 dfcyc);
+void write_iwm(int loc, int val, dword64 dfcyc);
+int iwm_read_enable2(dword64 dfcyc);
+int iwm_read_enable2_handshake(dword64 dfcyc);
 void iwm_write_enable2(int val);
-word32 iwm_fastemul_start_write(Disk *dsk, double dcycs);
-word32 iwm_read_data_fast(Disk *dsk, double dcycs);
-word32 iwm_return_rand_data(Disk *dsk, double dcycs);
+word32 iwm_fastemul_start_write(Disk *dsk, dword64 dfcyc);
+word32 iwm_read_data_fast(Disk *dsk, dword64 dfcyc);
+dword64 iwm_return_rand_data(Disk *dsk, dword64 dfcyc);
 dword64 iwm_get_raw_bits(Disk *dsk, word32 bit_pos, int num_bits, dword64 *dsyncs_ptr);
 word32 iwm_calc_bit_diff(word32 first, word32 last, word32 track_bits);
 word32 iwm_calc_bit_sum(word32 bit_pos, int add_ival, word32 track_bits);
 dword64 iwm_calc_forced_sync(dword64 dval, int forced_bit);
 int iwm_calc_forced_sync_0s(dword64 sync_dval, int bits);
-word32 iwm_read_data(Disk *dsk, double dcycs);
-void iwm_write_data(Disk *dsk, word32 val, double dcycs);
+word32 iwm_read_data(Disk *dsk, dword64 dfcyc);
+void iwm_write_data(Disk *dsk, word32 val, dword64 dfcyc);
 void iwm_start_write(Disk *dsk, word32 bit_pos, word32 val);
 int iwm_start_write_act(Disk *dsk, word32 bit_pos, int num, int delta);
-void iwm_write_data35(Disk *dsk, word32 val, double dcycs);
-void iwm_write_end(Disk *dsk, double dcycs);
-void iwm_write_one_nib(Disk *dsk, int bits, double dcycs);
-void iwm_recalc_sync_from(Disk *dsk, word32 qtr_track, word32 bit_pos, double dcycs);
+void iwm_write_data35(Disk *dsk, word32 val, dword64 dfcyc);
+void iwm_write_end(Disk *dsk, dword64 dfcyc);
+void iwm_write_one_nib(Disk *dsk, int bits, dword64 dfcyc);
+void iwm_recalc_sync_from(Disk *dsk, word32 qtr_track, word32 bit_pos, dword64 dfcyc);
 void sector_to_partial_nib(byte *in, byte *nib_ptr);
 int disk_unnib_4x4(Disk *dsk);
 int iwm_denib_track525(Disk *dsk, word32 qtr_track, byte *outbuf);
 int iwm_denib_track35(Disk *dsk, word32 qtr_track, byte *outbuf);
 int iwm_track_to_unix(Disk *dsk, word32 qtr_track, byte *outbuf);
 void show_hex_data(byte *buf, int count);
-void iwm_check_nibblization(double dcycs);
-void disk_check_nibblization(Disk *dsk, byte *in_buf, int size, double dcycs);
-void disk_unix_to_nib(Disk *dsk, int qtr_track, dword64 dunix_pos, word32 unix_len, int len_bits, double dcycs);
+void iwm_check_nibblization(dword64 dfcyc);
+void disk_check_nibblization(Disk *dsk, byte *in_buf, int size, dword64 dfcyc);
+void disk_unix_to_nib(Disk *dsk, int qtr_track, dword64 dunix_pos, word32 unix_len, int len_bits, dword64 dfcyc);
 void iwm_nibblize_track_nib525(Disk *dsk, byte *track_buf, int qtr_track, word32 unix_len);
-void iwm_nibblize_track_525(Disk *dsk, byte *track_buf, int qtr_track, double dcycs);
-void iwm_nibblize_track_35(Disk *dsk, byte *track_buf, int qtr_track, word32 unix_len, double dcycs);
+void iwm_nibblize_track_525(Disk *dsk, byte *track_buf, int qtr_track, dword64 dfcyc);
+void iwm_nibblize_track_35(Disk *dsk, byte *track_buf, int qtr_track, word32 unix_len, dword64 dfcyc);
 void disk_4x4_nib_out(Disk *dsk, word32 val);
 void disk_nib_out(Disk *dsk, word32 val, int size);
-void disk_nib_end_track(Disk *dsk, double dcycs);
-word32 disk_nib_out_raw(Disk *dsk, word32 qtr_track, word32 val, int bits, word32 bit_pos, double dcycs);
+void disk_nib_end_track(Disk *dsk, dword64 dfcyc);
+word32 disk_nib_out_raw(Disk *dsk, word32 qtr_track, word32 val, int bits, word32 bit_pos, dword64 dfcyc);
 Disk *iwm_get_dsk_from_slot_drive(int slot, int drive);
 void iwm_toggle_lock(Disk *dsk);
 void iwm_eject_named_disk(int slot, int drive, const char *name, const char *partition_name);
 void iwm_eject_disk_by_num(int slot, int drive);
 void iwm_eject_disk(Disk *dsk);
-void iwm_show_track(int slot_drive, int track, double dcycs);
-void iwm_show_a_track(Disk *dsk, Trk *trk, double dcycs);
+void iwm_show_track(int slot_drive, int track, dword64 dfcyc);
+void iwm_show_a_track(Disk *dsk, Trk *trk, dword64 dfcyc);
 void dummy1(word32 psr);
 void dummy2(word32 psr);
+
 
 
 /* joystick_driver.c */
 void joystick_callback_init(int native_type);
 void joystick_callback_update(word32 buttons, int paddle_x, int paddle_y);
+
 
 
 /* moremem.c */
@@ -417,14 +434,14 @@ void fixup_bank0_0400_0800(void);
 void fixup_any_bank_any_page(int start_page, int num_pages, byte *mem0rd, byte *mem0wr);
 void fixup_intcx(void);
 void fixup_wrdefram(int new_wrdefram);
-void fixup_st80col(double dcycs);
+void fixup_st80col(dword64 dfcyc);
 void fixup_altzp(void);
-void fixup_page2(double dcycs);
+void fixup_page2(dword64 dfcyc);
 void fixup_ramrd(void);
 void fixup_ramwrt(void);
 void fixup_lcbank2(void);
 void fixup_rdrom(void);
-void set_statereg(double dcycs, int val);
+void set_statereg(dword64 dfcyc, int val);
 void fixup_shadow_txt1(void);
 void fixup_shadow_txt2(void);
 void fixup_shadow_hires1(void);
@@ -438,38 +455,41 @@ void show_bankptrs_bank0rdwr(void);
 void show_bankptrs(int bnk);
 void show_addr(byte *ptr);
 word32 moremem_fix_vector_pull(word32 addr);
-int io_read(word32 loc, double *cyc_ptr);
-void io_write(word32 loc, int val, double *cyc_ptr);
-word32 get_lines_since_vbl(double dcycs);
-int in_vblank(double dcycs);
-int read_vid_counters(int loc, double dcycs);
+int io_read(word32 loc, dword64 *cyc_ptr);
+void io_write(word32 loc, int val, dword64 *cyc_ptr);
+word32 get_lines_since_vbl(dword64 dfcyc);
+int in_vblank(dword64 dfcyc);
+int read_vid_counters(int loc, dword64 dfcyc);
+
 
 
 /* paddles.c */
 void paddle_fixup_joystick_type(void);
-void paddle_trigger(double dcycs);
-void paddle_trigger_mouse(double dcycs);
-void paddle_trigger_keypad(double dcycs);
-void paddle_update_trigger_dcycs(double dcycs);
-int read_paddles(double dcycs, int paddle);
+void paddle_trigger(dword64 dfcyc);
+void paddle_trigger_mouse(dword64 dfcyc);
+void paddle_trigger_keypad(dword64 dfcyc);
+void paddle_update_trigger_dcycs(dword64 dfcyc);
+int read_paddles(dword64 dfcyc, int paddle);
 void paddle_update_buttons(void);
 
 
+
 /* mockingboard.c */
-void mock_ay8913_reset(int pair_num, double dcycs);
-void mockingboard_reset(double dcycs);
-void mock_show_pair(int pair_num, double dcycs, const char *str);
-void mock_update_timers(int doit, double dcycs);
-void mockingboard_event(double dcycs);
-word32 mockingboard_read(word32 loc, double dcycs);
-void mockingboard_write(word32 loc, word32 val, double dcycs);
-word32 mock_6522_read(int pair_num, word32 loc, double dcycs);
-void mock_6522_write(int pair_num, word32 loc, word32 val, double dcycs);
-word32 mock_6522_new_ifr(double dcycs, int pair_num, word32 ifr, word32 ier);
+void mock_ay8913_reset(int pair_num, dword64 dfcyc);
+void mockingboard_reset(dword64 dfcyc);
+void mock_show_pair(int pair_num, dword64 dfcyc, const char *str);
+void mock_update_timers(int doit, dword64 dfcyc);
+void mockingboard_event(dword64 dfcyc);
+word32 mockingboard_read(word32 loc, dword64 dfcyc);
+void mockingboard_write(word32 loc, word32 val, dword64 dfcyc);
+word32 mock_6522_read(int pair_num, word32 loc, dword64 dfcyc);
+void mock_6522_write(int pair_num, word32 loc, word32 val, dword64 dfcyc);
+word32 mock_6522_new_ifr(dword64 dfcyc, int pair_num, word32 ifr, word32 ier);
 void mock_ay8913_reg_read(int pair_num);
-void mock_ay8913_reg_write(int pair_num, double dcycs);
-void mock_ay8913_control_update(int pair_num, word32 new_val, word32 prev_val, double dcycs);
+void mock_ay8913_reg_write(int pair_num, dword64 dfcyc);
+void mock_ay8913_control_update(int pair_num, word32 new_val, word32 prev_val, dword64 dfcyc);
 void mockingboard_show(int got_num, word32 disable_mask);
+
 
 
 /* sim65816.c */
@@ -477,10 +497,10 @@ int sim_get_force_depth(void);
 int sim_get_use_shmem(void);
 void sim_set_use_shmem(int use_shmem);
 word32 toolbox_debug_4byte(word32 addr);
-void toolbox_debug_c(word32 xreg, word32 stack, double *cyc_ptr);
+void toolbox_debug_c(word32 xreg, word32 stack, dword64 *dcyc_ptr);
 void show_toolbox_log(void);
-word32 get_memory_io(word32 loc, double *cyc_ptr);
-void set_memory_io(word32 loc, int val, double *cyc_ptr);
+word32 get_memory_io(word32 loc, dword64 *dcyc_ptr);
+void set_memory_io(word32 loc, int val, dword64 *dcyc_ptr);
 void show_regs_act(Engine_reg *eptr);
 void show_regs(void);
 void my_exit(int ret);
@@ -495,16 +515,16 @@ int kegs_init(int mdepth);
 void load_roms_init_memory(void);
 void initialize_events(void);
 void check_for_one_event_type(int type);
-void add_event_entry(double dcycs, int type);
-double remove_event_entry(int type);
-void add_event_stop(double dcycs);
-void add_event_doc(double dcycs, int osc);
-void add_event_scc(double dcycs, int type);
+void add_event_entry(dword64 dfcyc, int type);
+dword64 remove_event_entry(int type);
+void add_event_stop(dword64 dfcyc);
+void add_event_doc(dword64 dfcyc, int osc);
+void add_event_scc(dword64 dfcyc, int type);
 void add_event_vbl(void);
 void add_event_vid_upd(int line);
-void add_event_mockingboard(double dcycs);
-double remove_event_doc(int osc);
-double remove_event_scc(int type);
+void add_event_mockingboard(dword64 dfcyc);
+dword64 remove_event_doc(int osc);
+dword64 remove_event_scc(int type);
 void remove_event_mockingboard(void);
 void show_all_events(void);
 void show_pmhz(void);
@@ -515,11 +535,11 @@ void add_irq(word32 irq_mask);
 void remove_irq(word32 irq_mask);
 void take_irq(void);
 void show_dtime_array(void);
-void update_60hz(double dcycs, double dtime_now);
+void update_60hz(dword64 dfcyc, double dtime_now);
 void do_vbl_int(void);
-void do_scan_int(double dcycs, int line);
+void do_scan_int(dword64 dfcyc, int line);
 void check_scan_line_int(int cur_video_line);
-void check_for_new_scan_int(double dcycs);
+void check_for_new_scan_int(dword64 dfcyc);
 void init_reg(void);
 void handle_action(word32 ret);
 void do_break(word32 ret);
@@ -533,11 +553,13 @@ int kegs_vprintf(const char *fmt, va_list ap);
 dword64 must_write(int fd, byte *bufptr, dword64 dsize);
 void clear_fatal_logs(void);
 char *kegs_malloc_str(const char *in_str);
+dword64 kegs_lseek(int fd, dword64 offs, int whence);
+
 
 
 /* smartport.c */
 void smartport_error(void);
-void smartport_log(word32 start_addr, int cmd, int rts_addr, int cmd_list);
+void smartport_log(word32 start_addr, word32 cmd, word32 rts_addr, word32 cmd_list);
 void do_c70d(word32 arg0);
 void do_c70a(word32 arg0);
 int do_read_c7(int unit_num, word32 buf, word32 blk);
@@ -546,14 +568,15 @@ int do_format_c7(int unit_num);
 void do_c700(word32 ret);
 
 
+
 /* sound.c */
 void doc_log_rout(char *msg, int osc, double dsamps, int etc);
 void show_doc_log(void);
 void sound_init(void);
 void sound_set_audio_rate(int rate);
-void sound_reset(double dcycs);
+void sound_reset(dword64 dfcyc);
 void sound_shutdown(void);
-void sound_update(double dcycs);
+void sound_update(dword64 dfcyc);
 void open_sound_file(void);
 void close_sound_file(void);
 void check_for_range(word32 *addr, int num_samps, int offset);
@@ -564,7 +587,7 @@ void sound_play(double dsamps);
 void sound_mock_envelope(int pair, int *env_ptr, int num_samps, int *vol_ptr);
 void sound_mock_noise(int pair, byte *noise_ptr, int num_samps);
 void sound_mock_play(int pair, int channel, int *outptr, int *env_ptr, byte *noise_ptr, int *vol_ptr, int num_samps);
-void doc_handle_event(int osc, double dcycs);
+void doc_handle_event(int osc, dword64 dfcyc);
 void doc_sound_end(int osc, int can_repeat, double eff_dsamps, double dsamps);
 void add_sound_irq(int osc);
 void remove_sound_irq(int osc, int must);
@@ -573,12 +596,13 @@ void wave_end_estimate(int osc, double eff_dsamps, double dsamps);
 void remove_sound_event(int osc);
 void doc_write_ctl_reg(int osc, int val, double dsamps);
 void doc_recalc_sound_parms(int osc, double dsamps);
-int doc_read_c030(double dcycs);
+int doc_read_c030(dword64 dfcyc);
 int doc_read_c03c(void);
-int doc_read_c03d(double dcycs);
-void doc_write_c03c(int val, double dcycs);
-void doc_write_c03d(int val, double dcycs);
+int doc_read_c03d(dword64 dfcyc);
+void doc_write_c03c(int val, dword64 dfcyc);
+void doc_write_c03d(int val, dword64 dfcyc);
 void doc_show_ensoniq_state(void);
+
 
 
 /* sound_driver.c */
@@ -594,6 +618,7 @@ int child_send_samples(byte *ptr, int size);
 void child_sound_loop(int read_fd, int write_fd, word32 *shm_addr);
 
 
+
 /* woz.c */
 void woz_crc_init(void);
 word32 woz_calc_crc32(byte *bptr, dword64 dlen, word32 bytes_to_skip);
@@ -604,11 +629,11 @@ void woz_parse_meta(Disk *dsk, int offset, int size);
 void woz_parse_info(Disk *dsk, int offset, int size);
 void woz_parse_tmap(Disk *dsk, int offset, int size);
 void woz_parse_trks(Disk *dsk, int offset, int size);
-int woz_add_track(Disk *dsk, int qtr_track, word32 tmap, double dcycs);
+int woz_add_track(Disk *dsk, int qtr_track, word32 tmap, dword64 dfcyc);
 int woz_parse_header(Disk *dsk);
 Woz_info *woz_malloc(byte *wozptr, word32 woz_size);
-int woz_reopen(Disk *dsk, double dcycs);
-int woz_open(Disk *dsk, double dcycs);
+int woz_reopen(Disk *dsk, dword64 dfcyc);
+int woz_open(Disk *dsk, dword64 dfcyc);
 byte *woz_append_bytes(byte *wozptr, byte *in_bptr, int len);
 byte *woz_append_word32(byte *wozptr, word32 val);
 int woz_append_chunk(Woz_info *wozinfo_ptr, word32 chunk_id, word32 length, byte *bptr);
@@ -620,6 +645,7 @@ void woz_set_reparse(Disk *dsk);
 void woz_reparse_woz(Disk *dsk);
 void woz_remove_a_track(Disk *dsk, word32 qtr_track);
 word32 woz_add_a_track(Disk *dsk, word32 qtr_track);
+
 
 
 /* unshk.c */
@@ -635,7 +661,10 @@ void unshk(Disk *dsk, const char *name_str);
 void unshk_dsk_raw_data(Disk *dsk);
 
 
+
 /* undeflate.c */
+void *undeflate_realloc(void *ptr, dword64 dsize);
+void *undeflate_malloc(dword64 dsize);
 void show_bits(unsigned *llptr, int nl);
 void show_huftb(unsigned *tabptr, int bits);
 void undeflate_init_len_dist_tab(word32 *tabptr, dword64 drepeats, word32 start);
@@ -653,10 +682,11 @@ word32 *undeflate_dynamic_table(byte *cptr, word32 *bit_pos_ptr, byte *cptr_base
 byte *undeflate_block(Disk *dsk, byte *cptr, word32 *bit_pos_ptr, byte *cptr_base, byte *cptr_end);
 byte *undeflate_gzip_header(Disk *dsk, byte *cptr, word32 compr_size);
 void undeflate_gzip(Disk *dsk, const char *name_str);
-byte *undeflate_zipfile_blocks(Disk *dsk, byte *cptr, word32 compr_size);
+byte *undeflate_zipfile_blocks(Disk *dsk, byte *cptr, dword64 dcompr_size);
 int undeflate_zipfile(Disk *dsk, int fd, dword64 dlocal_header_off, dword64 uncompr_dsize, dword64 compr_dsize);
 int undeflate_zipfile_search(byte *bptr, byte *cmp_ptr, int size, int cmp_len, int min_size);
 int undeflate_zipfile_make_list(int fd);
+
 
 
 /* dynapro.c */
@@ -713,6 +743,7 @@ word32 dynapro_build_map(Disk *dsk, Dynapro_file *fileptr);
 int dynapro_mount(Disk *dsk, char *dir_path, word32 num_blocks);
 
 
+
 /* dyna_type.c */
 word32 dynatype_scan_extensions(const char *str);
 word32 dynatype_find_prodos_type(const char *str);
@@ -723,7 +754,9 @@ int dynatype_comma_arg(const char *str, word32 *type_or_aux_ptr);
 void dynatype_fix_unix_name(Dynapro_file *fileptr, char *outbuf_ptr, int path_max);
 
 
+
 /* dyna_filt.c */
+
 
 
 /* dyna_validate.c */
@@ -737,6 +770,7 @@ int dynapro_validate_disk(Disk *dsk);
 void dynapro_validate_any_image(Disk *dsk);
 
 
+
 /* applesingle.c */
 word32 applesingle_get_be32(const byte *bptr);
 word32 applesingle_get_be16(const byte *bptr);
@@ -745,6 +779,7 @@ void applesingle_set_be16(byte *bptr, word32 val);
 word32 applesingle_map_from_prodos(Disk *dsk, Dynapro_file *fileptr, int do_file_data);
 word32 applesingle_from_unix(Disk *dsk, Dynapro_file *fileptr, byte *fptr, dword64 dsize);
 word32 applesingle_make_prodos_fork(Disk *dsk, byte *fptr, byte *tptr, word32 length);
+
 
 
 /* video.c */
@@ -765,26 +800,30 @@ void video_init_kimage(Kimage *kimage_ptr, int width, int height);
 void show_a2_line_stuff(void);
 void video_reset(void);
 void video_update(void);
-int video_all_stat_to_line_stat(int line, int new_all_stat);
-void change_display_mode(double dcycs);
-void video_update_all_stat_through_line(int line);
-void change_border_color(double dcycs, int val);
+word32 video_all_stat_to_filt_stat(int line, word32 new_all_stat);
+void change_display_mode(dword64 dfcyc);
+void video_add_new_all_stat(dword64 dfcyc, word32 lines_since_vbl);
+void change_border_color(dword64 dfcyc, int val);
 void update_border_info(void);
 void update_border_line(int st_line_offset, int end_line_offset, int color);
 void video_border_pixel_write(Kimage *kimage_ptr, int starty, int num_lines, int color, int st_off, int end_off);
-void redraw_changed_text(int start_offset, int start_line, int reparse, word32 *in_wptr, int altcharset, word32 bg_pixel, word32 fg_pixel, int pixels_per_line, int dbl);
-void redraw_changed_string(const byte *bptr, int start_line, word32 ch_mask, word32 *in_wptr, word32 bg_pixel, word32 fg_pixel, int pixels_per_line, int dbl);
-void redraw_changed_gr(int start_offset, int start_line, int reparse, word32 *in_wptr, int pixels_per_line, int dbl);
-void video_hgr_line_segment(byte *slow_mem_ptr, word32 *wptr, int x1, int monochrome, int dbl, int pixels_per_line);
-void redraw_changed_hgr(int start_offset, int start_line, int reparse, word32 *in_wptr, int pixels_per_line, int monochrome, int dbl);
+word32 video_get_ch_mask(word32 mem_ptr, word32 filt_stat, int reparse);
+void video_update_edges(int line, int left, int right, const char *str);
+void redraw_changed_text(word32 line_bytes, int reparse, word32 *in_wptr, int pixels_per_line, word32 filt_stat);
+void redraw_changed_string(const byte *bptr, word32 line_bytes, word32 ch_mask, word32 *in_wptr, word32 bg_pixel, word32 fg_pixel, int pixels_per_line, int dbl);
+void redraw_changed_gr(word32 line_bytes, int reparse, word32 *in_wptr, int pixels_per_line, word32 filt_stat);
+void video_hgr_line_segment(byte *slow_mem_ptr, word32 *wptr, int start_byte, int end_byte, int pixels_per_line, word32 filt_stat);
+void redraw_changed_hgr(word32 line_bytes, int reparse, word32 *in_wptr, int pixels_per_line, word32 filt_stat);
 int video_rebuild_super_hires_palette(int bank, word32 scan_info, int line, int reparse);
 word32 redraw_changed_super_hires_oneline(int bank, word32 *in_wptr, int pixels_per_line, int y, int scan, word32 ch_mask);
 void redraw_changed_super_hires_bank(int bank, int start_line, int reparse, word32 *wptr, int pixels_per_line);
-void redraw_changed_super_hires(int voc_interlace, int start_line, int reparse, word32 *wptr, int pixels_per_line);
+void redraw_changed_super_hires(word32 line_bytes, int reparse, word32 *wptr, int pixels_per_line, word32 filt_stat);
+void video_copy_changed2(void);
 void video_update_event_line(int line);
 void video_force_reparse(void);
 void video_update_through_line(int line);
-void video_refresh_line(int line, int must_reparse);
+void video_do_partial_line(word32 lines_since_vbl, int end, word32 cur_all_stat);
+void video_refresh_line(word32 line_bytes, int must_reparse, word32 filt_stat);
 void prepare_a2_font(void);
 void prepare_a2_romx_font(byte *font_ptr);
 void video_add_rect(Kimage *kimage_ptr, int x, int y, int width, int height);
@@ -810,15 +849,18 @@ void video_update_color_raw(int bank, int col_num, int a2_color);
 void video_update_status_line(int line, const char *string);
 void video_draw_a2_string(int line, const byte *bptr);
 void video_show_debug_info(void);
-word32 read_video_data(double dcycs);
-word32 float_bus(double dcycs);
+word32 read_video_data(dword64 dfcyc);
+word32 float_bus(dword64 dfcyc);
+word32 float_bus_lines(dword64 dfcyc, word32 lines_since_vbl);
+
 
 
 /* voc.c */
-word32 voc_devsel_read(word32 loc, double dcycs);
-void voc_devsel_write(word32 loc, word32 val, double dcycs);
-void voc_iosel_c300_write(word32 loc, word32 val, double dcycs);
+word32 voc_devsel_read(word32 loc, dword64 dfcyc);
+void voc_devsel_write(word32 loc, word32 val, dword64 dfcyc);
+void voc_iosel_c300_write(word32 loc, word32 val, dword64 dfcyc);
 void voc_reset(void);
-word32 voc_read_reg0(double dcycs);
-void voc_update_interlace(double dcycs);
+word32 voc_read_reg0(dword64 dfcyc);
+void voc_update_interlace(dword64 dfcyc);
+
 

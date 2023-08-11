@@ -1,4 +1,4 @@
-const char rcsid_dynatype_c[] = "@(#)$KmKId: dyna_type.c,v 1.8 2023-03-05 22:15:37+00 kentd Exp $";
+const char rcsid_dynatype_c[] = "@(#)$KmKId: dyna_type.c,v 1.9 2023-05-19 13:52:30+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -124,7 +124,7 @@ dynatype_detect_file_type(Dynapro_file *fileptr, const char *path_ptr,
 	// Look for ,tbas and ,a$2000 to get filetype and aux_type info
 
 	str = cfg_str_basename(path_ptr);
-	len = strlen(str);
+	len = (int)strlen(str);
 
 	// Look for .ext and ,tbas, etc.
 	pos = 0;
@@ -155,7 +155,7 @@ dynatype_detect_file_type(Dynapro_file *fileptr, const char *path_ptr,
 			type_or_aux = strtol(&str[pos], &endstr, 16);
 			file_type = (type_or_aux & 0xffffff) | 0x1000000;
 			aux_type = 0;
-			pos += (endstr - str);
+			pos += (int)(endstr - str);
 			continue;
 		}
 	}
@@ -240,7 +240,7 @@ dynatype_comma_arg(const char *str, word32 *type_or_aux_ptr)
 		len++;
 	}
 	val = strtol(str, &endstr, base);
-	this_len = endstr - str;
+	this_len = (int)(endstr - str);
 	if((val == 0) && (this_len < 2) && (base == 0) &&
 							(type_or_aux == 't')) {
 		// Not a valid number

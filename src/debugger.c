@@ -1,4 +1,4 @@
-const char rcsid_debugger_c[] = "@(#)$KmKId: debugger.c,v 1.50 2023-03-05 16:30:57+00 kentd Exp $";
+const char rcsid_debugger_c[] = "@(#)$KmKId: debugger.c,v 1.57 2023-05-19 13:52:54+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -59,10 +59,10 @@ Break_point g_break_pts[MAX_BREAK_POINTS];
 
 extern int g_irq_pending;
 
-extern double g_last_vbl_dcycs;
+extern dword64 g_last_vbl_dcyc;
 extern int g_ret1;
 extern Engine_reg engine;
-extern double g_fcycles_end;
+extern dword64 g_dcycles_end;
 
 int g_stepping = 0;
 
@@ -93,7 +93,6 @@ Data_log *g_log_data_ptr = &(g_data_log_array[0]);
 Data_log *g_log_data_start_ptr = &(g_data_log_array[0]);
 Data_log *g_log_data_end_ptr = &(g_data_log_array[PC_LOG_LEN]);
 
-int	g_quit_sim_now = 0;
 char	g_cmd_buffer[MAX_CMD_BUFFER + 2] = { 0 };
 int	g_cmd_buffer_len = 2;
 
@@ -117,7 +116,7 @@ debugger_init()
 int g_dbg_new_halt = 0;
 
 void
-check_breakpoints(word32 addr, double *fcycs_ptr, word32 maybe_stack,
+check_breakpoints(word32 addr, dword64 dfcyc, word32 maybe_stack,
 							word32 type)
 {
 	Break_point *bp_ptr;
@@ -132,7 +131,7 @@ check_breakpoints(word32 addr, double *fcycs_ptr, word32 maybe_stack,
 		}
 		if((addr >= (bp_ptr->start_addr & 0xffffff)) &&
 				(addr <= (bp_ptr->end_addr & 0xffffff))) {
-			debug_hit_bp(addr, fcycs_ptr, maybe_stack, type, i);
+			debug_hit_bp(addr, dfcyc, maybe_stack, type, i);
 		}
 	}
 
@@ -142,14 +141,12 @@ check_breakpoints(word32 addr, double *fcycs_ptr, word32 maybe_stack,
 }
 
 void
-debug_hit_bp(word32 addr, double *fcycs_ptr, word32 maybe_stack, word32 type,
+debug_hit_bp(word32 addr, dword64 dfcyc, word32 maybe_stack, word32 type,
 								int pos)
 {
-	double	dcycs;
 	word32	trk_side, side, trk, cmd, unit, buf, blk, param_cnt, list_ptr;
 	word32	status_code, cmd_list, stack, rts;
 
-	dcycs = g_last_vbl_dcycs + *fcycs_ptr;
 	if((addr == 0xff5a0e) && (type == 4)) {
 		trk_side = get_memory_c(0xe10f32);
 		side = (trk_side >> 5) & 1;
@@ -157,8 +154,8 @@ debug_hit_bp(word32 addr, double *fcycs_ptr, word32 maybe_stack, word32 type,
 		buf = get_memory_c(0x42) | (get_memory_c(0x43) << 8) |
 						(get_memory_c(0x44) << 16);
 		printf("ff5a0e: 3.5 read of track %03x side:%d sector:%03x to "
-			"%06x at %lf\n", trk, side, get_memory_c(0xe10f33),
-			buf, dcycs);
+			"%06x at %016llx\n", trk, side, get_memory_c(0xe10f33),
+			buf, dfcyc);
 		return;
 	}
 	if((addr == 0x00c50a) && (type == 4)) {
@@ -166,8 +163,8 @@ debug_hit_bp(word32 addr, double *fcycs_ptr, word32 maybe_stack, word32 type,
 		unit = get_memory_c(0x43);
 		buf = get_memory_c(0x44) | (get_memory_c(0x45) << 8);
 		blk = get_memory_c(0x46) | (get_memory_c(0x47) << 8);
-		printf("00c50a: cmd %02x unit %02x buf:%04x blk:%04x at %lf\n",
-			cmd, unit, buf, blk, dcycs);
+		printf("00c50a: cmd %02x u:%02x buf:%04x blk:%04x at %016llx\n",
+			cmd, unit, buf, blk, dfcyc);
 		return;
 	}
 	if((addr == 0x00c50d) && (type == 4)) {
@@ -182,8 +179,8 @@ debug_hit_bp(word32 addr, double *fcycs_ptr, word32 maybe_stack, word32 type,
 		status_code = get_memory_c(cmd_list + 4);
 		printf("00c50d: stack:%04x rts:%04x cmd:%02x cmd_list:%04x "
 			"param_cnt:%02x unit:%02x listptr:%04x "
-			"status:%02x at %lf\n", stack, rts, cmd, cmd_list,
-			param_cnt, unit, list_ptr, status_code, dcycs);
+			"status:%02x at %016llx\n", stack, rts, cmd, cmd_list,
+			param_cnt, unit, list_ptr, status_code, dfcyc);
 		printf("  list_ptr: %04x: %02x %02x %02x %02x %02x %02x %02x\n",
 			list_ptr, get_memory_c(list_ptr),
 			get_memory_c(list_ptr + 1), get_memory_c(list_ptr + 2),
@@ -192,7 +189,7 @@ debug_hit_bp(word32 addr, double *fcycs_ptr, word32 maybe_stack, word32 type,
 		return;
 	}
 
-	dbg_log_info(dcycs, addr, pos, 0x6270);
+	dbg_log_info(dfcyc, addr, pos, 0x6270);
 	halt2_printf("Hit breakpoint at %06x\n", addr);
 }
 
@@ -211,12 +208,12 @@ debugger_run_16ms()
 }
 
 void
-dbg_log_info(double dcycs, word32 info1, word32 info2, word32 type)
+dbg_log_info(dword64 dfcyc, word32 info1, word32 info2, word32 type)
 {
-	if(dcycs == 0.0) {
+	if(dfcyc == 0) {
 		return;		// Ignore some IWM t:00e7 events and others
 	}
-	g_log_data_ptr->dcycs = dcycs;
+	g_log_data_ptr->dfcyc = dfcyc;
 	g_log_data_ptr->stat = 0;
 	g_log_data_ptr->addr = info1;
 	g_log_data_ptr->val = info2;
@@ -234,34 +231,46 @@ debugger_update_list_kpc()
 }
 
 void
-debugger_key_event(int a2code, int is_up, int shift_down, int ctrl_down,
-							int lock_down)
+debugger_key_event(Kimage *kimage_ptr, int a2code, int is_up)
 {
+	word32	c025_val, special;
 	int	key, pos, changed;
 
 	pos = 1;
-	if(shift_down) {
+
+	c025_val = kimage_ptr->c025_val;
+
+	if(c025_val & 1) {		// Shift is down
 		pos = 2;
-	} else if(lock_down) {
+	} else if(c025_val & 4) {	// Capslock is down
 		key = g_a2_key_to_ascii[a2code][1];
 		if((key >= 'a') && (key <= 'z')) {
 			pos = 2;		// CAPS LOCK on
 		}
 	}
-	if(ctrl_down) {
+	if(c025_val & 2) {		// Ctrl is down
 		pos = 3;
 	}
 	key = g_a2_key_to_ascii[a2code][pos];
-	if((key < 0) || is_up) {
+	if(key < 0) {
 		return;
+	}
+	special = (key >> 8) & 0xff;		// c025 changes
+	if(is_up) {
+		c025_val = c025_val & (~special);
+	} else {
+		c025_val = c025_val | special;
+	}
+	kimage_ptr->c025_val = c025_val;
+	if(is_up) {
+		return;		// Nothing else to do
 	}
 	if(key >= 0x80) {
 		// printf("key: %04x\n", key);
 		if(key == 0x8007) {			// F7 - close debugger
-			video_set_active(&g_debugwin_kimage,
-						!g_debugwin_kimage.active);
+			video_set_active(kimage_ptr, !kimage_ptr->active);
 			printf("Toggled debugger window to:%d\n",
-						g_debugwin_kimage.active);
+						kimage_ptr->active);
 		}
 		if((key & 0xff) == 0x74) {		// Page up keycode
 			debugger_page_updown(1);
@@ -394,12 +403,14 @@ debugger_redraw_screen(Kimage *kimage_ptr)
 void
 debug_draw_debug_line(Kimage *kimage_ptr, int line, int vid_line)
 {
+	word32	line_bytes;
 	int	i;
 
 	// printf("draw debug line:%d at vid_line:%d\n", line, vid_line);
 	for(i = 7; i >= 0; i--) {
+		line_bytes = (vid_line << 16) | (40 << 8) | 0;
 		redraw_changed_string(&(g_debug_lines_ptr[line].str_buf[0]),
-			vid_line, -1L, kimage_ptr->wptr + 8, 0, 0x00ffffff,
+			line_bytes, -1L, kimage_ptr->wptr + 8, 0, 0x00ffffff,
 			kimage_ptr->a2_width_full, 1);
 		vid_line--;
 	}
@@ -512,7 +523,7 @@ dbg_help_show_strs(int help_depth, const char *str, const char *help_str)
 	blank_str = "        " "        " "        ";
 	blank_len = (int)strlen(blank_str);		// should be >=17
 	column = 17;
-	len = strlen(str);
+	len = (int)strlen(str);
 	if(help_depth < 0) {
 		help_depth = 0;
 	}
@@ -673,7 +684,7 @@ do_debug_cmd(const char *in_str)
 				}
 				track = g_a2;
 			}
-			iwm_show_track(slot_drive, track, 0.0);
+			iwm_show_track(slot_drive, track, 0);
 			iwm_show_stats(slot_drive);
 			break;
 		case 'E':
@@ -742,7 +753,7 @@ do_debug_cmd(const char *in_str)
 				stop_run_at = g_a1;
 				dbg_printf("Calling add_event for t:%08x\n",
 									g_a1);
-				add_event_stop((double)g_a1);
+				add_event_stop(((dword64)g_a1) << 16);
 				dbg_printf("set stop_run_at = %x\n", g_a1);
 			}
 			break;
@@ -999,7 +1010,7 @@ debug_bp_clear_all(const char *str)
 void
 debug_bp_setclr(const char *str, int is_set_clear)
 {
-	word32	addr, end_addr;
+	word32	addr, end_addr, acc_type;
 
 	printf("In debug_bp: %s\n", str);
 
@@ -1018,10 +1029,15 @@ debug_bp_setclr(const char *str, int is_set_clear)
 			end_addr = addr;
 		}
 	}
+	acc_type = 4;
+	acc_type = debug_getnum(&str);
+	if(acc_type == (word32)-1L) {
+		acc_type = 4;			// Code breakpoint
+	}
 	if(is_set_clear == 2) {			// clear
 		delete_bp(addr, end_addr);
 	} else {				// set, or nothing
-		set_bp(addr, end_addr, 4);
+		set_bp(addr, end_addr, acc_type);
 	}
 }
 
@@ -1042,7 +1058,7 @@ debug_logpc_on(const char *str)
 		// Dummy use of argument
 	}
 	g_log_pc_enable = 1;
-	g_fcycles_end = 0;
+	g_dcycles_end = 0;
 	dbg_printf("Enabled logging of PC and data accesses\n");
 }
 
@@ -1053,12 +1069,12 @@ debug_logpc_off(const char *str)
 		// Dummy use of argument
 	}
 	g_log_pc_enable = 0;
-	g_fcycles_end = 0;
+	g_dcycles_end = 0;
 	dbg_printf("Disabled logging of PC and data accesses\n");
 }
 
 void
-debug_logpc_out_data(FILE *pcfile, Data_log *log_data_ptr, double start_dcycs)
+debug_logpc_out_data(FILE *pcfile, Data_log *log_data_ptr, dword64 start_dcyc)
 {
 	char	*str, *shadow_str;
 	dword64	lstat, offset64, offset64slow, addr64;
@@ -1076,9 +1092,10 @@ debug_logpc_out_data(FILE *pcfile, Data_log *log_data_ptr, double start_dcycs)
 	}
 	size = log_data_ptr->size;
 	if(size > 32) {
-		fprintf(pcfile, "INFO %08x %08x %04x t:%04x %9.2f\n",
+		fprintf(pcfile, "INFO %08x %08x %04x t:%04x %lld.%02lld\n",
 			log_data_ptr->addr, log_data_ptr->val, size >> 16,
-			size & 0xffff, log_data_ptr->dcycs - start_dcycs);
+			size & 0xffff, (log_data_ptr->dfcyc - start_dcyc)>>16,
+			((log_data_ptr->dfcyc & 0xffff) * 100) >> 16);
 	} else {
 		offset64slow = addr64 - (dword64)&(g_slow_memory_ptr[0]);
 		if(offset64 < g_mem_size_total) {
@@ -1099,25 +1116,26 @@ debug_logpc_out_data(FILE *pcfile, Data_log *log_data_ptr, double start_dcycs)
 		} else {
 			fprintf(pcfile, "%06x (%d) ", val, size);
 		}
-		fprintf(pcfile, "%9.2f, %s[%06llx] %s\n",
-				log_data_ptr->dcycs - start_dcycs, str,
-				offset64 & 0xffffffULL, shadow_str);
+		fprintf(pcfile, "%lld.%02lld, %s[%06llx] %s\n",
+				(log_data_ptr->dfcyc - start_dcyc) >> 16,
+				((log_data_ptr->dfcyc & 0xffff) * 100) >> 16,
+				str, offset64 & 0xffffffULL, shadow_str);
 	}
 }
 
 Data_log *
-debug_show_data_info(FILE *pcfile, Data_log *log_data_ptr, double base_dcycs,
-			double dcycs, double start_dcycs, int *data_wrap_ptr,
+debug_show_data_info(FILE *pcfile, Data_log *log_data_ptr, dword64 base_dcyc,
+			dword64 dfcyc, dword64 start_dcyc, int *data_wrap_ptr,
 			int *count_ptr)
 {
 
-	while((*data_wrap_ptr < 2) && (log_data_ptr->dcycs <= dcycs) &&
-					(log_data_ptr->dcycs >= start_dcycs)) {
+	while((*data_wrap_ptr < 2) && (log_data_ptr->dfcyc <= dfcyc) &&
+					(log_data_ptr->dfcyc >= start_dcyc)) {
 		if(*count_ptr >= PC_LOG_LEN) {
 			break;
 		}
-		debug_logpc_out_data(pcfile, log_data_ptr, base_dcycs);
-		if(log_data_ptr->dcycs == 0) {
+		debug_logpc_out_data(pcfile, log_data_ptr, base_dcyc);
+		if(log_data_ptr->dfcyc == 0) {
 			break;
 		}
 		log_data_ptr++;
@@ -1137,7 +1155,7 @@ debug_logpc_save(const char *cmd_str)
 	Pc_log	*log_pc_ptr;
 	Data_log *log_data_ptr;
 	char	*str;
-	double	dcycs, start_dcycs, base_dcycs, max_dcycs;
+	dword64	dfcyc, start_dcyc, base_dcyc, max_dcyc;
 	word32	instr, psr, acc, xreg, yreg, stack, direct, dbank, kpc, num;
 	int	data_wrap, accsize, xsize, abs_time, data_count;
 	int	i;
@@ -1169,42 +1187,42 @@ debug_logpc_save(const char *cmd_str)
 #endif
 
 	// See if we haven't filled buffer yet
-	if(log_pc_ptr->dcycs == 0) {
+	if(log_pc_ptr->dfcyc == 0) {
 		log_pc_ptr = g_log_pc_start_ptr;
 	}
-	if(log_data_ptr->dcycs == 0) {
+	if(log_data_ptr->dfcyc == 0) {
 		log_data_ptr = g_log_data_start_ptr;
 		data_wrap = 1;
 	}
 
-	start_dcycs = log_pc_ptr->dcycs;
-	// Round to an integer
-	start_dcycs = (double)((long long)start_dcycs);
-	base_dcycs = start_dcycs;
+	start_dcyc = log_pc_ptr->dfcyc;
+	// Round to an exact usec
+	start_dcyc = (start_dcyc >> 16) << 16;
+	base_dcyc = start_dcyc;
 	if(abs_time) {
-		base_dcycs = 0.0;			// Show absolute time
+		base_dcyc = 0;				// Show absolute time
 	}
-	dcycs = start_dcycs;
+	dfcyc = start_dcyc;
 
 	data_wrap = 0;
 	data_count = 0;
 	/* find first data entry */
-	while((data_wrap < 2) && (log_data_ptr->dcycs < dcycs)) {
+	while((data_wrap < 2) && (log_data_ptr->dfcyc < dfcyc)) {
 		log_data_ptr++;
 		if(log_data_ptr >= g_log_data_end_ptr) {
 			log_data_ptr = g_log_data_start_ptr;
 			data_wrap++;
 		}
 	}
-	fprintf(pcfile, "start_dcycs: %9.2f, first entry:%9.2f\n", start_dcycs,
-							log_pc_ptr->dcycs);
+	fprintf(pcfile, "start_dcyc: %016llx, first entry:%016llx\n",
+						start_dcyc, log_pc_ptr->dfcyc);
 
-	dcycs = start_dcycs;
-	max_dcycs = dcycs;
+	dfcyc = start_dcyc;
+	max_dcyc = dfcyc;
 	for(i = 0; i < PC_LOG_LEN; i++) {
-		dcycs = log_pc_ptr->dcycs;
+		dfcyc = log_pc_ptr->dfcyc;
 		log_data_ptr = debug_show_data_info(pcfile, log_data_ptr,
-				base_dcycs, dcycs, start_dcycs,
+				base_dcyc, dfcyc, start_dcyc,
 				&data_wrap, &data_count);
 		dbank = (log_pc_ptr->dbank_kpc >> 24) & 0xff;
 		kpc = log_pc_ptr->dbank_kpc & 0xffffff;
@@ -1227,14 +1245,15 @@ debug_logpc_save(const char *cmd_str)
 
 		str = do_dis(kpc, accsize, xsize, 1, instr, 0);
 		fprintf(pcfile, "%06x] A:%04x X:%04x Y:%04x P:%03x "
-			"S:%04x D:%04x B:%02x %9.2f %s\n", i,
+			"S:%04x D:%04x B:%02x %lld.%02lld %s\n", i,
 			acc, xreg, yreg, psr, stack, direct, dbank,
-			(dcycs - base_dcycs), str);
+			(dfcyc - base_dcyc) >> 16,
+			((dfcyc & 0xffff) * 100) >> 16, str);
 
-		if((dcycs == 0) && (i != 0)) {
+		if((dfcyc == 0) && (i != 0)) {
 			break;
 		}
-		max_dcycs = dcycs;
+		max_dcyc = dfcyc;
 		log_pc_ptr++;
 		if(log_pc_ptr >= g_log_pc_end_ptr) {
 			log_pc_ptr = g_log_pc_start_ptr;
@@ -1243,8 +1262,8 @@ debug_logpc_save(const char *cmd_str)
 
 	// Print any more DATA or INFO after last PC entry
 	log_data_ptr = debug_show_data_info(pcfile, log_data_ptr,
-			base_dcycs, max_dcycs + 10.0, start_dcycs, &data_wrap,
-			&data_count);
+			base_dcyc, max_dcyc + 10 * 65536, start_dcyc,
+			&data_wrap, &data_count);
 
 	fclose(pcfile);
 }
@@ -1342,7 +1361,7 @@ debug_iwm(const char *str)
 	if(str) {
 		// Dummy use of argument
 	}
-	iwm_show_track(-1, -1, 0.0);
+	iwm_show_track(-1, -1, 0);
 }
 
 void
@@ -1351,7 +1370,7 @@ debug_iwm_check(const char *str)
 	if(str) {
 		// Dummy use of argument
 	}
-	iwm_check_nibblization(0.0);
+	iwm_check_nibblization(0);
 }
 
 int

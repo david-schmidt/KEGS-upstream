@@ -1,8 +1,8 @@
-const char rcsid_scc_macdriver_c[] = "@(#)$KmKId: scc_macdriver.c,v 1.14 2022-04-14 15:17:54+00 kentd Exp $";
+const char rcsid_scc_macdriver_c[] = "@(#)$KmKId: scc_macdriver.c,v 1.16 2023-05-04 19:32:06+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2022 by Kent Dickey		*/
+/*			Copyright 2002-2023 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -132,13 +132,12 @@ scc_serial_mac_change_params(int port)
 }
 
 void
-scc_serial_mac_fill_readbuf(int port, int space_left, double dcycs)
+scc_serial_mac_fill_readbuf(int port, int space_left, dword64 dfcyc)
 {
 	byte	tmp_buf[256];
 	Scc	*scc_ptr;
-	int	fd;
+	int	fd, ret;
 	int	i;
-	int	ret;
 
 	scc_ptr = &(g_scc[port]);
 
@@ -153,7 +152,7 @@ scc_serial_mac_fill_readbuf(int port, int space_left, double dcycs)
 
 	if(ret > 0) {
 		for(i = 0; i < ret; i++) {
-			scc_add_to_readbuf(port, tmp_buf[i], dcycs);
+			scc_add_to_readbuf(port, tmp_buf[i], dfcyc);
 		}
 	}
 }

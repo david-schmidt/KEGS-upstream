@@ -1,8 +1,8 @@
-const char rcsid_scc_windriver_c[] = "@(#)$KmKId: scc_windriver.c,v 1.8 2022-04-14 15:15:14+00 kentd Exp $";
+const char rcsid_scc_windriver_c[] = "@(#)$KmKId: scc_windriver.c,v 1.11 2023-05-19 14:00:22+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2022 by Kent Dickey		*/
+/*			Copyright 2002-2023 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -153,7 +153,7 @@ scc_serial_win_change_params(int port)
 }
 
 void
-scc_serial_win_fill_readbuf(int port, int space_left, double dcycs)
+scc_serial_win_fill_readbuf(int port, int space_left, dword64 dfcyc)
 {
 	byte	tmp_buf[256];
 	Scc	*scc_ptr;
@@ -178,8 +178,8 @@ scc_serial_win_fill_readbuf(int port, int space_left, double dcycs)
 	}
 
 	if(ret && (bytes_read > 0)) {
-		for(i = 0; i < bytes_read; i++) {
-			scc_add_to_readbuf(port, tmp_buf[i], dcycs);
+		for(i = 0; i < (int)bytes_read; i++) {
+			scc_add_to_readbuf(port, tmp_buf[i], dfcyc);
 		}
 	}
 }

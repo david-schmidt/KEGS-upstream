@@ -1,8 +1,8 @@
-const char rcsid_scc_c[] = "@(#)$KmKId: scc.c,v 1.55 2022-08-28 16:04:18+00 kentd Exp $";
+const char rcsid_scc_c[] = "@(#)$KmKId: scc.c,v 1.58 2023-05-19 13:52:54+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2022 by Kent Dickey		*/
+/*			Copyright 2002-2023 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -16,7 +16,7 @@ const char rcsid_scc_c[] = "@(#)$KmKId: scc.c,v 1.55 2022-08-28 16:04:18+00 kent
 
 extern int Verbose;
 extern int g_code_yellow;
-extern double g_cur_dcycs;
+extern dword64 g_cur_dfcyc;
 extern int g_raw_serial;
 extern int g_serial_out_masking;
 extern int g_irq_pending;
@@ -66,9 +66,9 @@ scc_init()
 		scc_ptr->baud_rate = 9600;
 		scc_ptr->telnet_mode = 0;
 		scc_ptr->telnet_iac = 0;
-		scc_ptr->out_char_dcycs = 0.0;
+		scc_ptr->out_char_dfcyc = 0;
 		scc_ptr->socket_num_rings = 0;
-		scc_ptr->socket_last_ring_dcycs = 0;
+		scc_ptr->socket_last_ring_dfcyc = 0;
 		scc_ptr->modem_mode = 0;
 		scc_ptr->modem_dial_or_acc_mode = 0;
 		scc_ptr->modem_plus_mode = 0;
@@ -323,7 +323,7 @@ scc_port_init(int port)
 }
 
 void
-scc_try_to_empty_writebuf(int port, double dcycs)
+scc_try_to_empty_writebuf(int port, dword64 dfcyc)
 {
 	Scc	*scc_ptr;
 	int	state;
@@ -344,12 +344,12 @@ scc_try_to_empty_writebuf(int port, double dcycs)
 		scc_serial_win_empty_writebuf(port);
 #endif
 	} else if(state == 1) {
-		scc_socket_empty_writebuf(port, dcycs);
+		scc_socket_empty_writebuf(port, dfcyc);
 	}
 }
 
 void
-scc_try_fill_readbuf(int port, double dcycs)
+scc_try_fill_readbuf(int port, dword64 dfcyc)
 {
 	Scc	*scc_ptr;
 	int	space_used, space_left;
@@ -378,18 +378,18 @@ scc_try_fill_readbuf(int port, double dcycs)
 
 	if(state == 2) {
 #if defined(MAC)
-		scc_serial_mac_fill_readbuf(port, space_left, dcycs);
+		scc_serial_mac_fill_readbuf(port, space_left, dfcyc);
 #endif
 #if defined(_WIN32)
-		scc_serial_win_fill_readbuf(port, space_left, dcycs);
+		scc_serial_win_fill_readbuf(port, space_left, dfcyc);
 #endif
 	} else if(state == 1) {
-		scc_socket_fill_readbuf(port, space_left, dcycs);
+		scc_socket_fill_readbuf(port, space_left, dfcyc);
 	}
 }
 
 void
-scc_update(double dcycs)
+scc_update(dword64 dfcyc)
 {
 	/* called each VBL update */
 	g_scc[0].write_called_this_vbl = 0;
@@ -397,10 +397,10 @@ scc_update(double dcycs)
 	g_scc[0].read_called_this_vbl = 0;
 	g_scc[1].read_called_this_vbl = 0;
 
-	scc_try_to_empty_writebuf(0, dcycs);
-	scc_try_to_empty_writebuf(1, dcycs);
-	scc_try_fill_readbuf(0, dcycs);
-	scc_try_fill_readbuf(1, dcycs);
+	scc_try_to_empty_writebuf(0, dfcyc);
+	scc_try_to_empty_writebuf(1, dfcyc);
+	scc_try_fill_readbuf(0, dfcyc);
+	scc_try_fill_readbuf(1, dfcyc);
 
 	g_scc[0].write_called_this_vbl = 0;
 	g_scc[1].write_called_this_vbl = 0;
@@ -409,7 +409,7 @@ scc_update(double dcycs)
 }
 
 void
-do_scc_event(int type, double dcycs)
+do_scc_event(int type, dword64 dfcyc)
 {
 	Scc	*scc_ptr;
 	int	port;
@@ -422,14 +422,14 @@ do_scc_event(int type, double dcycs)
 		/* baud rate generator counted down to 0 */
 		scc_ptr->br_event_pending = 0;
 		scc_set_zerocnt_int(port);
-		scc_maybe_br_event(port, dcycs);
+		scc_maybe_br_event(port, dfcyc);
 	} else if(type == SCC_TX_EVENT) {
 		scc_ptr->tx_event_pending = 0;
 		scc_ptr->tx_buf_empty = 1;
 		scc_handle_tx_event(port);
 	} else if(type == SCC_RX_EVENT) {
 		scc_ptr->rx_event_pending = 0;
-		scc_maybe_rx_event(port, dcycs);
+		scc_maybe_rx_event(port, dfcyc);
 	} else {
 		halt_printf("do_scc_event: %08x!\n", type);
 	}
@@ -450,9 +450,10 @@ show_scc_state()
 				scc_ptr->reg[j], scc_ptr->reg[j+1],
 				scc_ptr->reg[j+2], scc_ptr->reg[j+3]);
 		}
-		printf("state: %d, accfd: %d, rdwrfd: %d, host:%p, host2:%p\n",
-			scc_ptr->state, scc_ptr->accfd, scc_ptr->rdwrfd,
-			scc_ptr->host_handle, scc_ptr->host_handle2);
+		printf("state: %d, accfd: %d, rdwrfd:%llx, host:%p, host2:%p\n",
+			scc_ptr->state, scc_ptr->accfd,
+			(dword64)scc_ptr->rdwrfd, scc_ptr->host_handle,
+			scc_ptr->host_handle2);
 		printf("in_rdptr: %04x, in_wr:%04x, out_rd:%04x, out_wr:%04x\n",
 			scc_ptr->in_rdptr, scc_ptr->in_wrptr,
 			scc_ptr->out_rdptr, scc_ptr->out_wrptr);
@@ -482,9 +483,9 @@ show_scc_state()
 			scc_ptr->telnet_local_mode[1],
 			scc_ptr->telnet_remote_mode[0],
 			scc_ptr->telnet_remote_mode[1]);
-		printf("modem_mode:%08x plus_mode: %d, out_char_dcycs: %f\n",
+		printf("modem_mode:%08x plus_mode:%d, out_char_dfcyc:%016llx\n",
 			scc_ptr->modem_mode, scc_ptr->modem_plus_mode,
-			scc_ptr->out_char_dcycs);
+			scc_ptr->out_char_dfcyc);
 	}
 
 }
@@ -493,7 +494,7 @@ show_scc_state()
 STRUCT(Scc_log) {
 	int	regnum;
 	word32	val;
-	double	dcycs;
+	dword64	dfcyc;
 };
 
 Scc_log	g_scc_log[LEN_SCC_LOG];
@@ -502,14 +503,14 @@ int	g_scc_log_pos = 0;
 #define SCC_REGNUM(wr,port,reg) ((wr << 8) + (port << 4) + reg)
 
 void
-scc_log(int regnum, word32 val, double dcycs)
+scc_log(int regnum, word32 val, dword64 dfcyc)
 {
 	int	pos;
 
 	pos = g_scc_log_pos;
 	g_scc_log[pos].regnum = regnum;
 	g_scc_log[pos].val = val;
-	g_scc_log[pos].dcycs = dcycs;
+	g_scc_log[pos].dfcyc = dfcyc;
 	pos++;
 	if(pos >= LEN_SCC_LOG) {
 		pos = 0;
@@ -520,30 +521,30 @@ scc_log(int regnum, word32 val, double dcycs)
 void
 show_scc_log(void)
 {
-	double	dcycs;
+	dword64	dfcyc;
 	int	regnum;
 	int	pos;
 	int	i;
 
 	pos = g_scc_log_pos;
-	dcycs = g_cur_dcycs;
-	printf("SCC log pos: %d, cur dcycs:%f\n", pos, dcycs);
+	dfcyc = g_cur_dfcyc;
+	printf("SCC log pos: %d, cur dfcyc:%016llx\n", pos, dfcyc);
 	for(i = 0; i < LEN_SCC_LOG; i++) {
 		pos--;
 		if(pos < 0) {
 			pos = LEN_SCC_LOG - 1;
 		}
 		regnum = g_scc_log[pos].regnum;
-		printf("%d:%d: port:%d wr:%d reg: %d val:%02x at t:%f\n",
+		printf("%d:%d: port:%d wr:%d reg: %d val:%02x at t:%016llx\n",
 			i, pos, (regnum >> 4) & 0xf, (regnum >> 8),
 			(regnum & 0xf),
 			g_scc_log[pos].val,
-			g_scc_log[pos].dcycs - dcycs);
+			g_scc_log[pos].dfcyc - dfcyc);
 	}
 }
 
 word32
-scc_read_reg(int port, double dcycs)
+scc_read_reg(int port, dword64 dfcyc)
 {
 	Scc	*scc_ptr;
 	word32	ret;
@@ -571,8 +572,8 @@ scc_read_reg(int port, double dcycs)
 		if(scc_ptr->br_is_zero) {
 			ret |= 0x02;
 		}
-		//printf("Read scc[%d] stat: %f : %02x dcd:%d\n", port, dcycs,
-		//	ret, scc_ptr->dcd);
+		//printf("Read scc[%d] stat: %016llx : %02x dcd:%d\n", port,
+		//	dfcyc, ret, scc_ptr->dcd);
 		break;
 	case 1:
 	case 5:
@@ -608,7 +609,7 @@ scc_read_reg(int port, double dcycs)
 		}
 		break;
 	case 8:
-		ret = scc_read_data(port, dcycs);
+		ret = scc_read_data(port, dfcyc);
 		break;
 	case 9:
 	case 13:
@@ -634,14 +635,14 @@ scc_read_reg(int port, double dcycs)
 	scc_ptr->reg_ptr = 0;
 	scc_printf("Read c03%x, rr%d, ret: %02x\n", 8+port, regnum, ret);
 	if(regnum != 0 && regnum != 3) {
-		scc_log(SCC_REGNUM(0,port,regnum), ret, dcycs);
+		scc_log(SCC_REGNUM(0,port,regnum), ret, dfcyc);
 	}
 
 	return ret;
 }
 
 void
-scc_write_reg(int port, word32 val, double dcycs)
+scc_write_reg(int port, word32 val, dword64 dfcyc)
 {
 	Scc	*scc_ptr;
 	word32	old_val;
@@ -662,7 +663,7 @@ scc_write_reg(int port, word32 val, double dcycs)
 			regnum = 0;
 			scc_ptr->mode = 1;
 		} else {
-			scc_log(SCC_REGNUM(1,port,0), val, dcycs);
+			scc_log(SCC_REGNUM(1,port,0), val, dfcyc);
 		}
 	} else {
 		scc_ptr->reg_ptr = 0;
@@ -670,7 +671,7 @@ scc_write_reg(int port, word32 val, double dcycs)
 	}
 
 	if(regnum != 0) {
-		scc_log(SCC_REGNUM(1,port,regnum), val, dcycs);
+		scc_log(SCC_REGNUM(1,port,regnum), val, dfcyc);
 	}
 
 	changed_bits = (scc_ptr->reg[regnum] ^ val) & 0xff;
@@ -771,7 +772,7 @@ scc_write_reg(int port, word32 val, double dcycs)
 		scc_ptr->reg[regnum] = val;
 		return;
 	case 8: /* wr8 */
-		scc_write_data(port, val, dcycs);
+		scc_write_data(port, val, dfcyc);
 		return;
 	case 9: /* wr9 */
 		if((val & 0xc0)) {
@@ -842,7 +843,7 @@ scc_write_reg(int port, word32 val, double dcycs)
 		if(changed_bits) {
 			scc_regen_clocks(port);
 		}
-		scc_maybe_br_event(port, dcycs);
+		scc_maybe_br_event(port, dfcyc);
 		return;
 	case 15: /* wr15 */
 		/* ignore all accesses since IIgs self test messes with it */
@@ -855,7 +856,7 @@ scc_write_reg(int port, word32 val, double dcycs)
 			/* set_halt(1); */
 		}
 		scc_ptr->reg[regnum] = val;
-		scc_maybe_br_event(port, dcycs);
+		scc_maybe_br_event(port, dfcyc);
 		scc_evaluate_ints(port);
 		return;
 	default:
@@ -865,7 +866,7 @@ scc_write_reg(int port, word32 val, double dcycs)
 }
 
 void
-scc_maybe_br_event(int port, double dcycs)
+scc_maybe_br_event(int port, dword64 dfcyc)
 {
 	Scc	*scc_ptr;
 	double	br_dcycs;
@@ -886,7 +887,8 @@ scc_maybe_br_event(int port, double dcycs)
 	}
 
 	scc_ptr->br_event_pending = 1;
-	add_event_scc(dcycs + br_dcycs, SCC_MAKE_EVENT(port, SCC_BR_EVENT));
+	add_event_scc(dfcyc + (dword64)(br_dcycs * 65536.0),
+					SCC_MAKE_EVENT(port, SCC_BR_EVENT));
 }
 
 void
@@ -939,7 +941,7 @@ scc_evaluate_ints(int port)
 }
 
 void
-scc_maybe_rx_event(int port, double dcycs)
+scc_maybe_rx_event(int port, dword64 dfcyc)
 {
 	Scc	*scc_ptr;
 	double	rx_dcycs;
@@ -972,7 +974,8 @@ scc_maybe_rx_event(int port, double dcycs)
 	scc_maybe_rx_int(port);
 	rx_dcycs = scc_ptr->rx_dcycs;
 	scc_ptr->rx_event_pending = 1;
-	add_event_scc(dcycs + rx_dcycs, SCC_MAKE_EVENT(port, SCC_RX_EVENT));
+	add_event_scc(dfcyc + (dword64)(rx_dcycs*65536.0),
+					SCC_MAKE_EVENT(port, SCC_RX_EVENT));
 }
 
 void
@@ -1021,7 +1024,7 @@ scc_handle_tx_event(int port)
 }
 
 void
-scc_maybe_tx_event(int port, double dcycs)
+scc_maybe_tx_event(int port, dword64 dfcyc)
 {
 	Scc	*scc_ptr;
 	double	tx_dcycs;
@@ -1036,7 +1039,7 @@ scc_maybe_tx_event(int port, double dcycs)
 		scc_evaluate_ints(port);
 		tx_dcycs = scc_ptr->tx_dcycs;
 		scc_ptr->tx_event_pending = 1;
-		add_event_scc(dcycs + tx_dcycs,
+		add_event_scc(dfcyc + (dword64)(tx_dcycs * 65536.0),
 				SCC_MAKE_EVENT(port, SCC_TX_EVENT));
 	}
 }
@@ -1069,7 +1072,7 @@ scc_clr_zerocnt_int(int port)
 }
 
 void
-scc_add_to_readbuf(int port, word32 val, double dcycs)
+scc_add_to_readbuf(int port, word32 val, dword64 dfcyc)
 {
 	Scc	*scc_ptr;
 	int	in_wrptr;
@@ -1096,11 +1099,11 @@ scc_add_to_readbuf(int port, word32 val, double dcycs)
 		g_scc_overflow = 1;
 	}
 
-	scc_maybe_rx_event(port, dcycs);
+	scc_maybe_rx_event(port, dfcyc);
 }
 
 void
-scc_add_to_readbufv(int port, double dcycs, const char *fmt, ...)
+scc_add_to_readbufv(int port, dword64 dfcyc, const char *fmt, ...)
 {
 	va_list	ap;
 	char	*bufptr;
@@ -1115,9 +1118,9 @@ scc_add_to_readbufv(int port, double dcycs, const char *fmt, ...)
 	for(i = 0; i < len; i++) {
 		c = bufptr[i];
 		if(c == 0x0a) {
-			scc_add_to_readbuf(port, 0x0d, dcycs);
+			scc_add_to_readbuf(port, 0x0d, dfcyc);
 		}
-		scc_add_to_readbuf(port, c, dcycs);
+		scc_add_to_readbuf(port, c, dfcyc);
 	}
 	va_end(ap);
 }
@@ -1201,7 +1204,7 @@ scc_add_to_writebuf(int port, word32 val)
 }
 
 word32
-scc_read_data(int port, double dcycs)
+scc_read_data(int port, dword64 dfcyc)
 {
 	Scc	*scc_ptr;
 	word32	ret;
@@ -1210,7 +1213,7 @@ scc_read_data(int port, double dcycs)
 
 	scc_ptr = &(g_scc[port]);
 
-	scc_try_fill_readbuf(port, dcycs);
+	scc_try_fill_readbuf(port, dfcyc);
 
 	depth = scc_ptr->rx_queue_depth;
 
@@ -1221,36 +1224,36 @@ scc_read_data(int port, double dcycs)
 			scc_ptr->rx_queue[i-1] = scc_ptr->rx_queue[i];
 		}
 		scc_ptr->rx_queue_depth = depth - 1;
-		scc_maybe_rx_event(port, dcycs);
+		scc_maybe_rx_event(port, dfcyc);
 		scc_maybe_rx_int(port);
 	}
 
 	scc_printf("SCC read %04x: ret %02x, depth:%d\n", 0xc03b-port, ret,
 			depth);
 
-	scc_log(SCC_REGNUM(0,port,8), ret, dcycs);
+	scc_log(SCC_REGNUM(0,port,8), ret, dfcyc);
 
 	return ret;
 }
 
 
 void
-scc_write_data(int port, word32 val, double dcycs)
+scc_write_data(int port, word32 val, dword64 dfcyc)
 {
 	Scc	*scc_ptr;
 
 	scc_printf("SCC write %04x: %02x\n", 0xc03b-port, val);
-	scc_log(SCC_REGNUM(1,port,8), val, dcycs);
+	scc_log(SCC_REGNUM(1,port,8), val, dfcyc);
 
 	scc_ptr = &(g_scc[port]);
 	if(scc_ptr->reg[14] & 0x10) {
 		/* local loopback! */
-		scc_add_to_readbuf(port, val, dcycs);
+		scc_add_to_readbuf(port, val, dfcyc);
 	} else {
 		scc_transmit(port, val);
 	}
-	scc_try_to_empty_writebuf(port, dcycs);
+	scc_try_to_empty_writebuf(port, dfcyc);
 
-	scc_maybe_tx_event(port, dcycs);
+	scc_maybe_tx_event(port, dfcyc);
 }
 

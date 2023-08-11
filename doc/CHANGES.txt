@@ -1,4 +1,48 @@
 
+Changes in KEGS v1.26 since v1.25 (05/21/23)
+- Fix Win64 Dynapro issues (O_BINARY, setvbuf was causing a crash).
+- Fix a KEGS bug in the Bank $E0 memory map which could corrupt data in the
+	Apple IIgs memory from $E0/6000 - $E0/A000.
+
+
+Changes in KEGS v1.25 since v1.24 (05/21/23)
+- Actual Win32 support.  1.24 was only Win64.
+
+
+Changes in KEGS v1.24 since v1.23 (05/17/23)
+- Win64 support.  kegswin.exe now part of the standard release.  The Windows
+	port is still beta quality.
+- Try to fix jerky video to make KEGS seem smoother.
+
+
+Changes in KEGS v1.23 since v1.22 (05/05/23)
+- Change the way KEGS tracks time from a double to a unsigned long long,
+	which enables higher speeds.
+- Support video mode changes in the middle of lines.
+
+
+Changes in KEGS v1.22 since v1.21 (04/27/23)
+- Remove debugging printfs from iwm.c.
+- Fix the way video updates are done to fix Dagen Brock's HDGR demo (which
+	switches pages to double the GR vertical resolution).
+
+
+Changes in KEGS v1.21 since v1.20 (04/15/23)
+- Fix Antoine's reported issue where KEGS would hang after ejecting 3.5" disks.
+	Caused by a debug statement accidentally left in for the release.
+- Fix Stephan's reported issue with keys repeating forever with French
+	keyboards.
+
+
+Changes in KEGS v1.20 since v1.19 (03/31/23)
+- Ctrl-F9 is now Copy.  The text screen is copied to your host system
+	clipboard.  On a Mac, Edit->Copy Text Screen can be selected, too.
+- Fix Mockingboard emulation to pass mb-audit.1.3 (it was a reset-related
+	issue).
+- Fix VOC support for unreleased "Fat Screen" VOC SHR from main-memory to
+	work properly.
+
+
 Changes in KEGS v1.19 since v1.18 (03/11/23)
 - 'L' on the disk selection screen locks/unlocks images.
 - Ignore case when detecting image extensions like .PO.

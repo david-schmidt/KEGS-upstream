@@ -1,8 +1,8 @@
-const char rcsid_voc_c[] = "@(#)$KmKId: voc.c,v 1.8 2022-04-30 20:04:48+00 kentd Exp $";
+const char rcsid_voc_c[] = "@(#)$KmKId: voc.c,v 1.11 2023-05-04 19:32:06+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2022 by Kent Dickey		*/
+/*			Copyright 2002-2023 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -32,13 +32,13 @@ word32	g_voc_reg5 = 0;
 word32	g_voc_reg6 = 0;
 
 word32
-voc_devsel_read(word32 loc, double dcycs)
+voc_devsel_read(word32 loc, dword64 dfcyc)
 {
 	// Reads to $c0b0-$c0bf.
 	loc = loc & 0xf;
 	switch(loc) {
 	case 0:		// 0xc0b0
-		return voc_read_reg0(dcycs);
+		return voc_read_reg0(dfcyc);
 		break;
 	case 1:		// 0xc0b1
 		return g_voc_reg1;
@@ -72,7 +72,7 @@ voc_devsel_read(word32 loc, double dcycs)
 }
 
 void
-voc_devsel_write(word32 loc, word32 val, double dcycs)
+voc_devsel_write(word32 loc, word32 val, dword64 dfcyc)
 {
 	// Writes to $c0b0-$c0bf.
 	loc = loc & 0xf;
@@ -99,8 +99,13 @@ voc_devsel_write(word32 loc, word32 val, double dcycs)
 		if(val & 0xc0) {
 			halt_printf("VOC write %04x = %02x\n", loc, val);
 		}
+#if 0
+		if(val != g_voc_reg1) {
+			printf("$c0b1:%02x (was %02x)\n", val, g_voc_reg1);
+		}
+#endif
 		g_voc_reg1 = val;
-		voc_update_interlace(dcycs);
+		voc_update_interlace(dfcyc);
 		return;
 		break;
 	case 3:		// 0xc0b3
@@ -124,7 +129,7 @@ voc_devsel_write(word32 loc, word32 val, double dcycs)
 		// bit 6: R/W: 0=KeyColor enabled, 1=KeyColor disabled
 		// bit 7: R/W: 1=Interlace mode enabled
 		g_voc_reg5 = val;
-		voc_update_interlace(dcycs);
+		voc_update_interlace(dfcyc);
 		return;
 		break;
 	case 6:		// 0xc0b6
@@ -150,15 +155,16 @@ voc_devsel_write(word32 loc, word32 val, double dcycs)
 		}
 		break;
 	}
-	halt_printf("Unknown Write %04x = %02x %f\n", 0xc0b0 + loc, val, dcycs);
+	halt_printf("Unknown Write %04x = %02x %016llx\n", 0xc0b0 + loc, val,
+								dfcyc);
 }
 
 void
-voc_iosel_c300_write(word32 loc, word32 val, double dcycs)
+voc_iosel_c300_write(word32 loc, word32 val, dword64 dfcyc)
 {
 	// Writes to $c300-$c3ff
-	halt_printf("Wrote VOC %04x = %02x %f\n", 0xc300 + (loc & 0xff), val,
-								dcycs);
+	halt_printf("Wrote VOC %04x = %02x %016llx\n", 0xc300 + (loc & 0xff),
+								val, dfcyc);
 }
 
 void
@@ -174,7 +180,7 @@ voc_reset()
 double g_voc_last_pal_vbl = 0;
 
 word32
-voc_read_reg0(double dcycs)
+voc_read_reg0(dword64 dfcyc)
 {
 	word32	frame, in_vbl;
 
@@ -188,27 +194,31 @@ voc_read_reg0(double dcycs)
 	// c0b0: bit 5: R/O: 0=showing Field 0, 1=showing Field 1
 	// c0b0: bit 6: R/O: 1=VBL Int Request pending
 	// c0b0: bit 7: R/O: 1=Line Int Request pending
-	in_vbl = in_vblank(dcycs);
-	dbg_log_info(dcycs, 0, in_vbl, 0x1c0b0);
+	in_vbl = in_vblank(dfcyc);
+	dbg_log_info(dfcyc, 0, in_vbl, 0x1c0b0);
 	frame = g_vbl_count & 1;
 	return (frame << 5) | (in_vbl << 2);
 }
 
 void
-voc_update_interlace(double dcycs)
+voc_update_interlace(dword64 dfcyc)
 {
-	word32	new_stat;
+	word32	new_stat, mask;
 
 	new_stat = 0;
 	if(((g_voc_reg1 & 0x30) == 0x30) && (g_voc_reg5 & 0x80)) {
 		new_stat = ALL_STAT_VOC_INTERLACE;
 	}
-	if((g_cur_a2_stat ^ new_stat) & ALL_STAT_VOC_INTERLACE) {
+	if((g_voc_reg1 & 0x30) == 0x10) {		// Draw SHR from mainmem
+		new_stat = ALL_STAT_VOC_MAIN;
+	}
+	mask = ALL_STAT_VOC_INTERLACE | ALL_STAT_VOC_MAIN;
+	if((g_cur_a2_stat ^ new_stat) & mask) {
 		// Interlace mode has changed
-		g_cur_a2_stat &= (~ALL_STAT_VOC_INTERLACE);
+		g_cur_a2_stat &= (~mask);
 		g_cur_a2_stat |= new_stat;
 		printf("Change VOC interlace mode: %08x\n", new_stat);
-		change_display_mode(dcycs);
+		change_display_mode(dfcyc);
 	}
 }
 

@@ -1,8 +1,8 @@
-const char rcsid_woz_c[] = "@(#)$KmKId: woz.c,v 1.26 2022-05-07 22:24:44+00 kentd Exp $";
+const char rcsid_woz_c[] = "@(#)$KmKId: woz.c,v 1.29 2023-05-19 13:53:52+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2022 by Kent Dickey		*/
+/*			Copyright 2002-2023 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -131,7 +131,7 @@ woz_check_file(Disk *dsk)
 		return;
 	}
 
-	file_size = cfg_get_fd_size(dsk->fd);
+	file_size = (word32)cfg_get_fd_size(dsk->fd);
 	if(file_size != (word32)woz_size) {
 		halt_printf("woz_size:%08x != file_size %08x\n", woz_size,
 								file_size);
@@ -281,7 +281,7 @@ woz_parse_trks(Disk *dsk, int offset, int size)
 }
 
 int
-woz_add_track(Disk *dsk, int qtr_track, word32 tmap, double dcycs)
+woz_add_track(Disk *dsk, int qtr_track, word32 tmap, dword64 dfcyc)
 {
 	Woz_info *wozinfo_ptr;
 	Trk	*trk;
@@ -361,13 +361,13 @@ woz_add_track(Disk *dsk, int qtr_track, word32 tmap, double dcycs)
 	trk->sync_ptr = (byte *)malloc(num_bytes);
 
 	dsk->cur_trk_ptr = 0;
-	iwm_move_to_ftrack(dsk, qtr_track << 16, 0, dcycs);
+	iwm_move_to_ftrack(dsk, qtr_track << 16, 0, dfcyc);
 	sync_ptr = &(trk->sync_ptr[0]);
 	for(i = 0; i < (int)raw_bytes; i++) {
 		sync_ptr[i] = 0xff;
 	}
 
-	iwm_recalc_sync_from(dsk, qtr_track, 0, dcycs);
+	iwm_recalc_sync_from(dsk, qtr_track, 0, dfcyc);
 
 	if(qtr_track == 0) {
 		printf("Track 0 data begins: %02x %02x %02x, offset:%d\n",
@@ -491,7 +491,7 @@ woz_malloc(byte *wozptr, word32 woz_size)
 }
 
 int
-woz_reopen(Disk *dsk, double dcycs)
+woz_reopen(Disk *dsk, dword64 dfcyc)
 {
 	byte	act_tmap[160];
 	Woz_info *wozinfo_ptr;
@@ -586,7 +586,7 @@ woz_reopen(Disk *dsk, double dcycs)
 				// Otherwise, a lone track, always add it
 			}
 		}
-		ret = woz_add_track(dsk, i, tmap, dcycs);
+		ret = woz_add_track(dsk, i, tmap, dfcyc);
 		if(ret == 0) {
 			printf("woz_add_track i:%04x tmap:%04x ret 0\n", i,
 								tmap);
@@ -598,11 +598,12 @@ woz_reopen(Disk *dsk, double dcycs)
 }
 
 int
-woz_open(Disk *dsk, double dcycs)
+woz_open(Disk *dsk, dword64 dfcyc)
 {
 	Woz_info *wozinfo_ptr;
 	byte	*wozptr;
-	word32	woz_size, off, crc, file_crc;
+	dword64	doff;
+	word32	woz_size, crc, file_crc;
 	int	fd, ret;
 
 	// return 0 for bad WOZ file, 1 for success
@@ -611,7 +612,7 @@ woz_open(Disk *dsk, double dcycs)
 						dsk->write_prot);
 	if(dsk->raw_data) {
 		wozptr = dsk->raw_data;
-		woz_size = dsk->raw_dsize;
+		woz_size = (word32)dsk->raw_dsize;
 		dsk->write_prot = 1;
 		dsk->write_through_to_unix = 0;
 	} else {
@@ -619,12 +620,12 @@ woz_open(Disk *dsk, double dcycs)
 		if(fd < 0) {
 			return 0;
 		}
-		woz_size = cfg_get_fd_size(fd);
+		woz_size = (word32)cfg_get_fd_size(fd);
 		printf("size: %d\n", woz_size);
 
 		wozptr = malloc(woz_size);
-		off = cfg_read_from_fd(fd, wozptr, 0, woz_size);
-		if(off != woz_size) {
+		doff = cfg_read_from_fd(fd, wozptr, 0, woz_size);
+		if(doff != woz_size) {
 			close(fd);
 			return 0;
 		}
@@ -651,7 +652,7 @@ woz_open(Disk *dsk, double dcycs)
 		return ret;
 	}
 
-	ret = woz_reopen(dsk, dcycs);
+	ret = woz_reopen(dsk, dfcyc);
 	printf("woz_reopen ret:%d\n", ret);
 
 	woz_maybe_reparse(dsk);
@@ -974,7 +975,7 @@ woz_new(int fd, const char *str, int size_kb)
 	woz_size = wozinfo_ptr->woz_size;
 
 
-	size = must_write(fd, wozptr, woz_size);
+	size = (word32)must_write(fd, wozptr, woz_size);
 	free(wozptr);
 	free(wozinfo_ptr);
 	if(size != woz_size) {
@@ -1038,7 +1039,7 @@ woz_reparse_woz(Disk *dsk)
 
 	// Need to recalculate dsk->cur_track_bits, cur_trk_ptr
 	dsk->cur_trk_ptr = 0;
-	iwm_move_to_ftrack(dsk, dsk->cur_frac_track, 0, 0.0);
+	iwm_move_to_ftrack(dsk, dsk->cur_frac_track, 0, 0);
 
 #if 0
 	printf("End of woz_reparse_woz, showing track 0\n");
@@ -1122,7 +1123,7 @@ woz_add_a_track(Disk *dsk, word32 qtr_track)
 		}
 		bptr[raw_bytes - 1] = 0;
 
-		iwm_recalc_sync_from(dsk, qtr_track, 0, 0.0);
+		iwm_recalc_sync_from(dsk, qtr_track, 0, 0);
 	}
 	trkptr->dunix_pos = 0;
 	trkptr->unix_len = 0;			// Mark as a newly created trk

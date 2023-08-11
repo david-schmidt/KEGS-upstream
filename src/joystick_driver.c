@@ -1,8 +1,8 @@
-const char rcsid_joystick_driver_c[] = "@(#)$KmKId: joystick_driver.c,v 1.20 2022-04-03 13:38:37+00 kentd Exp $";
+const char rcsid_joystick_driver_c[] = "@(#)$KmKId: joystick_driver.c,v 1.22 2023-05-04 19:33:31+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2022 by Kent Dickey		*/
+/*			Copyright 2002-2023 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -85,7 +85,7 @@ joystick_init()
 /* joystick_update_linux() called from paddles.c.  Update g_paddle_val[] */
 /*  and g_paddle_buttons with current information */
 void
-joystick_update(double dcycs)
+joystick_update(dword64 dfcyc)
 {
 	struct js_event js;	/* the linux joystick event record */
 	int	mask;
@@ -123,7 +123,7 @@ joystick_update(double dcycs)
 	}
 
 	if(i > 0) {
-		paddle_update_trigger_dcycs(dcycs);
+		paddle_update_trigger_dcycs(dfcyc);
 	}
 }
 
@@ -184,7 +184,7 @@ joystick_init()
 }
 
 void
-joystick_update(double dcycs)
+joystick_update(dword64 dfcyc)
 {
 	JOYCAPS joycap;
 	JOYINFO info;
@@ -210,7 +210,7 @@ joystick_update(double dcycs)
 		} else {
 			g_paddle_buttons = g_paddle_buttons & (~2);
 		}
-		paddle_update_trigger_dcycs(dcycs);
+		paddle_update_trigger_dcycs(dfcyc);
 	}
 }
 
@@ -400,11 +400,11 @@ joystick_init()
 }
 
 void
-joystick_update(double dcycs)
+joystick_update(dword64 dfcyc)
 {
 	int	i;
 
-	if(dcycs) {
+	if(dfcyc) {
 		// Avoid unused parameter warnings
 	}
 	for(i = 0; i < 4; i++) {
@@ -415,7 +415,7 @@ joystick_update(double dcycs)
 		g_paddle_buttons = 0xc | (g_joystick_callback_buttons & 3);
 		g_paddle_val[0] = g_joystick_callback_x;
 		g_paddle_val[1] = g_joystick_callback_y;
-		paddle_update_trigger_dcycs(dcycs);
+		paddle_update_trigger_dcycs(dfcyc);
 	}
 }
 
@@ -439,11 +439,11 @@ joystick_init()
 }
 
 void
-joystick_update(double dcycs)
+joystick_update(dword64 dfcyc)
 {
 	int	i;
 
-	if(dcycs) {
+	if(dfcyc) {
 		// Avoid unused parameter warnings
 	}
 	for(i = 0; i < 4; i++) {
@@ -454,7 +454,7 @@ joystick_update(double dcycs)
 		g_paddle_buttons = 0xc | (g_joystick_callback_buttons & 3);
 		g_paddle_val[0] = g_joystick_callback_x;
 		g_paddle_val[1] = g_joystick_callback_y;
-		paddle_update_trigger_dcycs(dcycs);
+		paddle_update_trigger_dcycs(dfcyc);
 	}
 }
 

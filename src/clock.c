@@ -1,4 +1,4 @@
-const char rcsid_clock_c[] = "@(#)$KmKId: clock.c,v 1.37 2022-04-03 13:38:08+00 kentd Exp $";
+const char rcsid_clock_c[] = "@(#)$KmKId: clock.c,v 1.38 2023-05-19 13:52:30+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -99,7 +99,7 @@ micro_sleep(double dtime)
 #endif
 
 #ifdef _WIN32
-	Sleep(dtime * 1000);
+	Sleep((word32)(dtime * 1000));
 #else
 	Timer.tv_sec = 0;
 	Timer.tv_usec = (dtime * 1000000.0);
@@ -171,8 +171,7 @@ void
 update_cur_time()
 {
 	struct tm *tm_ptr;
-	time_t	cur_time;
-	unsigned long secs, secs2;
+	time_t	cur_time, secs, secs2;
 
 	cur_time = time(0);
 
@@ -190,7 +189,7 @@ update_cur_time()
 	/*  will use the tm_ptr->gmtoff member to correct the time */
 	secs = secs + tm_ptr->tm_gmtoff;
 #else
-	secs = (unsigned long)cur_time - secs2;
+	secs = cur_time - secs2;
 
 	if(tm_ptr->tm_isdst) {
 		/* adjust for daylight savings time */

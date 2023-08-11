@@ -1,8 +1,8 @@
-const char rcsid_moremem_c[] = "@(#)$KmKId: moremem.c,v 1.283 2022-05-06 21:47:30+00 kentd Exp $";
+const char rcsid_moremem_c[] = "@(#)$KmKId: moremem.c,v 1.289 2023-05-22 17:14:55+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2022 by Kent Dickey		*/
+/*			Copyright 2002-2023 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -108,12 +108,12 @@ Emustate_intlist g_emustate_intlist[] = {
 	{ 0, 0, }
 };
 
-extern double g_paddle_trig_dcycs;
-extern double g_last_vbl_dcycs;
+extern dword64 g_paddle_trig_dfcyc;
+extern dword64 g_last_vbl_dfcyc;
 
-Emustate_dbllist g_emustate_dbllist[] = {
-	EMUSTATE(g_paddle_trig_dcycs),
-	EMUSTATE(g_last_vbl_dcycs),
+Emustate_dword64list g_emustate_dword64list[] = {
+	EMUSTATE(g_paddle_trig_dfcyc),
+	EMUSTATE(g_last_vbl_dfcyc),
 	{ 0, 0, }
 };
 
@@ -391,7 +391,7 @@ fixup_wrdefram(int new_wrdefram)
 }
 
 void
-fixup_st80col(double dcycs)
+fixup_st80col(dword64 dfcyc)
 {
 	int	cur_a2_stat;
 
@@ -406,7 +406,7 @@ fixup_st80col(double dcycs)
 	}
 
 	if(cur_a2_stat & ALL_STAT_PAGE2) {
-		change_display_mode(dcycs);
+		change_display_mode(dfcyc);
 	}
 
 	fixup_brks();
@@ -478,7 +478,7 @@ fixup_altzp()
 }
 
 void
-fixup_page2(double dcycs)
+fixup_page2(dword64 dfcyc)
 {
 	if((g_cur_a2_stat & ALL_STAT_ST80)) {
 		fixup_bank0_0400_0800();
@@ -486,7 +486,7 @@ fixup_page2(double dcycs)
 			fixup_bank0_2000_4000();
 		}
 	} else {
-		change_display_mode(dcycs);
+		change_display_mode(dfcyc);
 	}
 }
 
@@ -677,11 +677,11 @@ fixup_rdrom()
 }
 
 void
-set_statereg(double dcycs, int val)
+set_statereg(dword64 dfcyc, int val)
 {
 	int	xor;
 
-	dbg_log_info(dcycs, val, g_c068_statereg, 0x68);
+	dbg_log_info(dfcyc, val, g_c068_statereg, 0x68);
 
 	xor = val ^ g_c068_statereg;
 	g_c068_statereg = val;
@@ -697,7 +697,7 @@ set_statereg(double dcycs, int val)
 		/* page2 */
 		g_cur_a2_stat = (g_cur_a2_stat & ~ALL_STAT_PAGE2) |
 						(val & ALL_STAT_PAGE2);
-		fixup_page2(dcycs);
+		fixup_page2(dfcyc);
 	}
 
 	if(xor & 0x20) {
@@ -994,9 +994,9 @@ setup_pageinfo()
 	fixup_any_bank_any_page(0xe004, 0x08, mem0rd + 0x0400,
 						mem0rd + 0x0400 + BANK_SHADOW);
 	fixup_any_bank_any_page(0xe00c, 0x14, mem0rd + 0x0c00, mem0rd + 0x0c00);
-	fixup_any_bank_any_page(0xe020, 0x40, mem0rd + 0x2000,
+	fixup_any_bank_any_page(0xe020, 0x80, mem0rd + 0x2000,
 						mem0rd + 0x2000 + BANK_SHADOW);
-	fixup_any_bank_any_page(0xe060, 0xa0, mem0rd + 0x6000, mem0rd + 0x6000);
+	fixup_any_bank_any_page(0xe0a0, 0x60, mem0rd + 0xa000, mem0rd + 0xa000);
 
 	mem0rd = &(g_slow_memory_ptr[0x10000]);
 	fixup_any_bank_any_page(0xe100, 0x04, mem0rd + 0x0000, mem0rd + 0x0000);
@@ -1096,19 +1096,14 @@ moremem_fix_vector_pull(word32 addr)
 	return addr;
 }
 
-#define CALC_DCYCS_FROM_CYC_PTR(dcycs, cyc_ptr)			\
-	dcycs = g_last_vbl_dcycs + *cyc_ptr;
-
-
 int
-io_read(word32 loc, double *cyc_ptr)
+io_read(word32 loc, dword64 *cyc_ptr)
 {
-	double	dcycs;
-	dword64	word64_tmp;
+	dword64	dfcyc;
 	int	new_lcbank2, new_wrdefram, tmp;
 	int	i;
 
-	CALC_DCYCS_FROM_CYC_PTR(dcycs, cyc_ptr);
+	dfcyc = *cyc_ptr;
 
 /* IO space */
 	switch((loc >> 8) & 0xf) {
@@ -1141,7 +1136,7 @@ io_read(word32 loc, double *cyc_ptr)
 		case 0x18: /* c018: rd80c0l */
 			return IOR((g_cur_a2_stat & ALL_STAT_ST80));
 		case 0x19: /* c019: rdvblbar: MSB set if in VBL */
-			tmp = in_vblank(dcycs);
+			tmp = in_vblank(dfcyc);
 			if(g_rom_version == 0) {	// Apple //e
 				tmp = tmp ^ 1;		// 1=not in VBL on //e
 			}
@@ -1162,7 +1157,7 @@ io_read(word32 loc, double *cyc_ptr)
 		/* 0xc020 - 0xc02f */
 		case 0x20: /* 0xc020 */
 			/* Click cassette port */
-			return float_bus(dcycs);
+			return float_bus(dfcyc);
 		case 0x21: /* 0xc021 */
 			/* Not documented, but let's return COLOR_C021 */
 			return IOR(g_cur_a2_stat & ALL_STAT_COLOR_C021);
@@ -1171,7 +1166,7 @@ io_read(word32 loc, double *cyc_ptr)
 		case 0x23: /* 0xc023 */
 			return g_c023_val;
 		case 0x24: /* 0xc024 */
-			return mouse_read_c024(dcycs);
+			return mouse_read_c024(dfcyc);
 		case 0x25: /* 0xc025 */
 			return adb_read_c025();
 		case 0x26: /* 0xc026 */
@@ -1192,7 +1187,7 @@ io_read(word32 loc, double *cyc_ptr)
 		case 0x2c: /* 0xc02c */
 			/* printf("reading c02c, returning 0\n"); */
 			if(g_c06d_val == 0x40) {	// Test mode $40
-				return read_video_data(dcycs);
+				return read_video_data(dfcyc);
 			}
 			return 0;
 		case 0x2d: /* 0xc02d */
@@ -1200,12 +1195,12 @@ io_read(word32 loc, double *cyc_ptr)
 			return tmp;
 		case 0x2e: /* 0xc02e */
 		case 0x2f: /* 0xc02f */
-			return read_vid_counters(loc, dcycs);
+			return read_vid_counters(loc, dfcyc);
 
 		/* 0xc030 - 0xc03f */
 		case 0x30: /* 0xc030 */
 			/* click speaker */
-			return doc_read_c030(dcycs);
+			return doc_read_c030(dfcyc);
 		case 0x31: /* 0xc031 */
 			/* 3.5" control */
 			return g_iwm.state & 0xc0;
@@ -1223,18 +1218,18 @@ io_read(word32 loc, double *cyc_ptr)
 		case 0x37: /* 0xc037 */
 			return 0;
 		case 0x38: /* 0xc038 */
-			return scc_read_reg(1, dcycs);
+			return scc_read_reg(1, dfcyc);
 		case 0x39: /* 0xc039 */
-			return scc_read_reg(0, dcycs);
+			return scc_read_reg(0, dfcyc);
 		case 0x3a: /* 0xc03a */
-			return scc_read_data(1, dcycs);
+			return scc_read_data(1, dfcyc);
 		case 0x3b: /* 0xc03b */
-			return scc_read_data(0, dcycs);
+			return scc_read_data(0, dfcyc);
 		case 0x3c: /* 0xc03c */
 			/* doc control */
 			return doc_read_c03c();
 		case 0x3d: /* 0xc03d */
-			return doc_read_c03d(dcycs);
+			return doc_read_c03d(dfcyc);
 		case 0x3e: /* 0xc03e */
 			return (g_c03ef_doc_ptr & 0xff);
 		case 0x3f: /* 0xc03f */
@@ -1294,47 +1289,47 @@ io_read(word32 loc, double *cyc_ptr)
 		case 0x50: /* 0xc050 */
 			if(g_cur_a2_stat & ALL_STAT_TEXT) {
 				g_cur_a2_stat &= (~ALL_STAT_TEXT);
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
-			return float_bus(dcycs);
+			return float_bus(dfcyc);
 		case 0x51: /* 0xc051 */
 			if((g_cur_a2_stat & ALL_STAT_TEXT) == 0) {
 				g_cur_a2_stat |= (ALL_STAT_TEXT);
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
-			return float_bus(dcycs);
+			return float_bus(dfcyc);
 		case 0x52: /* 0xc052 */
 			if(g_cur_a2_stat & ALL_STAT_MIX_T_GR) {
 				g_cur_a2_stat &= (~ALL_STAT_MIX_T_GR);
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
-			return float_bus(dcycs);
+			return float_bus(dfcyc);
 		case 0x53: /* 0xc053 */
 			if((g_cur_a2_stat & ALL_STAT_MIX_T_GR) == 0) {
 				g_cur_a2_stat |= (ALL_STAT_MIX_T_GR);
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
-			return float_bus(dcycs);
+			return float_bus(dfcyc);
 		case 0x54: /* 0xc054 */
-			set_statereg(dcycs, g_c068_statereg & (~0x40));
-			return float_bus(dcycs);
+			set_statereg(dfcyc, g_c068_statereg & (~0x40));
+			return float_bus(dfcyc);
 		case 0x55: /* 0xc055 */
-			set_statereg(dcycs, g_c068_statereg | 0x40);
-			return float_bus(dcycs);
+			set_statereg(dfcyc, g_c068_statereg | 0x40);
+			return float_bus(dfcyc);
 		case 0x56: /* 0xc056 */
 			if(g_cur_a2_stat & ALL_STAT_HIRES) {
 				g_cur_a2_stat &= (~ALL_STAT_HIRES);
 				fixup_hires_on();
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
-			return float_bus(dcycs);
+			return float_bus(dfcyc);
 		case 0x57: /* 0xc057 */
 			if((g_cur_a2_stat & ALL_STAT_HIRES) == 0) {
 				g_cur_a2_stat |= (ALL_STAT_HIRES);
 				fixup_hires_on();
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
-			return float_bus(dcycs);
+			return float_bus(dfcyc);
 		case 0x58: /* 0xc058 */
 			if(g_zipgs_unlock < 4) {
 				g_c05x_annuncs &= (~1);
@@ -1356,8 +1351,8 @@ io_read(word32 loc, double *cyc_ptr)
 			return 0;
 		case 0x5b: /* 0xc05b */
 			if(g_zipgs_unlock >= 4) {
-				word64_tmp = (dword64)dcycs;
-				tmp = (word64_tmp >> 9) & 1;
+				// Bit 7 is 1msclk, clock with 1ms period.
+				tmp = (dfcyc >> 25) & 1;
 				return (tmp << 7) + (g_zipgs_reg_c05b & 0x7f);
 			} else {
 				g_c05x_annuncs |= 2;
@@ -1382,7 +1377,7 @@ io_read(word32 loc, double *cyc_ptr)
 				halt_printf("Reading ZipGS $c05e!\n");
 			} else if(g_cur_a2_stat & ALL_STAT_ANNUNC3) {
 				g_cur_a2_stat &= (~ALL_STAT_ANNUNC3);
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
 			return 0;
 		case 0x5f: /* 0xc05f */
@@ -1390,7 +1385,7 @@ io_read(word32 loc, double *cyc_ptr)
 				halt_printf("Reading ZipGS $c05f!\n");
 			} else if((g_cur_a2_stat & ALL_STAT_ANNUNC3) == 0) {
 				g_cur_a2_stat |= (ALL_STAT_ANNUNC3);
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
 			return 0;
 
@@ -1407,13 +1402,13 @@ io_read(word32 loc, double *cyc_ptr)
 		case 0x63: /* 0xc063 */
 			return IOR(g_paddle_buttons & 4);
 		case 0x64: /* 0xc064 */
-			return read_paddles(dcycs, 0);
+			return read_paddles(dfcyc, 0);
 		case 0x65: /* 0xc065 */
-			return read_paddles(dcycs, 1);
+			return read_paddles(dfcyc, 1);
 		case 0x66: /* 0xc066 */
-			return read_paddles(dcycs, 2);
+			return read_paddles(dfcyc, 2);
 		case 0x67: /* 0xc067 */
-			return read_paddles(dcycs, 3);
+			return read_paddles(dfcyc, 3);
 		case 0x68: /* 0xc068 = STATEREG */
 			return g_c068_statereg;
 		case 0x69: /* 0xc069 */
@@ -1430,8 +1425,8 @@ io_read(word32 loc, double *cyc_ptr)
 
 		/* 0xc070 - 0xc07f */
 		case 0x70: /* c070 */
-			paddle_trigger(dcycs);
-			return 0;
+			paddle_trigger(dfcyc);
+			return float_bus(dfcyc);
 		case 0x71:	/* 0xc071 */
 		case 0x72: case 0x73:
 		case 0x74: case 0x75: case 0x76: case 0x77:
@@ -1453,17 +1448,17 @@ io_read(word32 loc, double *cyc_ptr)
 			case 0x1: /* 0xc081 */
 			case 0x2: /* 0xc082 */
 				/* Read rom, set lcbank2 */
-				set_statereg(dcycs, (g_c068_statereg & ~(0x04))|
+				set_statereg(dfcyc, (g_c068_statereg & (~4)) |
 					(new_lcbank2 | 0x08));
 				break;
 			case 0x0: /* 0xc080 */
 			case 0x3: /* 0xc083 */
 				/* Read ram (clear RDROM), set lcbank2 */
-				set_statereg(dcycs, (g_c068_statereg & ~(0x0c))|
+				set_statereg(dfcyc, (g_c068_statereg & (~0xc)) |
 					(new_lcbank2));
 				break;
 			}
-			return float_bus(dcycs);
+			return float_bus(dfcyc);
 		/* 0xc090 - 0xc09f */
 		case 0x90: case 0x91: case 0x92: case 0x93:
 		case 0x94: case 0x95: case 0x96: case 0x97:
@@ -1484,7 +1479,7 @@ io_read(word32 loc, double *cyc_ptr)
 		case 0xb4: case 0xb5: case 0xb6: case 0xb7:
 		case 0xb8: case 0xb9: case 0xba: case 0xbb:
 		case 0xbc: case 0xbd: case 0xbe: case 0xbf:
-			return voc_devsel_read(loc, dcycs);
+			return voc_devsel_read(loc, dfcyc);
 
 		/* 0xc0c0 - 0xc0cf */
 		case 0xc0: case 0xc1: case 0xc2: case 0xc3:
@@ -1503,7 +1498,7 @@ io_read(word32 loc, double *cyc_ptr)
 		case 0xe4: case 0xe5: case 0xe6: case 0xe7:
 		case 0xe8: case 0xe9: case 0xea: case 0xeb:
 		case 0xec: case 0xed: case 0xee: case 0xef:
-			return read_iwm(loc, dcycs);
+			return read_iwm(loc, dfcyc);
 		/* 0xc0f0 - 0xc0ff */
 		case 0xf0: case 0xf1: case 0xf2: case 0xf3:
 		case 0xf4: case 0xf5: case 0xf6: case 0xf7:
@@ -1517,9 +1512,9 @@ io_read(word32 loc, double *cyc_ptr)
 		}
 	case 1: case 2: case 3: case 5: case 6:
 		/* c100 - c6ff, (except c4xx) */
-		return float_bus(dcycs);
+		return float_bus(dfcyc);
 	case 4:
-		return mockingboard_read(loc, dcycs);
+		return mockingboard_read(loc, dfcyc);
 	case 7:
 		/* c700 */
 		tmp = g_rom_fc_ff_ptr[0x3c500 + (loc & 0xff)];
@@ -1528,13 +1523,13 @@ io_read(word32 loc, double *cyc_ptr)
 		}
 		return tmp;
 	case 8: case 9: case 0xa: case 0xb: case 0xc: case 0xd: case 0xe:
-		return float_bus(dcycs);
+		return float_bus(dfcyc);
 		// UNIMPL_READ;
 	case 0xf:
 		if((loc & 0xfff) == 0xfff) {
 			return g_rom_fc_ff_ptr[0x3cfff];
 		}
-		return float_bus(dcycs);
+		return float_bus(dfcyc);
 		// UNIMPL_READ;
 	}
 
@@ -1544,19 +1539,12 @@ io_read(word32 loc, double *cyc_ptr)
 }
 
 void
-io_write(word32 loc, int val, double *cyc_ptr)
+io_write(word32 loc, int val, dword64 *cyc_ptr)
 {
-	double	dcycs;
-#if 0
-	double	fcyc, new_fcyc;
-#endif
-	int	new_tmp;
-	int	new_lcbank2;
-	int	new_wrdefram;
-	int	tmp;
-	int	fixup;
+	dword64	dfcyc;
+	int	new_tmp, new_lcbank2, new_wrdefram, tmp, fixup;
 
-	CALC_DCYCS_FROM_CYC_PTR(dcycs, cyc_ptr);
+	dfcyc = *cyc_ptr;
 
 	val = val & 0xff;
 	switch((loc >> 8) & 0xf) {
@@ -1566,38 +1554,38 @@ io_write(word32 loc, int val, double *cyc_ptr)
 		case 0x00: /* 0xc000: CLR80COL */
 			if(g_cur_a2_stat & ALL_STAT_ST80) {
 				g_cur_a2_stat &= (~ALL_STAT_ST80);
-				fixup_st80col(dcycs);
+				fixup_st80col(dfcyc);
 			}
 			return;
 		case 0x01: /* 0xc001: SET80COL, enable 80-column store */
 			if((g_cur_a2_stat & ALL_STAT_ST80) == 0) {
 				g_cur_a2_stat |= (ALL_STAT_ST80);
-				fixup_st80col(dcycs);
+				fixup_st80col(dfcyc);
 			}
 			return;
 		case 0x02: /* 0xc002: Set RDMAINRAM */
-			set_statereg(dcycs, g_c068_statereg & ~0x20);
+			set_statereg(dfcyc, g_c068_statereg & ~0x20);
 			return;
 		case 0x03: /* 0xc003: Set RDCARDRAM (alt) */
-			set_statereg(dcycs, g_c068_statereg | 0x20);
+			set_statereg(dfcyc, g_c068_statereg | 0x20);
 			return;
 		case 0x04: /* 0xc004: Set WRMAINRAM */
-			set_statereg(dcycs, g_c068_statereg & ~0x10);
+			set_statereg(dfcyc, g_c068_statereg & ~0x10);
 			return;
 		case 0x05: /* 0xc005: Set WRCARDRAM (alt) */
-			set_statereg(dcycs, g_c068_statereg | 0x10);
+			set_statereg(dfcyc, g_c068_statereg | 0x10);
 			return;
 		case 0x06: /* 0xc006 = SETSLOTCXROM, use slot rom c800 */
-			set_statereg(dcycs, g_c068_statereg & ~0x01);
+			set_statereg(dfcyc, g_c068_statereg & ~0x01);
 			return;
 		case 0x07: /* 0xc007 = SETINTXROM, use int rom c800 */
-			set_statereg(dcycs, g_c068_statereg | 0x01);
+			set_statereg(dfcyc, g_c068_statereg | 0x01);
 			return;
 		case 0x08: /* 0xc008: SETSTDZP (main ZP/LC) */
-			set_statereg(dcycs, g_c068_statereg & ~0x80);
+			set_statereg(dfcyc, g_c068_statereg & ~0x80);
 			return;
 		case 0x09: /* 0xc009: SETALTZP (alt ZP/LC) */
-			set_statereg(dcycs, g_c068_statereg | 0x80);
+			set_statereg(dfcyc, g_c068_statereg | 0x80);
 			return;
 		case 0x0a: /* 0xc00a = SETINTC3ROM, use internal ROM slot 3*/
 			tmp = 1 << 3;
@@ -1616,25 +1604,25 @@ io_write(word32 loc, int val, double *cyc_ptr)
 		case 0x0c: /* 0xc00c = CLR80VID, disable 80 col hardware */
 			if(g_cur_a2_stat & ALL_STAT_VID80) {
 				g_cur_a2_stat &= (~ALL_STAT_VID80);
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
 			return;
 		case 0x0d: /* 0xc00d: SET80VID, enable 80 col hardware */
 			if((g_cur_a2_stat & ALL_STAT_VID80) == 0) {
 				g_cur_a2_stat |= (ALL_STAT_VID80);
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
 			return;
 		case 0x0e: /* 0xc00e: CLRALTCHAR */
 			if(g_cur_a2_stat & ALL_STAT_ALTCHARSET) {
 				g_cur_a2_stat &= (~ALL_STAT_ALTCHARSET);
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
 			return;
 		case 0x0f: /* 0xc00f: SETALTCHAR */
 			if((g_cur_a2_stat & ALL_STAT_ALTCHARSET) == 0) {
 				g_cur_a2_stat |= (ALL_STAT_ALTCHARSET);
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
 			return;
 		/* 0xc010 - 0xc01f */
@@ -1653,7 +1641,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 						(31 - BIT_ALL_STAT_COLOR_C021);
 			if((g_cur_a2_stat & ALL_STAT_COLOR_C021) != new_tmp) {
 				g_cur_a2_stat ^= new_tmp;
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
 			return;
 		case 0x22: /* 0xc022 */
@@ -1664,7 +1652,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 				g_cur_a2_stat &= ~(ALL_STAT_TEXT_COLOR |
 							ALL_STAT_BG_COLOR);
 				g_cur_a2_stat += (val << BIT_ALL_STAT_BG_COLOR);
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
 			return;
 		case 0x23: /* 0xc023 */
@@ -1709,7 +1697,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 			if(new_tmp != (g_cur_a2_stat & 0xa0)) {
 				g_cur_a2_stat = (g_cur_a2_stat & (~0xa0)) +
 					new_tmp;
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
 			return;
 		case 0x2a: /* 0xc02a */
@@ -1750,7 +1738,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 #if 0
 			printf("Write speaker?\n");
 #endif
-			(void)doc_read_c030(dcycs);
+			(void)doc_read_c030(dfcyc);
 			return;
 		case 0x31: /* 0xc031 */
 			tmp = val ^ g_iwm.state;
@@ -1773,7 +1761,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 				/* clear scan line int */
 				remove_irq(IRQ_PENDING_C023_SCAN);
 				g_c023_val = tmp & 0xdf;
-				check_for_new_scan_int(dcycs);
+				check_for_new_scan_int(dfcyc);
 			}
 			if(g_irq_pending & (IRQ_PENDING_C023_1SEC |
 						IRQ_PENDING_C023_SCAN)) {
@@ -1790,7 +1778,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 			tmp = val ^ g_c034_val;
 			clock_write_c034(val);
 			if(tmp & 0xf) {
-				change_border_color(dcycs, val & 0xf);
+				change_border_color(dfcyc, val & 0xf);
 			}
 			return;
 		case 0x35: /* 0xc035 */
@@ -1829,24 +1817,24 @@ io_write(word32 loc, int val, double *cyc_ptr)
 			/* just ignore, probably someone writing c036 m=0 */
 			return;
 		case 0x38: /* 0xc038 */
-			scc_write_reg(1, val, dcycs);
+			scc_write_reg(1, val, dfcyc);
 			return;
 		case 0x39: /* 0xc039 */
-			scc_write_reg(0, val, dcycs);
+			scc_write_reg(0, val, dfcyc);
 			return;
 		case 0x3a: /* 0xc03a */
-			scc_write_data(1, val, dcycs);
+			scc_write_data(1, val, dfcyc);
 			return;
 		case 0x3b: /* 0xc03b */
-			scc_write_data(0, val, dcycs);
+			scc_write_data(0, val, dfcyc);
 			return;
 		case 0x3c: /* 0xc03c */
 			/* doc ctl */
-			doc_write_c03c(val, dcycs);
+			doc_write_c03c(val, dfcyc);
 			return;
 		case 0x3d: /* 0xc03d */
 			/* doc data reg */
-			doc_write_c03d(val, dcycs);
+			doc_write_c03d(val, dfcyc);
 			return;
 		case 0x3e: /* 0xc03e */
 			g_c03ef_doc_ptr = (g_c03ef_doc_ptr & 0xff00) + val;
@@ -1902,45 +1890,45 @@ io_write(word32 loc, int val, double *cyc_ptr)
 		case 0x50: /* 0xc050 */
 			if(g_cur_a2_stat & ALL_STAT_TEXT) {
 				g_cur_a2_stat &= (~ALL_STAT_TEXT);
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
 			return;
 		case 0x51: /* 0xc051 */
 			if((g_cur_a2_stat & ALL_STAT_TEXT) == 0) {
 				g_cur_a2_stat |= (ALL_STAT_TEXT);
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
 			return;
 		case 0x52: /* 0xc052 */
 			if(g_cur_a2_stat & ALL_STAT_MIX_T_GR) {
 				g_cur_a2_stat &= (~ALL_STAT_MIX_T_GR);
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
 			return;
 		case 0x53: /* 0xc053 */
 			if((g_cur_a2_stat & ALL_STAT_MIX_T_GR) == 0) {
 				g_cur_a2_stat |= (ALL_STAT_MIX_T_GR);
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
 			return;
 		case 0x54: /* 0xc054 */
-			set_statereg(dcycs, g_c068_statereg & (~0x40));
+			set_statereg(dfcyc, g_c068_statereg & (~0x40));
 			return;
 		case 0x55: /* 0xc055 */
-			set_statereg(dcycs, g_c068_statereg | 0x40);
+			set_statereg(dfcyc, g_c068_statereg | 0x40);
 			return;
 		case 0x56: /* 0xc056 */
 			if(g_cur_a2_stat & ALL_STAT_HIRES) {
 				g_cur_a2_stat &= (~ALL_STAT_HIRES);
 				fixup_hires_on();
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
 			return;
 		case 0x57: /* 0xc057 */
 			if((g_cur_a2_stat & ALL_STAT_HIRES) == 0) {
 				g_cur_a2_stat |= (ALL_STAT_HIRES);
 				fixup_hires_on();
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
 			return;
 		case 0x58: /* 0xc058 */
@@ -2006,7 +1994,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 				/* Zippy writes 0x80 and 0x00 here... */
 			} else if(g_cur_a2_stat & ALL_STAT_ANNUNC3) {
 				g_cur_a2_stat &= (~ALL_STAT_ANNUNC3);
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
 			return;
 		case 0x5f: /* 0xc05f: CLRAN3, set AN3, double-hires off */
@@ -2014,7 +2002,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 				halt_printf("Wrote ZipGS $c05f: %02x\n", val);
 			} else if((g_cur_a2_stat & ALL_STAT_ANNUNC3) == 0) {
 				g_cur_a2_stat |= (ALL_STAT_ANNUNC3);
-				change_display_mode(dcycs);
+				change_display_mode(dfcyc);
 			}
 			return;
 
@@ -2031,7 +2019,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 			/* all the above do nothing--return */
 			return;
 		case 0x68: /* 0xc068 = STATEREG */
-			set_statereg(dcycs, val);
+			set_statereg(dfcyc, val);
 			return;
 		case 0x69: /* 0xc069 */
 			/* just ignore, someone writing c068 with m=0 */
@@ -2040,7 +2028,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 		case 0x6b: /* 0xc06b */
 			UNIMPL_WRITE;
 		case 0x6c: /* 0xc06c */
-			g_c06c_latched_cyc = (word32)((dword64)dcycs);
+			g_c06c_latched_cyc = (word32)(dfcyc >> 16);
 			return;
 		case 0x6d: /* 0xc06d */
 			// Affect what reads to $C02C can see, only $40 now
@@ -2061,7 +2049,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 
 		/* 0xc070 - 0xc07f */
 		case 0x70: /* 0xc070 = Trigger paddles */
-			paddle_trigger(dcycs);
+			paddle_trigger(dfcyc);
 			return;
 		case 0x73: /* 0xc073 = multibank ram card bank addr? */
 			return;
@@ -2102,8 +2090,8 @@ io_write(word32 loc, int val, double *cyc_ptr)
 			case 0xd: /* 0xc08d */
 			case 0xe: /* 0xc08e */
 				/* Read rom, set lcbank2 */
-				set_statereg(dcycs, (g_c068_statereg & ~(0x04))|
-					(new_lcbank2 | 0x08));
+				set_statereg(dfcyc, (g_c068_statereg & (~4)) |
+							(new_lcbank2 | 0x08));
 				break;
 			case 0x0: /* 0xc080 */
 			case 0x3: /* 0xc083 */
@@ -2114,7 +2102,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 			case 0xc: /* 0xc08c */
 			case 0xf: /* 0xc08f */
 				/* Read ram (clear RDROM), set lcbank2 */
-				set_statereg(dcycs, (g_c068_statereg & ~(0x0c))|
+				set_statereg(dfcyc, (g_c068_statereg & ~(0x0c))|
 					(new_lcbank2));
 				break;
 			}
@@ -2143,7 +2131,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 		case 0xb4: case 0xb5: case 0xb6: case 0xb7:
 		case 0xb8: case 0xb9: case 0xba: case 0xbb:
 		case 0xbc: case 0xbd: case 0xbe: case 0xbf:
-			voc_devsel_write(loc, val, dcycs);
+			voc_devsel_write(loc, val, dfcyc);
 			return;
 
 		/* 0xc0c0 - 0xc0cf */
@@ -2165,7 +2153,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 		case 0xe4: case 0xe5: case 0xe6: case 0xe7:
 		case 0xe8: case 0xe9: case 0xea: case 0xeb:
 		case 0xec: case 0xed: case 0xee: case 0xef:
-			write_iwm(loc, val, dcycs);
+			write_iwm(loc, val, dfcyc);
 			return;
 
 		/* 0xc0f0 - 0xc0ff */
@@ -2190,7 +2178,7 @@ io_write(word32 loc, int val, double *cyc_ptr)
 	case 4:
 		if((g_c02d_int_crom & 0x10) && !(g_c068_statereg & 1)) {
 			// Slot 4 is set to Your Card and not INTCX
-			mockingboard_write(loc, val, dcycs);
+			mockingboard_write(loc, val, dfcyc);
 			return;
 		}
 		return;
@@ -2220,21 +2208,20 @@ io_write(word32 loc, int val, double *cyc_ptr)
 // (Last 8 lines in SHR are drawn with vbl_active set
 
 word32
-get_lines_since_vbl(double dcycs)
+get_lines_since_vbl(dword64 dfcyc)
 {
-	double	dcycs_since_last_vbl;
-	double	dlines_since_vbl;
-	double	dcyc_line_start;
+	double	dusecs_since_last_vbl, dlines_since_vbl, dcyc_line_start;
 	word32	lines_since_vbl;
 	int	offset;
 
-	dcycs_since_last_vbl = dcycs - g_last_vbl_dcycs;
+	dusecs_since_last_vbl = (double)((dfcyc >> 16) -
+						(g_last_vbl_dfcyc >> 16));
 
-	dlines_since_vbl = dcycs_since_last_vbl * (1.0 / 65.0);
+	dlines_since_vbl = dusecs_since_last_vbl * (1.0 / 65.0);
 	lines_since_vbl = (int)dlines_since_vbl;
 	dcyc_line_start = (double)lines_since_vbl * 65.0;
 
-	offset = ((int)(dcycs_since_last_vbl - dcyc_line_start)) & 0xff;
+	offset = ((int)(dusecs_since_last_vbl - dcyc_line_start)) & 0xff;
 
 	lines_since_vbl = (lines_since_vbl << 8) + offset;
 
@@ -2242,8 +2229,8 @@ get_lines_since_vbl(double dcycs)
 		return lines_since_vbl;
 	} else {
 		halt_printf("lines_since_vbl: %08x!\n", lines_since_vbl);
-		printf("dc_s_l_v: %f, dcycs: %f, last_vbl_cycs: %f\n",
-			dcycs_since_last_vbl, dcycs, g_last_vbl_dcycs);
+		printf("du_s_l_v: %f, dfcyc: %016llx, last_vbl_cycs: %016llx\n",
+			dusecs_since_last_vbl, dfcyc, g_last_vbl_dfcyc);
 		show_dtime_array();
 		show_all_events();
 		/* U_STACK_TRACE(); */
@@ -2254,11 +2241,11 @@ get_lines_since_vbl(double dcycs)
 
 
 int
-in_vblank(double dcycs)
+in_vblank(dword64 dfcyc)
 {
 	int	lines_since_vbl;
 
-	lines_since_vbl = get_lines_since_vbl(dcycs);
+	lines_since_vbl = get_lines_since_vbl(dfcyc);
 
 	if(lines_since_vbl >= 0xc000) {
 		return 1;		// 1=in VBL
@@ -2272,14 +2259,14 @@ in_vblank(double dcycs)
 // KEGS starts it's "line 0" at the start of the right border for line -1
 // See get_lines_since_vbl comment for the format of the vertical counter
 int
-read_vid_counters(int loc, double dcycs)
+read_vid_counters(int loc, dword64 dfcyc)
 {
 	word32	mask;
 	int	lines_since_vbl;
 
 	loc = loc & 0xf;
 
-	lines_since_vbl = get_lines_since_vbl(dcycs);
+	lines_since_vbl = get_lines_since_vbl(dfcyc);
 
 	lines_since_vbl += 0x10000;
 	if(lines_since_vbl >= 0x20000) {
@@ -2287,8 +2274,8 @@ read_vid_counters(int loc, double dcycs)
 	}
 
 	if(lines_since_vbl > 0x1ffff) {
-		halt_printf("lines_since_vbl: %04x, dcycs: %f, last_vbl: %f\n",
-			lines_since_vbl, dcycs, g_last_vbl_dcycs);
+		halt_printf("lines_since_vbl: %04x, dfcyc: %016llx, last_vbl:"
+			"%016llx\n", lines_since_vbl, dfcyc, g_last_vbl_dfcyc);
 	}
 
 	if(loc == 0xe) {

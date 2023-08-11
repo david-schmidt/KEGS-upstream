@@ -1,5 +1,6 @@
-// $KmKId: AppDelegate.swift,v 1.25 2022-04-17 16:13:32+00 kentd Exp $
-//	Copyright 2019-2022 by Kent Dickey
+// $KmKId: AppDelegate.swift,v 1.28 2023-05-04 19:32:06+00 kentd Exp $
+
+//	Copyright 2019-2023 by Kent Dickey
 //	This code is covered by the GNU GPL v3
 //	See the file COPYING.txt or https://www.gnu.org/licenses/
 //
@@ -94,6 +95,11 @@ class Window_info {
 				x_win!.makeKey()		// Move to front
 			} else if(a2_active != 0) {
 				view.mac_update_display()
+			}
+			if((a2_active != 0) && !view.closed) {
+				if(adb_get_copy_requested() != 0) {
+					view.do_copy_text(view);
+				}
 			}
 		} else {
 			if(a2_active != 0) {
@@ -226,6 +232,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
 			// First menu of "Kegs" now done.  Add "Edit" menu
 			let edit = NSMenu(title: "Edit")
+			edit.addItem(withTitle: "Copy Text Screen",
+				action: #selector(MainView.do_copy_text(_:)),
+				keyEquivalent: "")
+			edit.addItem(NSMenuItem.separator())
 			edit.addItem(withTitle: "Paste",
 				action: #selector(MainView.do_paste(_:)),
 				keyEquivalent: "")

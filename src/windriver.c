@@ -1,4 +1,4 @@
-const char rcsid_windriver_c[] = "@(#)$KmKId: windriver.c,v 1.15 2022-02-12 01:32:03+00 kentd Exp $";
+const char rcsid_windriver_c[] = "@(#)$KmKId: windriver.c,v 1.21 2023-05-19 14:01:24+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -23,58 +23,48 @@ const char rcsid_windriver_c[] = "@(#)$KmKId: windriver.c,v 1.15 2022-02-12 01:3
 #include <mmsystem.h>
 #include <winsock.h>
 #include <commctrl.h>
+#include <io.h>			/* For _get_osfhandle */
 
 #include "defc.h"
 #include "win_dirent.h"
-#include "protos_windriver.h"
 
 extern int Verbose;
 
-extern int g_warp_pointer;
-extern int g_force_depth;
+typedef struct windowinfo {
+	HWND	win_hwnd;
+	HDC	win_dc;
+	HDC	win_cdc;
+	BITMAPINFO *win_bmapinfo_ptr;
+	BITMAPINFOHEADER *win_bmaphdr_ptr;
+	HBITMAP	win_dev_handle;
 
-extern int g_quit_sim_now;
+	Kimage	*kimage_ptr;	// KEGS Image pointer for window content
+	char	*name_str;
+	byte	*data_ptr;
+	int	motion;
+	int	mdepth;
+	int	active;
+	int	pixels_per_line;
+	int	width;
+	int	height;
+	int	extra_width;
+	int	extra_height;
+} Window_info;
 
-int	g_has_focus = 0;
-int	g_auto_repeat_on = -1;
+#include "protos_windriver.h"
 
-extern Kimage g_mainwin_kimage;
+Window_info g_mainwin_info = { 0 };
+Window_info g_debugwin_info = { 0 };
 
-HDC	g_main_dc;
-HDC	g_main_cdc;
+int	g_win_max_width = 0;
+int	g_win_max_height = 0;
+int	g_num_a2_keycodes = 0;
 
-int	g_win_capslock_down = 0;
-
-extern word32 g_palette_8to1624[256];
-extern word32 g_a2palette_8to1624[256];
-
-extern word32 g_full_refresh_needed;
-
-extern int g_border_sides_refresh_needed;
-extern int g_border_special_refresh_needed;
-extern int g_status_refresh_needed;
-
-extern int g_lores_colors[];
-extern int g_cur_a2_stat;
-
-extern int g_a2vid_palette;
-
-extern int g_screen_redraw_skip_amt;
-
-extern word32 g_a2_screen_buffer_changed;
-
-HWND	g_hwnd_main;
-BITMAPINFO *g_bmapinfo_ptr = 0;
-volatile BITMAPINFOHEADER *g_bmaphdr_ptr = 0;
-HBITMAP g_mainwin_dev_handle = 0;
-byte	*g_mainwin_data_ptr = 0;
-int	g_mainwin_pixels_per_line = 0;
-
-int g_num_a2_keycodes = 0;
-
-extern char *g_status_ptrs[MAX_STATUS_LINES];
-
-int g_win_button_states = 0;
+int	g_win_button_states = 0;
+int	g_win_hide_pointer = 0;
+int	g_win_warp_pointer = 0;
+int	g_win_warp_x = 0;
+int	g_win_warp_y = 0;
 
 
 /* this table is used to search for the Windows VK_* in col 1 or 2 */
@@ -83,7 +73,7 @@ int g_win_button_states = 0;
 int g_a2_key_to_wsym[][3] = {
 	{ 0x35,	VK_ESCAPE,	0 },
 	{ 0x7a,	VK_F1,	0 },
-	{ 0x7b,	VK_F2,	0 },
+	{ 0x78,	VK_F2,	0 },
 	{ 0x63,	VK_F3,	0 },
 	{ 0x76,	VK_F4,	0 },
 	{ 0x60,	VK_F5,	0 },
@@ -97,9 +87,8 @@ int g_a2_key_to_wsym[][3] = {
 	{ 0x69,	VK_F13,	0 },
 	{ 0x6b,	VK_F14,	0 },
 	{ 0x71,	VK_F15,	0 },
-	{ 0x7f, VK_PAUSE, VK_CANCEL+0x100 },
+	{ 0x7f, VK_PAUSE, VK_CANCEL+0x100 },	// Reset
 
-	{ 0x32,	0xc0, 0 },		/* '`' */
 	{ 0x12,	'1', 0 },
 	{ 0x13,	'2', 0 },
 	{ 0x14,	'3', 0 },
@@ -114,14 +103,14 @@ int g_a2_key_to_wsym[][3] = {
 	{ 0x18,	0xbb, 0 },		/* '=' */
 	{ 0x33,	VK_BACK, 0 },		/* backspace */
 	{ 0x72,	VK_INSERT+0x100, 0 },	/* Insert key */
-/*	{ 0x73,	XK_Home, 0 },		alias VK_HOME to be KP_Equal! */
 	{ 0x74,	VK_PRIOR+0x100, 0 },	/* pageup */
 	{ 0x47,	VK_NUMLOCK, VK_NUMLOCK+0x100 },	/* clear */
 	{ 0x51,	VK_HOME+0x100, 0 },		/* KP_equal is HOME key */
-	{ 0x4b,	VK_DIVIDE, VK_DIVIDE+0x100 },
-	{ 0x43,	VK_MULTIPLY, VK_MULTIPLY+0x100 },
+	{ 0x4b,	VK_DIVIDE, VK_DIVIDE+0x100 },		// KP /
+	{ 0x43,	VK_MULTIPLY, VK_MULTIPLY+0x100 },	// KP *
 
 	{ 0x30,	VK_TAB, 0 },
+	{ 0x32,	0xc0, 0 },		/* '`' */
 	{ 0x0c,	'Q', 0 },
 	{ 0x0d,	'W', 0 },
 	{ 0x0e,	'E', 0 },
@@ -132,9 +121,9 @@ int g_a2_key_to_wsym[][3] = {
 	{ 0x22,	'I', 0 },
 	{ 0x1f,	'O', 0 },
 	{ 0x23,	'P', 0 },
-	{ 0x21,	0xdb, 0 },	/* [ */
-	{ 0x1e,	0xdd, 0 },	/* ] */
-	{ 0x2a,	0xdc, 0 },	/* backslash, bar */
+	{ 0x21,	0xdb, 0 },		/* [ */
+	{ 0x1e,	0xdd, 0 },		/* ] */
+	{ 0x2a,	0xdc, 0 },		/* backslash, bar */
 	{ 0x75,	VK_DELETE+0x100, 0 },
 	{ 0x77,	VK_END+0x100, VK_END },
 	{ 0x79,	VK_NEXT+0x100, 0 },
@@ -143,7 +132,7 @@ int g_a2_key_to_wsym[][3] = {
 	{ 0x5c,	VK_NUMPAD9, VK_PRIOR },
 	{ 0x4e,	VK_SUBTRACT, VK_SUBTRACT+0x100 },
 
-	// { 0x39,	VK_CAPITAL, 0 },  // Handled specially!
+	{ 0x39,	VK_CAPITAL, 0 },  // Capslock
 	{ 0x00,	'A', 0 },
 	{ 0x01,	'S', 0 },
 	{ 0x02,	'D', 0 },
@@ -169,23 +158,23 @@ int g_a2_key_to_wsym[][3] = {
 	{ 0x0b,	'B', 0 },
 	{ 0x2d,	'N', 0 },
 	{ 0x2e,	'M', 0 },
-	{ 0x2b,	0xbc, 0 },	/* , */
-	{ 0x2f,	0xbe, 0 },	/* . */
-	{ 0x2c,	0xbf, 0 },	/* / */
+	{ 0x2b,	0xbc, 0 },		/* , */
+	{ 0x2f,	0xbe, 0 },		/* . */
+	{ 0x2c,	0xbf, 0 },		/* / */
 	{ 0x3e,	VK_UP+0x100, 0 },
 	{ 0x53,	VK_NUMPAD1, VK_END },
 	{ 0x54,	VK_NUMPAD2, VK_DOWN },
 	{ 0x55,	VK_NUMPAD3, VK_NEXT },
 
 	{ 0x36,	VK_CONTROL, VK_CONTROL+0x100 },
-	{ 0x3a,	VK_SNAPSHOT+0x100, VK_MENU+0x100 },/* Opt=prntscrn or alt-r */
-	{ 0x37,	VK_SCROLL, VK_MENU },		/* Command=scr_lock or alt-l */
+	{ 0x37,	VK_SCROLL, VK_MENU+0x100 },	// Command=scr_lock or alt-r
+	{ 0x3a,	VK_SNAPSHOT+0x100, VK_MENU },	// Opt=prntscrn or alt-l
 	{ 0x31,	' ', 0 },
 	{ 0x3b,	VK_LEFT+0x100, 0 },
 	{ 0x3d,	VK_DOWN+0x100, 0 },
 	{ 0x3c,	VK_RIGHT+0x100, 0 },
 	{ 0x52,	VK_NUMPAD0, VK_INSERT },
-	{ 0x41,	VK_DECIMAL, VK_DECIMAL },
+	{ 0x41,	VK_DECIMAL, VK_DELETE },
 	{ 0x4c,	VK_RETURN+0x100, 0 },
 	{ -1, -1, -1 }
 };
@@ -209,32 +198,44 @@ win_nonblock_read_stdin(int fd, char *bufptr, int len)
 }
 #endif
 
-void
-x_dialog_create_kegs_conf(const char *str)
+Window_info *
+win_find_win_info_ptr(HWND hwnd)
 {
-}
-
-int
-x_show_alert(int is_fatal, const char *str)
-{
-	fprintf(stderr, "Alert! (Fatal: %d):  %s\n", is_fatal, str);
+	if(hwnd == g_mainwin_info.win_hwnd) {
+		return &g_mainwin_info;
+	}
+	if(hwnd == g_debugwin_info.win_hwnd) {
+		return &g_debugwin_info;
+	}
 	return 0;
 }
 
+void
+win_hide_pointer(Window_info *win_info_ptr, int do_hide)
+{
+	ShowCursor(!do_hide);
+	// printf("Doing ShowCursor(%d)\n", !do_hide);
+}
+
 int
-win_update_mouse(int x, int y, int button_states, int buttons_valid)
+win_update_mouse(Window_info *win_info_ptr, int raw_x, int raw_y,
+				int button_states, int buttons_valid)
 {
 	Kimage	*kimage_ptr;
-	int	buttons_changed;
+	int	buttons_changed, x, y;
 
-	kimage_ptr = &g_mainwin_kimage;		// HACK
+	kimage_ptr = win_info_ptr->kimage_ptr;
+	x = video_scale_mouse_x(kimage_ptr, raw_x, 0);
+	y = video_scale_mouse_y(kimage_ptr, raw_y, 0);
+
+	// printf("wum: %d,%d -> %d,%d\n", raw_x, raw_y, x, y);
 
 	buttons_changed = ((g_win_button_states & buttons_valid) !=
 								button_states);
 	g_win_button_states = (g_win_button_states & ~buttons_valid) |
-			(button_states & buttons_valid);
-	if(g_warp_pointer && (x == A2_WINDOW_WIDTH/2) &&
-			(y == A2_WINDOW_HEIGHT/2) && (!buttons_changed) ) {
+					(button_states & buttons_valid);
+	if(g_win_warp_pointer && (raw_x == g_win_warp_x) &&
+			(raw_y == g_win_warp_y) && (!buttons_changed) ) {
 		/* tell adb routs to recenter but ignore this motion */
 		adb_update_mouse(kimage_ptr, x, y, 0, -1);
 		return 0;
@@ -244,44 +245,62 @@ win_update_mouse(int x, int y, int button_states, int buttons_valid)
 }
 
 void
-win_event_mouse(WPARAM wParam, LPARAM lParam)
+win_event_mouse(HWND hwnd, WPARAM wParam, LPARAM lParam)
 {
-	POINT	pt;
+	Window_info *win_info_ptr;
 	word32	flags;
-	int	buttons;
-	int	x, y;
-	int	motion;
+	int	buttons, x, y, hide, warp;
 
-	flags = wParam;
-	x = LOWORD(lParam) - BASE_MARGIN_LEFT;
-	y = HIWORD(lParam) - BASE_MARGIN_TOP;
+	win_info_ptr = win_find_win_info_ptr(hwnd);
+	if(!win_info_ptr) {
+		return;
+	}
 
-	buttons = (flags & 1) +
-			(((flags >> 1) & 1) << 2) +
-			(((flags >> 4) & 1) << 1);
+	flags = (word32)wParam;
+	x = LOWORD(lParam);
+	y = HIWORD(lParam);
+
+	buttons = (flags & 1) | (((flags >> 1) & 1) << 2) |
+						(((flags >> 4) & 1) << 1);
 #if 0
 	printf("Mouse at %d, %d fl: %08x, but: %d\n", x, y, flags, buttons);
 #endif
-	motion = win_update_mouse(x, y, buttons, 7);
+	win_info_ptr->motion |= win_update_mouse(win_info_ptr, x, y, buttons,
+									7);
 
-	if(motion && g_warp_pointer) {
-		/* move mouse to center of screen */
-		pt.x = BASE_MARGIN_LEFT + A2_WINDOW_WIDTH/2;
-		pt.y = BASE_MARGIN_TOP + A2_WINDOW_HEIGHT/2;
-		ClientToScreen(g_hwnd_main, &pt);
-		SetCursorPos(pt.x, pt.y);
+	hide = 0;
+	warp = 0;
+	hide = adb_get_hide_warp_info(win_info_ptr->kimage_ptr, &warp);
+	if(warp != g_win_warp_pointer) {
+		win_info_ptr->motion = 1;
 	}
+	g_win_warp_pointer = warp;
+	if(g_win_hide_pointer != hide) {
+		win_hide_pointer(win_info_ptr, hide);
+	}
+	g_win_hide_pointer = hide;
 }
 
 void
-win_event_key(HWND hwnd, UINT raw_vk, BOOL down, int repeat, UINT flags)
+win_event_key(HWND hwnd, WPARAM wParam, LPARAM lParam, int down)
 {
+	Window_info *win_info_ptr;
 	Kimage	*kimage_ptr;
-	word32	vk;
-	int	a2code, is_up, capslock_down;
+	word32	vk, raw_vk, flags, capslock_state;
+	int	a2code, is_up;
 	int	i;
 
-	kimage_ptr = &(g_mainwin_kimage);		// HACK!
+	win_info_ptr = win_find_win_info_ptr(hwnd);
+	if(!win_info_ptr) {
+		return;
+	}
+	kimage_ptr = win_info_ptr->kimage_ptr;
+	raw_vk = (word32)wParam;
+	flags = HIWORD(lParam);
+#if 0
+	printf("win_event_key: raw:%04x lParam:%08x d:%d flags:%08x\n",
+		raw_vk, (word32)lParam, down, flags);
+#endif
 
 	if((flags & 0x4000) && down) {
 		/* auto-repeating, just ignore it */
@@ -301,17 +320,11 @@ win_event_key(HWND hwnd, UINT raw_vk, BOOL down, int repeat, UINT flags)
 	}
 
 	if((vk & 0xff) == VK_CAPITAL) {
-		// Windows gives us up-and-down events of the actual key
-		//  Use GetKeyState to get the true toggle state, and pass
-		//  that on to the adb interface
-		capslock_down = GetKeyState(VK_CAPITAL) & 0x01;
-		if(capslock_down != g_win_capslock_down) {
-			g_win_capslock_down = capslock_down;
-			adb_physical_key_update(kimage_ptr, 0x39, 0,
-				!capslock_down, 0, 0, capslock_down);
-		}
-
-		return;		// Do no more processing!
+		// Fix up capslock info: Windows gives us a down, then up event
+		//  when the capslock key itself is pressed and released.  We
+		//  need to ask for the true toggle state instead
+		capslock_state = (GetKeyState(VK_CAPITAL) & 1);
+		down = capslock_state;
 	}
 
 	/* search a2key_to_wsym to find wsym in col 1 or 2 */
@@ -322,8 +335,7 @@ win_event_key(HWND hwnd, UINT raw_vk, BOOL down, int repeat, UINT flags)
 		if((vk == g_a2_key_to_wsym[i][1]) ||
 					(vk == g_a2_key_to_wsym[i][2])) {
 			vid_printf("Found vk:%04x = %02x\n", vk, a2code);
-			adb_physical_key_update(kimage_ptr, a2code, 0, is_up,
-				0, 0, 0);		// HACK!
+			adb_physical_key_update(kimage_ptr, a2code, 0, is_up);
 			return;
 		}
 	}
@@ -331,25 +343,146 @@ win_event_key(HWND hwnd, UINT raw_vk, BOOL down, int repeat, UINT flags)
 }
 
 void
-win_event_quit(HWND hwnd)
+win_event_redraw(HWND hwnd)
 {
-	g_quit_sim_now = 1;
-	my_exit(0);
+	Window_info *win_info_ptr;
+
+	win_info_ptr = win_find_win_info_ptr(hwnd);
+
+	if(win_info_ptr) {
+		video_set_x_refresh_needed(win_info_ptr->kimage_ptr, 1);
+	}
 }
 
 void
-win_event_redraw()
+win_event_destroy(HWND hwnd)
 {
-	g_full_refresh_needed = -1;
-	g_a2_screen_buffer_changed = -1;
-	g_status_refresh_needed = 1;
-	g_border_sides_refresh_needed = 1;
-	g_border_special_refresh_needed = 1;
+	Window_info *win_info_ptr;
+
+	win_info_ptr = win_find_win_info_ptr(hwnd);
+	if(win_info_ptr == 0) {
+		return;
+	}
+	video_set_active(win_info_ptr->kimage_ptr, 0);
+	win_info_ptr->active = 0;
+	if(win_info_ptr == &g_mainwin_info) {
+		my_exit(0);
+	} else {
+		ShowWindow(win_info_ptr->win_hwnd, SW_HIDE);
+		ReleaseDC(hwnd, win_info_ptr->win_dc);
+		DeleteDC(win_info_ptr->win_cdc);
+		DeleteObject(win_info_ptr->win_dev_handle);
+		GlobalFree(win_info_ptr->win_bmapinfo_ptr);
+		win_info_ptr->win_hwnd = 0;
+		win_info_ptr->data_ptr = 0;
+	}
+}
+
+void
+win_event_size(HWND hwnd, WPARAM wParam, LPARAM lParam)
+{
+	Window_info *win_info_ptr;
+	int	width, height;
+
+	// These WM_SIZE events indicate the window is being resized
+
+	win_info_ptr = win_find_win_info_ptr(hwnd);
+	if(!win_info_ptr) {
+		return;
+	}
+	// printf("WM_SIZE: %04x %08x\n", (word32)wParam, (word32)lParam);
+	width = lParam & 0xffff;
+	height = (lParam >> 16) & 0xffff;
+	video_update_scale(win_info_ptr->kimage_ptr, width, height);
+	printf("Frac width: %f\n",
+		win_info_ptr->kimage_ptr->scale_width_a2_to_x / 65536.0);
+#if 0
+	// The following try to do "live updating" of the resize, but it's
+	//  just a stuttering mess.  Disabled for now
+	win_info_ptr->kimage_ptr->x_refresh_needed = 1;
+	x_update_display(win_info_ptr);
+#endif
+}
+
+void
+win_event_minmaxinfo(HWND hwnd, LPARAM lParam)
+{
+	Window_info *win_info_ptr;
+	MINMAXINFO *minmax_ptr;
+	int	a2_width, a2_height;
+
+	// Windows sends WM_GETMINMAXINFO events when resizing is occurring,
+	//  and we can modify the *lParam MINMAXINFO structure to set the
+	//  minimum and maximum Track size (the size of the window)
+	// This code forces the minimum to be the A2 window size, and the
+	//  maximum to be the screen size
+	win_info_ptr = win_find_win_info_ptr(hwnd);
+	if(!win_info_ptr) {
+		return;
+	}
+	minmax_ptr = (MINMAXINFO *)lParam;
+#if 0
+	printf("MinMax: mintrack.x:%d, mintrack.y:%d\n",
+		minmax_ptr->ptMinTrackSize.x,
+		minmax_ptr->ptMinTrackSize.y);
+#endif
+	a2_width = video_get_a2_width(win_info_ptr->kimage_ptr);
+	a2_height = video_get_a2_height(win_info_ptr->kimage_ptr);
+	minmax_ptr->ptMinTrackSize.x = a2_width + win_info_ptr->extra_width;
+	minmax_ptr->ptMinTrackSize.y = a2_height + win_info_ptr->extra_height;
+	minmax_ptr->ptMaxTrackSize.x = g_win_max_width +
+						win_info_ptr->extra_width;
+	minmax_ptr->ptMaxTrackSize.y = g_win_max_height +
+						win_info_ptr->extra_height;
+}
+
+void
+win_event_focus(HWND hwnd, int gain_focus)
+{
+	Window_info *win_info_ptr;
+	word32	c025_val, info;
+
+	win_info_ptr = win_find_win_info_ptr(hwnd);
+	if(!win_info_ptr) {
+		return;
+	}
+
+	if(gain_focus) {
+		// printf("Got focus on %p\n", hwnd);
+		// Get shift, ctrl, capslock state
+		c025_val = 0;
+		info = GetKeyState(VK_SHIFT);		// left or right
+		if(info & 0x8000) {
+			c025_val |= 1;			// Shift key is down
+		}
+		info = GetKeyState(VK_CONTROL);		// left or right
+		if(info & 0x8000) {
+			c025_val |= 2;
+		}
+		info = GetKeyState(VK_CAPITAL);		// Capslock?
+		if(info & 1) {
+			c025_val |= 4;			// Capslock key is down
+		}
+		//printf("Calling update_c025 with %03x\n", c025_val);
+		adb_update_c025_mask(win_info_ptr->kimage_ptr, c025_val, 7);
+	} else {
+		// printf("Lost focus on %p\n", hwnd);
+	}
+	if(win_info_ptr == &g_mainwin_info) {
+		adb_kbd_repeat_off();
+		adb_mainwin_focus(gain_focus);
+	}
 }
 
 LRESULT CALLBACK
 win_event_handler(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam)
 {
+
+#if 0
+	printf("Message: umsg: %04x, wparam:%04x lParam:%08x\n", umsg,
+			(word32)wParam, (word32)lParam);
+#endif
+
 	switch(umsg) {
 	case WM_MOUSEMOVE:
 	case WM_LBUTTONDOWN:
@@ -358,19 +491,50 @@ win_event_handler(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam)
 	case WM_MBUTTONUP:
 	case WM_RBUTTONDOWN:
 	case WM_RBUTTONUP:
-		win_event_mouse(wParam, lParam);
+		win_event_mouse(hwnd, wParam, lParam);
+		return 0;
+	case WM_KEYUP:
+	case WM_SYSKEYUP:
+		win_event_key(hwnd, wParam, lParam, 0);
+		return 0;
+	case WM_KEYDOWN:
+	case WM_SYSKEYDOWN:
+		win_event_key(hwnd, wParam, lParam, 1);
+		return 0;
+	case WM_SYSCOMMAND:
+		// Alt key press can cause this.  Return 0 for SC_KEYMENU
+		if(wParam == SC_KEYMENU) {
+			return 0;
+		}
+		break;
+	case WM_KILLFOCUS:
+		win_event_focus(hwnd, 0);
+		break;
+	case WM_SETFOCUS:
+		win_event_focus(hwnd, 1);
+		break;
+	case WM_DESTROY:
+		win_event_destroy(hwnd);
 		return 0;
 	case WM_PAINT:
-		win_event_redraw();
+		win_event_redraw(hwnd);
+		break;
+	case WM_SIZE:
+		win_event_size(hwnd, wParam, lParam);
+		break;
+	case WM_GETMINMAXINFO:
+		win_event_minmaxinfo(hwnd, lParam);
 		break;
 	}
+#if 0
 	switch(umsg) {
 		HANDLE_MSG(hwnd, WM_KEYUP, win_event_key);
 		HANDLE_MSG(hwnd, WM_KEYDOWN, win_event_key);
 		HANDLE_MSG(hwnd, WM_SYSKEYUP, win_event_key);
 		HANDLE_MSG(hwnd, WM_SYSKEYDOWN, win_event_key);
-		HANDLE_MSG(hwnd, WM_DESTROY, win_event_quit);
+		HANDLE_MSG(hwnd, WM_DESTROY, win_event_destroy);
 	}
+#endif
 
 #if 0
 	switch(umsg) {
@@ -430,7 +594,8 @@ main(int argc, char **argv)
 			printf("run_16ms returned: %d\n", ret);
 			break;
 		}
-		x_update_display();
+		x_update_display(&g_mainwin_info);
+		x_update_display(&g_debugwin_info);
 		check_input_events();
 	}
 	xdriver_end();
@@ -441,15 +606,42 @@ void
 check_input_events()
 {
 	MSG	msg;
+	POINT	pt;
+	BOOL	ret;
+	Window_info *win_info_ptr;
 
-	while(PeekMessage(&msg, g_hwnd_main, 0, 0, PM_NOREMOVE)) {
-		if(GetMessage(&msg, g_hwnd_main, 0, 0) > 0) {
-			TranslateMessage(&msg);
+	while(PeekMessage(&msg, 0, 0, 0, PM_NOREMOVE)) {
+		if(GetMessage(&msg, 0, 0, 0) > 0) {
+			//TranslateMessage(&msg);
 			DispatchMessage(&msg);
 		} else {
 			printf("GetMessage returned <= 0\n");
 			my_exit(2);
 		}
+	}
+
+	win_info_ptr = &g_mainwin_info;
+	if(win_info_ptr->motion == 0) {
+		return;
+	}
+
+	// ONLY look at g_mainwin_info!
+	win_info_ptr->motion = 0;
+
+	if(g_win_warp_pointer) {
+		/* move mouse to center of screen */
+		g_win_warp_x = video_unscale_mouse_x(win_info_ptr->kimage_ptr,
+			BASE_MARGIN_LEFT + (A2_WINDOW_WIDTH/2), 0);
+		g_win_warp_y = video_unscale_mouse_y(win_info_ptr->kimage_ptr,
+			BASE_MARGIN_TOP + (A2_WINDOW_HEIGHT/2), 0);
+		pt.x = g_win_warp_x;
+		pt.y = g_win_warp_y;
+		ClientToScreen(win_info_ptr->win_hwnd, &pt);
+		ret = SetCursorPos(pt.x, pt.y);
+#if 0
+		printf("Did SetCursorPos(%d, %d) warp_x:%d,y:%d, ret:%d\n",
+			pt.x, pt.y, g_win_warp_x, g_win_warp_y, ret);
+#endif
 	}
 
 	return;
@@ -458,11 +650,8 @@ check_input_events()
 void
 win_video_init(int mdepth)
 {
-	Kimage	*kimage_ptr;
 	WNDCLASS wndclass;
-	RECT	rect, win_rect;
-	int	height, width, ret, a2code, extra_size, win_width, win_height;
-	int	w_flags;
+	int	a2code;
 	int	i;
 
 	video_set_palette();
@@ -492,83 +681,137 @@ win_video_init(int mdepth)
 		exit(1);
 	}
 
-	kimage_ptr = &g_mainwin_kimage;
+	g_win_max_width = GetSystemMetrics(SM_CXSCREEN);
+	g_win_max_height = GetSystemMetrics(SM_CYSCREEN);
+	printf("g_win_max_width:%d, g_win_max_height:%d\n", g_win_max_width,
+							g_win_max_height);
+
+	win_init_window(&g_mainwin_info, video_get_kimage(0), "KEGS", mdepth);
+	win_init_window(&g_debugwin_info, video_get_kimage(1),
+						"KEGS Debugger", mdepth);
+
+	win_create_window(&g_mainwin_info);
+}
+
+void
+win_init_window(Window_info *win_info_ptr, Kimage *kimage_ptr, char *name_str,
+							int mdepth)
+{
+	int	height, width;
 
 	height = video_get_a2_height(kimage_ptr);
 	width = video_get_a2_width(kimage_ptr);
+
+	win_info_ptr->win_hwnd = 0;
+	win_info_ptr->win_dc = 0;
+	win_info_ptr->win_cdc = 0;
+	win_info_ptr->win_bmapinfo_ptr = 0;
+	win_info_ptr->win_bmaphdr_ptr = 0;
+	win_info_ptr->win_dev_handle = 0;
+	win_info_ptr->kimage_ptr = kimage_ptr;
+	win_info_ptr->name_str = name_str;
+	win_info_ptr->data_ptr = 0;
+	win_info_ptr->motion = 0;
+	win_info_ptr->mdepth = mdepth;
+	win_info_ptr->active = 0;
+	win_info_ptr->pixels_per_line = width;
+	win_info_ptr->width = width;
+	win_info_ptr->height = height;
+}
+
+void
+win_create_window(Window_info *win_info_ptr)
+{
+	HWND	win_hwnd;
+	RECT	rect;
+	BITMAPINFO *bmapinfo_ptr;
+	BITMAPINFOHEADER *bmaphdr_ptr;
+	HBITMAP	win_dev_handle;
+	Kimage	*kimage_ptr;
+	int	height, width, extra_width, extra_height;
+	int	extra_size, w_flags;
+
+	kimage_ptr = win_info_ptr->kimage_ptr;
+
+	height = win_info_ptr->height;
+	width = win_info_ptr->width;
 
 	printf("Got height: %d, width:%d\n", height, width);
 
 	// We must call CreateWindow with a width,height that accounts for
 	//  the title bar and any other stuff.  Use AdjustWindowRect() to
 	//  calculate this info for us
-	w_flags = WS_TILED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+	w_flags = WS_TILED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX |
+								WS_SIZEBOX;
 	rect.top = 0;
 	rect.left = 0;
 	rect.right = width;
 	rect.bottom = height;
 	(void)AdjustWindowRect(&rect, w_flags, 0);
-	win_width = rect.right - rect.left;
-	win_height = rect.bottom - rect.top;
-	g_hwnd_main = CreateWindow("kegswin", "KEGSWIN - Apple //gs Emulator",
-		w_flags, CW_USEDEFAULT, CW_USEDEFAULT,
-		win_width, win_height,
-		NULL, NULL, GetModuleHandle(NULL), NULL);
+	extra_width = rect.right - rect.left - width;
+	extra_height = rect.bottom - rect.top - height;
+	win_info_ptr->extra_width = extra_width;
+	win_info_ptr->extra_height = extra_height;
+	win_hwnd = CreateWindow("kegswin", win_info_ptr->name_str, w_flags,
+		CW_USEDEFAULT, CW_USEDEFAULT, width + extra_width,
+		height + extra_height, NULL, NULL, GetModuleHandle(NULL), NULL);
+	win_info_ptr->win_hwnd = win_hwnd;
+	win_info_ptr->active = 0;
+	video_set_active(kimage_ptr, 1);
+	video_update_scale(kimage_ptr, win_info_ptr->width,
+							win_info_ptr->height);
 
-	printf("g_hwnd_main = %p, height = %d\n", g_hwnd_main, height);
-	GetWindowRect(g_hwnd_main, &rect);
+	printf("win_hwnd = %p, height = %d\n", win_hwnd, height);
+	GetWindowRect(win_hwnd, &rect);
 	printf("...rect is: %ld, %ld, %ld, %ld\n", rect.left, rect.top,
 		rect.right, rect.bottom);
 
-	g_main_dc = GetDC(g_hwnd_main);
+	win_info_ptr->win_dc = GetDC(win_hwnd);
 
-	SetTextColor(g_main_dc, 0);
-	SetBkColor(g_main_dc, 0xffffff);
+	SetTextColor(win_info_ptr->win_dc, 0);
+	SetBkColor(win_info_ptr->win_dc, 0xffffff);
 
-	g_main_cdc = CreateCompatibleDC(g_main_dc);
-	printf("g_main_cdc: %p, g_main_dc:%p\n", g_main_cdc, g_main_dc);
+	win_info_ptr->win_cdc = CreateCompatibleDC(win_info_ptr->win_dc);
+	printf("win_cdc: %p, win_dc:%p\n", win_info_ptr->win_cdc,
+						win_info_ptr->win_dc);
 
 
 	printf("Getting height, kimage_ptr:%p\n", kimage_ptr);
 	fflush(stdout);
 
-	g_mainwin_data_ptr = 0;
+	win_info_ptr->data_ptr = 0;
 
 	extra_size = sizeof(RGBQUAD);
-	g_bmapinfo_ptr = (BITMAPINFO *)GlobalAlloc(GPTR,
+	bmapinfo_ptr = (BITMAPINFO *)GlobalAlloc(GPTR,
 			sizeof(BITMAPINFOHEADER) + extra_size);
+	win_info_ptr->win_bmapinfo_ptr = bmapinfo_ptr;
 
-	g_bmaphdr_ptr = (BITMAPINFOHEADER *)g_bmapinfo_ptr;
-	g_bmaphdr_ptr->biSize = sizeof(BITMAPINFOHEADER);
-	g_bmaphdr_ptr->biWidth = width;
-	g_bmaphdr_ptr->biHeight = -height;
-	g_bmaphdr_ptr->biPlanes = 1;
-	g_bmaphdr_ptr->biBitCount = mdepth;
-	g_bmaphdr_ptr->biCompression = BI_RGB;
-	g_bmaphdr_ptr->biClrUsed = 0;
-
-	// HACK: video.get.kimages() was here!!
-
-	ShowWindow(g_hwnd_main, SW_SHOWDEFAULT);
-	UpdateWindow(g_hwnd_main);
+	bmaphdr_ptr = (BITMAPINFOHEADER *)bmapinfo_ptr;
+	win_info_ptr->win_bmaphdr_ptr = bmaphdr_ptr;
+	bmaphdr_ptr->biSize = sizeof(BITMAPINFOHEADER);
+	bmaphdr_ptr->biWidth = g_win_max_width;
+	bmaphdr_ptr->biHeight = -g_win_max_height;
+	bmaphdr_ptr->biPlanes = 1;
+	bmaphdr_ptr->biBitCount = win_info_ptr->mdepth;
+	bmaphdr_ptr->biCompression = BI_RGB;
+	bmaphdr_ptr->biClrUsed = 0;
 
 	/* Use g_bmapinfo_ptr, adjusting width, height */
-	printf("g_bmaphdr_ptr:%p\n", g_bmaphdr_ptr);
+	printf("bmaphdr_ptr:%p\n", bmaphdr_ptr);
 
-	g_bmaphdr_ptr->biWidth = width;
-	g_bmaphdr_ptr->biHeight = -height;
-	printf("About to call CreateDIBSection, main_dc:%p\n", g_main_dc);
+	printf("About to call CreateDIBSection, win_dc:%p\n",
+						win_info_ptr->win_dc);
 	fflush(stdout);
-	g_mainwin_dev_handle = CreateDIBSection(g_main_dc,
-				g_bmapinfo_ptr, DIB_RGB_COLORS,
-				(VOID **)&(g_mainwin_data_ptr), NULL, 0);
+	win_dev_handle = CreateDIBSection(win_info_ptr->win_dc,
+			win_info_ptr->win_bmapinfo_ptr, DIB_RGB_COLORS,
+			(VOID **)&(win_info_ptr->data_ptr), NULL, 0);
+	win_info_ptr->win_dev_handle = win_dev_handle;
 
-	g_mainwin_pixels_per_line = width;
+	win_info_ptr->pixels_per_line = g_win_max_width;
 	printf("kim: %p, dev:%p data: %p\n", kimage_ptr,
-			g_mainwin_dev_handle, g_mainwin_data_ptr);
+			win_dev_handle, win_info_ptr->data_ptr);
 	fflush(stdout);
 }
-
 
 void
 xdriver_end()
@@ -577,30 +820,88 @@ xdriver_end()
 }
 
 void
-x_update_display()
+win_resize_window(Window_info *win_info_ptr)
+{
+	RECT	rect1, rect2;
+	BOOL	ret;
+	Kimage	*kimage_ptr;
+	int	x_width, x_height;
+
+	kimage_ptr = win_info_ptr->kimage_ptr;
+	x_width = video_get_x_width(kimage_ptr);
+	x_height = video_get_x_height(kimage_ptr);
+	// printf("win_resize_window, x_w:%d, x_h:%d\n", x_width, x_height);
+
+	ret = GetWindowRect(win_info_ptr->win_hwnd, &rect1);
+	ret = GetClientRect(win_info_ptr->win_hwnd, &rect2);
+#if 0
+	printf("window_rect: l:%d, t:%d, r:%d, b:%d\n",
+			rect1.left, rect1.top, rect1.right, rect1.bottom);
+	printf("client_rect: l:%d, t:%d, r:%d, b:%d\n",
+			rect2.left, rect2.top, rect2.right, rect2.bottom);
+#endif
+	ret = MoveWindow(win_info_ptr->win_hwnd, rect1.left, rect1.top,
+		x_width + win_info_ptr->extra_width,
+		x_height + win_info_ptr->extra_height, TRUE);
+	// printf("MoveWindow ret:%d\n", ret);
+	win_info_ptr->height = x_height;
+}
+
+void
+x_update_display(Window_info *win_info_ptr)
 {
 	Change_rect rect;
 	void	*bitm_old;
-	POINT	point;
-	int	valid;
+	//POINT	point;
+	int	valid, a2_active, x_active, x_height;
 	int	i;
 
+	x_height = video_get_x_height(win_info_ptr->kimage_ptr);
+	if(x_height != win_info_ptr->height) {
+		win_resize_window(win_info_ptr);
+	}
+	a2_active = video_get_active(win_info_ptr->kimage_ptr);
+	x_active = win_info_ptr->active;
+
+	if(x_active && !a2_active) {
+		// We need to SW_HIDE this window
+		ShowWindow(win_info_ptr->win_hwnd, SW_HIDE);
+		x_active = 0;
+		win_info_ptr->active = x_active;
+	}
+	if(!x_active && a2_active) {
+		// We need to SW_SHOWDEFAULT this window (and maybe create it)
+		if(win_info_ptr->win_hwnd == 0) {
+			win_create_window(win_info_ptr);
+		}
+		ShowWindow(win_info_ptr->win_hwnd, SW_SHOWDEFAULT);
+		UpdateWindow(win_info_ptr->win_hwnd);
+		x_active = 1;
+		win_info_ptr->active = x_active;
+	}
+	if(x_active == 0) {
+		return;
+	}
 	for(i = 0; i < MAX_CHANGE_RECTS; i++) {
-		valid = video_out_data(g_mainwin_data_ptr, &g_mainwin_kimage,
-			g_mainwin_pixels_per_line, &rect, i);
+		valid = video_out_data(win_info_ptr->data_ptr,
+			win_info_ptr->kimage_ptr, win_info_ptr->pixels_per_line,
+			&rect, i);
 		if(!valid) {
 			break;
 		}
-
+#if 0
 		point.x = 0;
 		point.y = 0;
-		ClientToScreen(g_hwnd_main, &point);
-		bitm_old = SelectObject(g_main_cdc, g_mainwin_dev_handle);
+		ClientToScreen(win_info_ptr->win_hwnd, &point);
+#endif
+		bitm_old = SelectObject(win_info_ptr->win_cdc,
+					win_info_ptr->win_dev_handle);
 
-		BitBlt(g_main_dc, rect.x, rect.y, rect.width, rect.height,
-			g_main_cdc, rect.x, rect.y, SRCCOPY);
+		BitBlt(win_info_ptr->win_dc, rect.x, rect.y, rect.width,
+			rect.height, win_info_ptr->win_cdc, rect.x, rect.y,
+			SRCCOPY);
 
-		SelectObject(g_main_cdc, bitm_old);
+		SelectObject(win_info_ptr->win_cdc, bitm_old);
 	}
 }
 
@@ -618,7 +919,6 @@ int
 opendir_int(DIR *dirp, const char *in_filename)
 {
 	HANDLE	handle1;
-	BOOL	ret;
 	wchar_t	*wcstr;
 	char	*filename;
 	size_t	ret_val;
@@ -626,7 +926,7 @@ opendir_int(DIR *dirp, const char *in_filename)
 	int	i;
 
 	printf("opendir on %s\n", in_filename);
-	len = strlen(in_filename);
+	len = (int)strlen(in_filename);
 	buflen = len + 8;
 	if(buflen >= sizeof(dirp->dirent.d_name)) {
 		printf("buflen %d >= d_name %d\n", buflen,
@@ -645,7 +945,7 @@ opendir_int(DIR *dirp, const char *in_filename)
 			filename[i] = '\\';
 		}
 	}
-	len = strlen(filename);
+	len = (int)strlen(filename);
 	wcstr = malloc(buflen * 2);
 	(void)mbstowcs_s(&ret_val, wcstr, buflen, filename, _TRUNCATE);
 	handle1 = FindFirstFileW(wcstr, dirp->find_data_ptr);
@@ -728,5 +1028,17 @@ int
 lstat(const char *path, struct stat *bufptr)
 {
 	return stat(path, bufptr);
+}
+
+int
+ftruncate(int fd, word32 length)
+{
+	HANDLE	handle1;
+
+	handle1 = (HANDLE)_get_osfhandle(fd);
+	SetFilePointer(handle1, length, 0, FILE_BEGIN);
+	SetEndOfFile(handle1);
+
+	return 0;
 }
 

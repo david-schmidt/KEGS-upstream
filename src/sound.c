@@ -1,4 +1,4 @@
-const char rcsid_sound_c[] = "@(#)$KmKId: sound.c,v 1.145 2023-02-26 17:46:34+00 kentd Exp $";
+const char rcsid_sound_c[] = "@(#)$KmKId: sound.c,v 1.147 2023-05-19 13:52:30+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -29,15 +29,13 @@ extern int g_preferred_rate;
 
 extern word32 g_c03ef_doc_ptr;
 
-extern double g_last_vbl_dcycs;
+extern dword64 g_last_vbl_dfcyc;
 
 byte doc_ram[0x10000 + 16];
 
 word32 g_doc_sound_ctl = 0;
 word32 g_doc_saved_val = 0;
 int	g_doc_num_osc_en = 1;
-double	g_dcycs_per_doc_update = 1.0;
-double	g_dupd_per_dcyc = 1.0;
 double	g_drecip_osc_en_plus_2 = 1.0 / (double)(1 + 2);
 
 int	g_doc_saved_ctl = 0;
@@ -125,9 +123,8 @@ int	g_mock_volume[16];		// Sample for each of the 16 amplitudes
 int	g_audio_rate = 0;
 double	g_daudio_rate = 0.0;
 double	g_drecip_audio_rate = 0.0;
-double	g_dsamps_per_dcyc = 0.0;
-double	g_dcycs_per_samp = 0.0;
-float	g_fsamps_per_dcyc = 0.0;
+double	g_dsamps_per_dfcyc = 0.0;
+double	g_fcyc_per_samp = 0.0;
 
 int	g_doc_vol = 8;
 
@@ -166,9 +163,6 @@ int	g_doc_log_pos = 0;
 #endif
 
 #define UPDATE_G_DCYCS_PER_DOC_UPDATE(osc_en)				\
-	g_dcycs_per_doc_update = (double)((osc_en + 2) * DCYCS_1_MHZ) /	\
-		DOC_SCAN_RATE;						\
-	g_dupd_per_dcyc = 1.0 / g_dcycs_per_doc_update;			\
 	g_drecip_osc_en_plus_2 = 1.0 / (double)(osc_en + 2);
 
 #define SND_PTR_SHIFT		14
@@ -201,7 +195,7 @@ doc_log_rout(char *msg, int osc, double dsamps, int etc)
 	g_doc_log_pos = pos;
 }
 
-extern double g_cur_dcycs;
+extern dword64 g_cur_dfcyc;
 
 void
 show_doc_log(void)
@@ -253,9 +247,9 @@ show_doc_log(void)
 		}
 	}
 
-	fprintf(docfile, "cur_dcycs: %f\n", g_cur_dcycs);
+	fprintf(docfile, "cur_dfcyc: %016llx\n", g_cur_dfcyc);
 	fprintf(docfile, "dsamps_now: %f\n",
-		(g_cur_dcycs * g_dsamps_per_dcyc) - dsamp_start);
+		(g_cur_dfcyc * g_dsamps_per_dfcyc) - dsamp_start);
 	fprintf(docfile, "g_doc_num_osc_en: %d\n", g_doc_num_osc_en);
 	fclose(docfile);
 }
@@ -298,9 +292,8 @@ sound_set_audio_rate(int rate)
 	g_audio_rate = rate;
 	g_daudio_rate = (rate)*1.0;
 	g_drecip_audio_rate = 1.0/(rate);
-	g_dsamps_per_dcyc = ((rate*1.0) / DCYCS_1_MHZ);
-	g_dcycs_per_samp = (DCYCS_1_MHZ / (rate*1.0));
-	g_fsamps_per_dcyc = (float)((rate*1.0) / DCYCS_1_MHZ);
+	g_dsamps_per_dfcyc = ((rate*1.0) / (DCYCS_1_MHZ * 65536.0));
+	g_fcyc_per_samp = (DCYCS_1_MHZ * 65536.0 / (rate*1.0));
 	g_sound_min_samples = rate * g_sound_min_msecs / 1000;
 
 	printf("Set g_audio_rate = %d in main KEGS process, min_samples:%d\n",
@@ -308,12 +301,12 @@ sound_set_audio_rate(int rate)
 }
 
 void
-sound_reset(double dcycs)
+sound_reset(dword64 dfcyc)
 {
 	double	dsamps;
 	int	i;
 
-	dsamps = dcycs * g_dsamps_per_dcyc;
+	dsamps = dfcyc * g_dsamps_per_dfcyc;
 	for(i = 0; i < 32; i++) {
 		doc_write_ctl_reg(i, g_doc_regs[i].ctl | 1, dsamps);
 		doc_reg_e0 = 0xff;
@@ -330,7 +323,7 @@ sound_reset(double dcycs)
 
 	g_doc_num_osc_en = 1;
 	UPDATE_G_DCYCS_PER_DOC_UPDATE(1);
-	mockingboard_reset(dcycs);
+	mockingboard_reset(dfcyc);
 }
 
 void
@@ -340,14 +333,14 @@ sound_shutdown()
 }
 
 void
-sound_update(double dcycs)
+sound_update(dword64 dfcyc)
 {
 	double	dsamps;
 	/* Called every VBL time to update sound status */
 
 	/* "play" sounds for this vbl */
 
-	dsamps = dcycs * g_dsamps_per_dcyc;
+	dsamps = dfcyc * g_dsamps_per_dfcyc;
 	DOC_LOG("do_snd_pl", -1, dsamps, 0);
 	sound_play(dsamps);
 }
@@ -677,7 +670,7 @@ sound_play(double dsamps)
 
 			if(c030_state) {
 				/* add in fractional time */
-				ftmp = (int)(fsampnum + (float)1.0);
+				ftmp = (float)(int)(fsampnum + (float)1.0);
 				fpercent += (ftmp - fsampnum);
 			}
 
@@ -1003,7 +996,7 @@ void
 sound_mock_envelope(int pair, int *env_ptr, int num_samps, int *vol_ptr)
 {
 	Ay8913	*ay8913ptr;
-	double	dmul, denv_period;
+	double	dmul, denv_period, dusecs_per_samp;
 	dword64	env_dsamp, dsamp_inc;
 	word32	ampl, eff_ampl, reg13, env_val, env_period;
 	int	i;
@@ -1041,9 +1034,10 @@ sound_mock_envelope(int pair, int *env_ptr, int num_samps, int *vol_ptr)
 	dmul = (1.0 / 16.0) * (1 << 20) * (1 << 20);	// (1ULL << 40) / 16.0
 	// Calculate amount counter will count in one sample.
 	// inc_per_tick 62.5KHz tick: (1/env_period)
-	// inc_per_dcyc: (1/(16*env_period))
-	// inc_per_samp = inc_per_dcyc * g_dcycs_per_samp
-	dsamp_inc = (dword64)((dmul * g_dcycs_per_samp / denv_period));
+	// inc_per_dfcyc: (1/(16*env_period))
+	// inc_per_samp = inc_per_dfcyc * g_fcyc_per_samp
+	dusecs_per_samp = g_fcyc_per_samp / 65536.0;
+	dsamp_inc = (dword64)((dmul * dusecs_per_samp / denv_period));
 			// Amount to inc per sample, fixed point, 40 bit frac
 
 	reg13 = ay8913ptr->regs[13];			// "reg15", env ctrl
@@ -1108,7 +1102,7 @@ sound_mock_noise(int pair, byte *noise_ptr, int num_samps)
 	noise_samp = ay8913ptr->noise_samp;
 	noise_period = (ay8913ptr->regs[6] & 0x1f);
 	noise_period = noise_period << 16;
-	samp_inc = (word32)(65536 * g_dcycs_per_samp / 16.0);
+	samp_inc = (word32)(g_fcyc_per_samp / 16.0);
 			// Amount to inc per sample
 	if(noise_samp >= noise_period) {
 		// Period changed during sound, reset
@@ -1169,7 +1163,7 @@ sound_mock_play(int pair, int channel, int *outptr, int *env_ptr,
 	tone_period = ay8913ptr->regs[2*channel] +
 					(256 * ay8913ptr->regs[2*channel + 1]);
 	tone_period = tone_period << 16;
-	samp_inc = (word32)(65536 * g_dcycs_per_samp / 8.0);
+	samp_inc = (word32)(g_fcyc_per_samp / 8.0);
 			// Amount to inc per sample
 	do_print = 0;
 	if(g_mockingboard.disable_mask) {
@@ -1222,7 +1216,7 @@ sound_mock_play(int pair, int channel, int *outptr, int *env_ptr,
 }
 
 void
-doc_handle_event(int osc, double dcycs)
+doc_handle_event(int osc, dword64 dfcyc)
 {
 	double	dsamps;
 
@@ -1230,14 +1224,13 @@ doc_handle_event(int osc, double dcycs)
 
 	g_num_doc_events++;
 
-	dsamps = dcycs * g_dsamps_per_dcyc;
+	dsamps = dfcyc * g_dsamps_per_dfcyc;
 
-	DOC_LOG("doc_ev", osc, dcycs, 0);
+	DOC_LOG("doc_ev", osc, dsamps, 0);
 
 	g_doc_regs[osc].event = 0;
 
 	sound_play(dsamps);
-
 }
 
 void
@@ -1341,7 +1334,7 @@ add_sound_irq(int osc)
 		doc_reg_e0 = 0x00 + (osc << 1);
 	}
 
-	DOC_LOG("add_irq", osc, g_cur_dcycs * g_dsamps_per_dcyc, 0);
+	DOC_LOG("add_irq", osc, g_cur_dfcyc * g_dsamps_per_dfcyc, 0);
 }
 
 void
@@ -1361,7 +1354,7 @@ remove_sound_irq(int osc, int must)
 	if(num_osc_interrupt) {
 		g_num_osc_interrupting--;
 		g_doc_regs[osc].has_irq_pending = 0;
-		DOC_LOG("rem_irq", osc, g_cur_dcycs * g_dsamps_per_dcyc, 0);
+		DOC_LOG("rem_irq", osc, g_cur_dfcyc * g_dsamps_per_dfcyc, 0);
 		if(g_num_osc_interrupting == 0) {
 			remove_irq(IRQ_PENDING_DOC);
 		}
@@ -1501,23 +1494,15 @@ wave_end_estimate(int osc, double eff_dsamps, double dsamps)
 	register word32 end_time1;
 	Doc_reg *rptr;
 	byte	*ptr1;
-	double	event_dsamp;
-	double	event_dcycs;
-	double	dcycs_per_samp;
-	double	dsamps_per_byte;
-	double	num_dsamps;
+	dword64	event_dfcyc;
+	double	event_dsamp, dfcycs_per_samp, dsamps_per_byte, num_dsamps;
 	double	dcur_inc;
-	word32	tmp1;
-	word32	cur_inc;
-	word32	save_val;
-	int	save_size;
-	int	pos;
-	int	size;
-	int	estimate;
+	word32	tmp1, cur_inc, save_val;
+	int	save_size, pos, size, estimate;
 
 	GET_ITIMER(start_time1);
 
-	dcycs_per_samp = g_dcycs_per_samp;
+	dfcycs_per_samp = g_fcyc_per_samp;
 
 	rptr = &(g_doc_regs[osc]);
 
@@ -1566,8 +1551,9 @@ wave_end_estimate(int osc, double eff_dsamps, double dsamps)
 		rptr->event = 1;
 		rptr->dsamp_ev = event_dsamp;
 		rptr->dsamp_ev2 = dsamps;
-		event_dcycs = (event_dsamp * dcycs_per_samp) + 1.0;
-		add_event_doc(event_dcycs, osc);
+		event_dfcyc = (dword64)(event_dsamp * dfcycs_per_samp) +
+								65536LL;
+		add_event_doc(event_dfcyc, osc);
 	}
 
 	GET_ITIMER(end_time1);
@@ -1701,7 +1687,7 @@ doc_recalc_sound_parms(int osc, double dsamps)
 	res = wave_size & 7;
 
 	shifted_size = size << SND_PTR_SHIFT;
-	cur_start = (rptr->waveptr << (8 + SND_PTR_SHIFT)) & (-shifted_size);
+	cur_start = (rptr->waveptr << (8 + SND_PTR_SHIFT)) & (0-shifted_size);
 
 	dtmp1 = dfreq * (DOC_SCAN_RATE * g_drecip_audio_rate);
 	dacc = (double)(1 << (20 - (17 - sz + res)));
@@ -1717,7 +1703,7 @@ doc_recalc_sound_parms(int osc, double dsamps)
 }
 
 int
-doc_read_c030(double dcycs)
+doc_read_c030(dword64 dfcyc)
 {
 	int	num;
 
@@ -1727,13 +1713,13 @@ doc_read_c030(double dcycs)
 		return 0;
 	}
 
-	c030_fsamps[num] = (float)(dcycs * g_dsamps_per_dcyc -
+	c030_fsamps[num] = (float)(dfcyc * g_dsamps_per_dfcyc -
 						g_last_sound_play_dsamp);
 	g_num_c030_fsamps = num + 1;
 
 	doc_printf("read c030, num this vbl: %04x\n", num);
 
-	return float_bus(dcycs);
+	return float_bus(dfcyc);
 }
 
 int
@@ -1743,14 +1729,14 @@ doc_read_c03c()
 }
 
 int
-doc_read_c03d(double dcycs)
+doc_read_c03d(dword64 dfcyc)
 {
 	Doc_reg	*rptr;
 	double	dsamps;
 	int	osc, type, ret;
 
 	ret = g_doc_saved_val;
-	dsamps = dcycs * g_dsamps_per_dcyc;
+	dsamps = dfcyc * g_dsamps_per_dfcyc;
 
 	if(g_doc_sound_ctl & 0x40) {
 		/* Read RAM */
@@ -1774,7 +1760,7 @@ doc_read_c03d(double dcycs)
 			g_doc_saved_val = rptr->vol;
 			break;
 		case 0x3:	/* data register */
-			dsamps = dcycs * g_dsamps_per_dcyc;
+			dsamps = dfcyc * g_dsamps_per_dfcyc;
 			sound_play(dsamps);		// Fix for Paperboy GS
 			g_doc_saved_val = rptr->last_samp_val;
 			break;
@@ -1837,26 +1823,25 @@ doc_read_c03d(double dcycs)
 }
 
 void
-doc_write_c03c(int val, double dcycs)
+doc_write_c03c(int val, dword64 dfcyc)
 {
 	int	vol;
 
 	vol = val & 0xf;
 	if(g_doc_vol != vol) {
 		/* don't bother playing sound..wait till next update */
-		/* sound_play(dcycs); */
+		/* sound_play(dfcyc); */
 
 		g_doc_vol = vol;
-		doc_printf("Setting doc vol to 0x%x at %f\n",
-			vol, dcycs);
+		doc_printf("Setting doc vol to 0x%x at %016llx\n", vol, dfcyc);
 	}
-	DOC_LOG("c03c write", -1, dcycs * g_dsamps_per_dcyc, val);
+	DOC_LOG("c03c write", -1, dfcyc * g_dsamps_per_dfcyc, val);
 
 	g_doc_sound_ctl = val;
 }
 
 void
-doc_write_c03d(int val, double dcycs)
+doc_write_c03d(int val, dword64 dfcyc)
 {
 	double	dsamps;
 	Doc_reg	*rptr;
@@ -1865,7 +1850,7 @@ doc_write_c03d(int val, double dcycs)
 
 	val = val & 0xff;
 
-	dsamps = dcycs * g_dsamps_per_dcyc;
+	dsamps = dfcyc * g_dsamps_per_dfcyc;
 	doc_printf("write c03d, doc_ptr: %04x, val: %02x\n",
 		g_c03ef_doc_ptr, val);
 

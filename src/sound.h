@@ -1,10 +1,10 @@
 #ifdef INCLUDE_RCSID_C
-const char rcsid_sound_h[] = "@(#)$KmKId: sound.h,v 1.29 2021-04-16 03:25:33+00 kentd Exp $";
+const char rcsid_sound_h[] = "@(#)$KmKId: sound.h,v 1.31 2023-05-04 19:35:29+00 kentd Exp $";
 #endif
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2023 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -95,7 +95,7 @@ int win32_send_audio(byte *ptr, int size);
 
 /* Prototypes for macsnd_driver.c functions */
 int mac_send_audio(byte *ptr, int in_size);
-void macsnd_init(word32 *shmaddr);
+void macsnd_init();
 
 /* Prototypes for pulseaudio_driver.c functions */
 int pulse_audio_init();

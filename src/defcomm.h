@@ -1,10 +1,10 @@
 #ifdef INCLUDE_RCSID_C
-const char rcsdif_defcomm_h[] = "@(#)$KmKId: defcomm.h,v 1.103 2021-12-20 02:57:05+00 kentd Exp $";
+const char rcsdif_defcomm_h[] = "@(#)$KmKId: defcomm.h,v 1.107 2023-05-04 19:35:29+00 kentd Exp $";
 #endif
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2019 by Kent Dickey		*/
+/*			Copyright 2002-2023 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -13,10 +13,6 @@ const char rcsdif_defcomm_h[] = "@(#)$KmKId: defcomm.h,v 1.103 2021-12-20 02:57:
 /*	The KEGS web page is kegs.sourceforge.net			*/
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
-
-#if 0
-# define CHECK_BREAKPOINTS
-#endif
 
 #define SHIFT_PER_CHANGE	3
 #define CHANGE_SHIFT		(5 + SHIFT_PER_CHANGE)
@@ -58,33 +54,6 @@ const char rcsdif_defcomm_h[] = "@(#)$KmKId: defcomm.h,v 1.103 2021-12-20 02:57:
 #define BANK_BAD_MEM		(&g_dummy_memory1_ptr[0xff])
 
 
-#define ENGINE_FCYCLES		0x00
-#define ENGINE_REG_KPC		0x08
-#define ENGINE_REG_ACC		0x0c
-#define ENGINE_REG_XREG		0x10
-#define ENGINE_REG_YREG		0x14
-#define ENGINE_REG_STACK	0x18
-#define ENGINE_REG_DBANK	0x1c
-#define ENGINE_REG_DIRECT	0x20
-#define ENGINE_REG_PSR		0x24
-#define ENGINE_FPLUS_PTR	0x28
-
-#define LOG_PC_DCYCS		0x00
-#define LOG_PC_DBANK_KPC	0x08
-#define LOG_PC_INSTR		0x0c
-#define LOG_PC_PSR_ACC		0x10
-#define LOG_PC_XREG_YREG	0x14
-#define LOG_PC_STACK_DIRECT	0x18
-#define LOG_PC_PAD		0x1c
-
-#define LOG_PC_SIZE		0x20
-
-
-#define FPLUS_PLUS_1		0x00
-#define FPLUS_PLUS_2		0x08
-#define FPLUS_PLUS_3		0x10
-#define FPLUS_PLUS_X_M1		0x18
-
 #define RET_BREAK	0x1
 #define RET_COP		0x2
 #define RET_WDM		0x3
@@ -97,12 +66,6 @@ const char rcsdif_defcomm_h[] = "@(#)$KmKId: defcomm.h,v 1.103 2021-12-20 02:57:
 #define RET_C70D	0xa
 #define RET_TOOLTRACE	0xb
 
-
-#define MODE_BORDER		0
-#define MODE_TEXT		1
-#define MODE_GR			2
-#define MODE_HGR		3
-#define MODE_SUPER_HIRES	4
 
 #define BIT_ALL_STAT_TEXT		0
 #define BIT_ALL_STAT_VID80		1
@@ -121,6 +84,8 @@ const char rcsdif_defcomm_h[] = "@(#)$KmKId: defcomm.h,v 1.103 2021-12-20 02:57:
 						/* Text must be just above */
 						/* bg to match c022 reg */
 #define BIT_ALL_STAT_VOC_INTERLACE	20
+#define BIT_ALL_STAT_VOC_MAIN		21
+#define BIT_ALL_STAT_BORDER		22
 
 #define ALL_STAT_SUPER_HIRES		(1 << (BIT_ALL_STAT_SUPER_HIRES))
 #define ALL_STAT_TEXT			(1 << (BIT_ALL_STAT_TEXT))
@@ -137,6 +102,8 @@ const char rcsdif_defcomm_h[] = "@(#)$KmKId: defcomm.h,v 1.103 2021-12-20 02:57:
 #define ALL_STAT_ALTCHARSET		(1 << (BIT_ALL_STAT_ALTCHARSET))
 #define ALL_STAT_FLASH_STATE		(1 << (BIT_ALL_STAT_FLASH_STATE))
 #define ALL_STAT_VOC_INTERLACE		(1 << (BIT_ALL_STAT_VOC_INTERLACE))
+#define ALL_STAT_VOC_MAIN		(1 << (BIT_ALL_STAT_VOC_MAIN))
+#define ALL_STAT_BORDER			(1 << (BIT_ALL_STAT_BORDER))
 
 #define BORDER_WIDTH		32
 

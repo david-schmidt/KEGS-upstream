@@ -1,4 +1,4 @@
-const char rcsid_dyna_validate_c[] = "@(#)$KmKId: dyna_validate.c,v 1.5 2022-01-23 18:38:33+00 kentd Exp $";
+const char rcsid_dyna_validate_c[] = "@(#)$KmKId: dyna_validate.c,v 1.8 2023-05-21 20:06:24+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -271,7 +271,7 @@ dynapro_validate_dir(Disk *dsk, byte *freeblks_ptr, word32 dir_byte,
 	bptr = dsk->raw_data;
 	start_dir_block = dir_byte >> 9;
 	last_block = 0;
-	max_block = dsk->dimage_size >> 9;
+	max_block = (word32)(dsk->dimage_size >> 9);
 	cnt = 0;
 	is_header = 1;
 	exp_entries = 0xdeadbeef;
@@ -364,7 +364,7 @@ dynapro_validate_dir(Disk *dsk, byte *freeblks_ptr, word32 dir_byte,
 			continue;
 		}
 
-		tmp_byte = (dir_byte - 0x27) & -0x200UL;
+		tmp_byte = (dir_byte - 0x27) & (0 - 0x200UL);
 		dir_byte = dynapro_get_word16(&bptr[tmp_byte + 2]) * 0x200UL;
 		if(dir_byte == 0) {
 			if(act_entries != exp_entries) {
@@ -399,7 +399,7 @@ dynapro_validate_disk(Disk *dsk)
 	word32	num_blocks, ret;
 	word32	ui;
 
-	num_blocks = dsk->dimage_size >> 9;
+	num_blocks = (word32)(dsk->dimage_size >> 9);
 	printf("******************************\n");
 	printf("Validate disk: %s, blocks:%05x\n", dsk->name_ptr, num_blocks);
 	dynapro_validate_init_freeblks(&freeblks[0], num_blocks);
@@ -445,8 +445,11 @@ dynapro_validate_any_image(Disk *dsk)
 	}
 	dsize = dsk->dimage_size;
 	bufptr = 0;
-	if(dsk->raw_data == 0) {
-		bufptr = malloc(dsize);
+	if((dsize >> 31) != 0) {
+		printf("Disk is too large, not valid\n");
+		ret = 0;
+	} else if(dsk->raw_data == 0) {
+		bufptr = malloc((size_t)dsize);
 		dsk->raw_data = bufptr;
 		cfg_read_from_fd(dsk->fd, bufptr, 0, dsize);
 		ret = dynapro_validate_disk(dsk);

@@ -1,5 +1,5 @@
 #ifdef INCLUDE_RCSID_C
-const char rcsid_defc_h[] = "@(#)$KmKId: defc.h,v 1.132 2023-03-05 16:29:25+00 kentd Exp $";
+const char rcsid_defc_h[] = "@(#)$KmKId: defc.h,v 1.136 2023-05-22 19:50:07+00 kentd Exp $";
 #endif
 
 /************************************************************************/
@@ -32,16 +32,16 @@ typedef unsigned long long dword64;
 #define DCYCS_28_MHZ		(1.0*CYCS_28_MHZ)
 #define CYCS_3_5_MHZ		(CYCS_28_MHZ/8)
 #define DCYCS_1_MHZ		((DCYCS_28_MHZ/28.0)*(65.0*7/(65.0*7+1.0)))
-#define CYCS_1_MHZ		((int)DCYCS_1_MHZ)
 
-// CYCS_1_MHZ is 1020484.32016
+// DCYCS_1_MHZ is 1020484.32016
 
-#define DCYCS_IN_16MS_RAW	(262.0 * 65.0)
+#define CYCLES_IN_16MS_RAW	(262 * 65)
 /* Use precisely 17030 instead of forcing 60 Hz since this is the number of */
 /*  1MHz cycles per screen */
-#define DCYCS_IN_16MS		((double)((int)DCYCS_IN_16MS_RAW))
+
+#define DCYCS_IN_16MS		((double)(CYCLES_IN_16MS_RAW))
 #define DRECIP_DCYCS_IN_16MS	(1.0 / (DCYCS_IN_16MS))
-#define VBL_RATE		(DCYCS_1_MHZ / DCYCS_IN_16MS_RAW)
+#define VBL_RATE		(DCYCS_1_MHZ / DCYCS_IN_16MS)
 // VBL rate is about 59.9227 frames/sec
 
 #define MAXNUM_HEX_PER_LINE	32
@@ -74,6 +74,14 @@ typedef unsigned long long dword64;
 # include <sys/filio.h>
 #endif
 
+#ifdef _WIN32
+# include <direct.h>
+# include <io.h>
+# pragma warning(disable : 4996)	/* open() is deprecated...sigh */
+int ftruncate(int fd, word32 length);
+int lstat(const char *path, struct stat *bufptr);
+#endif
+
 #ifndef O_BINARY
 /* work around some Windows junk */
 # define O_BINARY	0
@@ -87,7 +95,7 @@ int dbg_printf(const char *fmt, ...) __attribute__ ((
 #endif
 
 STRUCT(Pc_log) {
-	double	dcycs;
+	dword64	dfcyc;
 	word32	dbank_kpc;
 	word32	instr;
 	word32	psr_acc;
@@ -97,7 +105,7 @@ STRUCT(Pc_log) {
 };
 
 STRUCT(Data_log) {
-	double	dcycs;
+	dword64	dfcyc;
 	byte	*stat;
 	word32	addr;
 	word32	val;
@@ -105,20 +113,18 @@ STRUCT(Data_log) {
 };
 
 STRUCT(Event) {
-	double	dcycs;
+	dword64	dfcyc;
 	int	type;
 	Event	*next;
 };
 
 STRUCT(Fplus) {
-	double	plus_1;
-	double	plus_2;
-	double	plus_3;
-	double	plus_x_minus_1;
+	dword64	dplus_1;
+	dword64	dplus_x_minus_1;
 };
 
 STRUCT(Engine_reg) {
-	double	fcycles;
+	dword64	dfcyc;
 	word32	kpc;
 	word32	acc;
 
@@ -157,6 +163,7 @@ STRUCT(Kimage) {
 	int	x_height;
 	int	x_refresh_needed;
 	int	active;
+	word32	c025_val;
 	word32	scale_width_to_a2;
 	word32	scale_width_a2_to_x;
 	word32	scale_height_to_a2;
@@ -215,9 +222,9 @@ STRUCT(Emustate_intlist) {
 	int	*iptr;
 };
 
-STRUCT(Emustate_dbllist) {
+STRUCT(Emustate_dword64list) {
 	const char *str;
-	double	*dptr;
+	dword64	*dptr;
 };
 
 STRUCT(Emustate_word32list) {
@@ -311,6 +318,7 @@ STRUCT(Lzw_state) {
 #define VERBOSE_TEST	0x100
 #define VERBOSE_VIDEO	0x200
 #define VERBOSE_MAC	0x400
+#define VERBOSE_DYNA	0x800
 
 #ifdef NO_VERB
 # define DO_VERBOSE	0
@@ -329,6 +337,7 @@ STRUCT(Lzw_state) {
 #define test_printf	if(DO_VERBOSE && (Verbose & VERBOSE_TEST)) printf
 #define vid_printf	if(DO_VERBOSE && (Verbose & VERBOSE_VIDEO)) printf
 #define mac_printf	if(DO_VERBOSE && (Verbose & VERBOSE_MAC)) printf
+#define dyna_printf	if(DO_VERBOSE && (Verbose & VERBOSE_DYNA)) printf
 
 
 #define HALT_ON_SCAN_INT	0x001
@@ -347,7 +356,7 @@ STRUCT(Lzw_state) {
 
 #define GET_ITIMER(dest)	dest = get_itimer();
 
-#define FINISH(arg1, arg2)	g_ret1 = arg1 | ((arg2) << 8); g_fcycles_end=0;
+#define FINISH(arg1, arg2)	g_ret1 = arg1 | ((arg2) << 8); g_dcycles_end=0;
 
 #include "iwm.h"
 #include "protos.h"

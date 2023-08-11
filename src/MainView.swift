@@ -1,6 +1,6 @@
-// $KmKId: MainView.swift,v 1.33 2022-01-16 04:52:20+00 kentd Exp $
+// $KmKId: MainView.swift,v 1.38 2023-05-22 15:51:09+00 kentd Exp $
 
-//	Copyright 2019-2022 by Kent Dickey
+//	Copyright 2019-2023 by Kent Dickey
 //	This code is covered by the GNU GPL v3
 //	See the file COPYING.txt or https://www.gnu.org/licenses/
 //
@@ -53,15 +53,9 @@ class MainView: NSView {
 		}
 		// Otherwise, manually do down, then up, for this key
 		adb_physical_key_update(kimage_ptr, Int32(keycode),
-			UInt32(unicode_key), 0,
-			Int32(current_flags & is_shift),
-			Int32(current_flags & is_control),
-			Int32(current_flags & is_capslock))
+			UInt32(unicode_key), 0);
 		adb_physical_key_update(kimage_ptr, Int32(keycode),
-			UInt32(unicode_key), 1,
-			Int32(current_flags & is_shift),
-			Int32(current_flags & is_control),
-			Int32(current_flags & is_capslock))
+			UInt32(unicode_key), 1);
 		return true
 	}
 
@@ -98,10 +92,7 @@ class MainView: NSView {
 			return
 		}
 		adb_physical_key_update(kimage_ptr, Int32(keycode),
-			UInt32(unicode_key), 0,
-			Int32(current_flags & is_shift),
-			Int32(current_flags & is_control),
-			Int32(current_flags & is_capslock))
+			UInt32(unicode_key), 0);
 	}
 
 	override func keyUp(with event: NSEvent) {
@@ -110,55 +101,30 @@ class MainView: NSView {
 		// print(".keyUp code: \(keycode), repeat: \(is_repeat)")
 		let unicode_key = get_unicode_key_from_event(event)
 		adb_physical_key_update(kimage_ptr, Int32(keycode),
-			UInt32(unicode_key), 1,
-			Int32(current_flags & is_shift),
-			Int32(current_flags & is_control),
-			Int32(current_flags & is_capslock))
+			UInt32(unicode_key), 1);
 	}
 
 	override func flagsChanged(with event: NSEvent) {
 		let flags = event.modifierFlags.rawValue &
 				(is_cmd | is_control | is_shift | is_capslock |
 								is_option)
-		let flags_xor = current_flags ^ flags
-		let shift_down = Int32(flags & is_shift)
-		let control_down = Int32(flags & is_control)
-		let caps_down = Int32(flags & is_capslock)
-		if((flags_xor & is_control) != 0) {
-			let is_up = ((flags & is_control) == 0) ? 1 : 0
-			adb_physical_key_update(kimage_ptr, 0x36,
-				0, Int32(is_up),
-				shift_down, control_down, caps_down)
-			// print("control 0x35, is_up:\(is_up)")
+		var c025_val = UInt32(0);
+		if((flags & is_shift) != 0) {
+			c025_val |= 1;
 		}
-		if((flags_xor & is_capslock) != 0) {
-			let is_up = ((flags & is_capslock) == 0) ? 1 : 0
-			adb_physical_key_update(kimage_ptr, 0x39,
-				0, Int32(is_up),
-				shift_down, control_down, caps_down)
-			// print("capslock 0x39, is_up:\(is_up)")
+		if((flags & is_control) != 0) {
+			c025_val |= 2;
 		}
-		if((flags_xor & is_shift) != 0) {
-			let is_up = ((flags & is_shift) == 0) ? 1 : 0
-			adb_physical_key_update(kimage_ptr, 0x38,
-				0, Int32(is_up),
-				shift_down, control_down, caps_down)
-			// print("shift 0x38, is_up:\(is_up)")
+		if((flags & is_capslock) != 0) {
+			c025_val |= 4;
 		}
-		if((flags_xor & is_cmd) != 0) {
-			let is_up = ((flags & is_cmd) == 0) ? 1 : 0
-			adb_physical_key_update(kimage_ptr, 0x37,
-				0, Int32(is_up),
-				shift_down, control_down, caps_down)
-			// print("command 0x37, is_up:\(is_up)")
+		if((flags & is_option) != 0) {
+			c025_val |= 0x40;
 		}
-		if((flags_xor & is_option) != 0) {
-			let is_up = ((flags & is_option) == 0) ? 1 : 0
-			adb_physical_key_update(kimage_ptr, 0x3a,
-				0, Int32(is_up),
-				shift_down, control_down, caps_down)
-			// print("option 0x3a, is_up:\(is_up)")
+		if((flags & is_cmd) != 0) {
+			c025_val |= 0x80;
 		}
+		adb_update_c025_mask(kimage_ptr, c025_val, UInt32(0xc7));
 		current_flags = flags
 		//print("flagsChanged: \(flags) and keycode: \(event.keyCode)")
 	}
@@ -365,18 +331,23 @@ class MainView: NSView {
 		// Create a "virtual" F4 press
 		//print("do_config")
 		// Create a keydown for the F4 key (keycode:0x76)
-		adb_physical_key_update(kimage_ptr, Int32(0x76), 0, 0,
-			Int32(current_flags & is_shift),
-			Int32(current_flags & is_control),
-			Int32(current_flags & is_capslock))
+		adb_physical_key_update(kimage_ptr, Int32(0x76), 0, 0);
 
 		// and create a keyup for the F4 key (keycode:0x76)
-		adb_physical_key_update(kimage_ptr, Int32(0x76), 0, 1,
-			Int32(current_flags & is_shift),
-			Int32(current_flags & is_control),
-			Int32(current_flags & is_capslock))
+		adb_physical_key_update(kimage_ptr, Int32(0x76), 0, 1);
 	}
 
+	@objc func do_copy_text(_ : AnyObject) {
+		// print("do_copy");
+		//let text_buf_cstr = UnsafeMutablePointer<Int8>.allocate(
+		//				capacity: 2100);
+		if let cstr = cfg_text_screen_str() {
+			let str = String(cString: cstr);
+			NSPasteboard.general.clearContents();
+			NSPasteboard.general.setString(str,
+				forType: NSPasteboard.PasteboardType.string);
+		}
+	}
 	@objc func do_paste(_ : AnyObject) {
 		// print("do_paste")
 		let general = NSPasteboard.general;

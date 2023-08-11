@@ -1,19 +1,20 @@
-# $Id: README.compile.txt,v 1.23 2021/01/10 21:22:59 kentd Exp $
+# $Id: README.compile.txt,v 1.25 2023/05/21 20:11:42 kentd Exp $
 
 General build instructions:
 --------------------------
 
-KEGS only supports Mac OS X and Linux compiles for now.  Win32 support will
-be added back at a future date.
+KEGS supports Mac OS X, Linux, and Win64 compiles.
 
-You need to build with a make utility.  There's a default Makefile, which
-should work for nearly any environment.  The Makefile includes a file called
-"vars" which defines the platform-dependent variables.  You need to make
-vars point to the appropriate file for your machine.
+For Mac and Linux, the build is done from the command line using a "make"
+utility.  There's a default Makefile, which should work for nearly any
+environment.  The Makefile includes a file called "vars" which defines the
+platform-dependent variables.  You need to make vars point to the appropriate
+file for your machine.
 
-A KEGSMAC.app pre-built application for Mac OS 10.14 (Mojave) or later is
-provided.  I think it might work on 10.13 (High Sierra), but I have not
-tested it.
+For Windows, see below on using Visual Studio Community Edition.
+
+A KEGSMAC.app pre-built application for Mac OS 10.13 (High Sierra) is
+provided.
 
 A xkegs Linux app pre-built for 64-bit Redhat RHEL 7.2 is also provided.
 I'm hoping it works on other Linuxes.
@@ -56,7 +57,7 @@ make -j 20
 The resulting executable is called "xkegs".
 
 The build scripts assume perl is in your path. If it is somewhere else,
-you need to edit the "PERL = perl" line in the Makefile it point
+you need to edit the "PERL = perl" line in the Makefile to point
 to the correct place.
 
 KEGS by default requires Pulse Audio to compile.  To compile to use /dev/dsp
@@ -118,6 +119,25 @@ a retina display), so do:
 
 sudo sysctl  kern.sysv.shmmax=67108864          # One segment max: 64MB
 sudo sysctl  kern.sysv.shmall=131072            # in 4KB pages Total mem: 512MB
+
+
+Windows WIN64 build instructions (Windows 10 and later)
+-------------------------------------------------------
+
+KEGS is easy to compile, but you must install Visual Studio (Community Edition)
+first, which is free.  https://visualstudio.microsoft.com/vs/community/
+I'm using the 2022 version.  The executable in the KEGS release was built
+on Windows 10 for 64-bit Windows.
+
+Open a PowerShell (or any terminal window) and go to where you unpacked
+the KEGS source:
+
+cd src
+start kegswin.vcxproj
+
+You may also be able to just double-click the kegsin.vcproj file.
+
+Press 'F7' to generate an executable in x64\Release\kegswin.exe.
 
 
 Other platform "C" build instructions:

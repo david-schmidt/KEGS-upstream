@@ -1,8 +1,8 @@
-const char rcsid_paddles_c[] = "@(#)$KmKId: paddles.c,v 1.18 2021-06-25 02:44:57+00 kentd Exp $";
+const char rcsid_paddles_c[] = "@(#)$KmKId: paddles.c,v 1.21 2023-05-19 13:52:54+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2021 by Kent Dickey		*/
+/*			Copyright 2002-2023 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -17,7 +17,7 @@ const char rcsid_paddles_c[] = "@(#)$KmKId: paddles.c,v 1.18 2021-06-25 02:44:57
 extern int g_mouse_raw_x;	/* from adb.c */
 extern int g_mouse_raw_y;
 
-double	g_paddle_trig_dcycs = 0.0;
+dword64	g_paddle_trig_dfcyc = 0;
 int	g_swap_paddles = 0;
 int	g_invert_paddles = 0;
 int	g_joystick_scale_factor_x = 0x100;
@@ -35,8 +35,8 @@ extern int g_paddle_buttons;
 int	g_paddle_val[4] = { 0, 0, 0, 0 };
 		/* g_paddle_val[0]: Joystick X coord, [1]:Y coord */
 
-double	g_paddle_dcycs[4] = { 0.0, 0.0, 0.0, 0.0 };
-		/* g_paddle_dcycs are the dcycs the paddle goes to 0 */
+dword64	g_paddle_dfcyc[4] = { 0, 0, 0, 0 };
+		/* g_paddle_dfcyc are the dfcyc the paddle goes to 0 */
 
 
 void
@@ -58,28 +58,28 @@ paddle_fixup_joystick_type()
 }
 
 void
-paddle_trigger(double dcycs)
+paddle_trigger(dword64 dfcyc)
 {
 	/* Called by read/write to $c070 */
-	g_paddle_trig_dcycs = dcycs;
+	g_paddle_trig_dfcyc = dfcyc;
 
 	/* Determine what all the paddle values are right now */
 	paddle_fixup_joystick_type();
 
 	switch(g_joystick_type) {
 	case 0:		/* Keypad Joystick */
-		paddle_trigger_keypad(dcycs);
+		paddle_trigger_keypad(dfcyc);
 		break;
 	case 1:		/* Mouse Joystick */
-		paddle_trigger_mouse(dcycs);
+		paddle_trigger_mouse(dfcyc);
 		break;
 	default:
-		joystick_update(dcycs);
+		joystick_update(dfcyc);
 	}
 }
 
 void
-paddle_trigger_mouse(double dcycs)
+paddle_trigger_mouse(dword64 dfcyc)
 {
 	int	val_x, val_y;
 	int	mouse_x, mouse_y;
@@ -101,11 +101,11 @@ paddle_trigger_mouse(double dcycs)
 	g_paddle_val[2] = 32767;
 	g_paddle_val[3] = 32767;
 	g_paddle_buttons |= 0xc;
-	paddle_update_trigger_dcycs(dcycs);
+	paddle_update_trigger_dcycs(dfcyc);
 }
 
 void
-paddle_trigger_keypad(double dcycs)
+paddle_trigger_keypad(dword64 dfcyc)
 {
 	int	get_y, val_x, val_y;
 
@@ -118,16 +118,14 @@ paddle_trigger_keypad(double dcycs)
 	g_paddle_val[2] = 32767;
 	g_paddle_val[3] = 32767;
 	g_paddle_buttons |= 0xc;
-	paddle_update_trigger_dcycs(dcycs);
+	paddle_update_trigger_dcycs(dfcyc);
 }
 
 void
-paddle_update_trigger_dcycs(double dcycs)
+paddle_update_trigger_dcycs(dword64 dfcyc)
 {
-	double	trig_dcycs;
-	int	val;
-	int	paddle_num;
-	int	scale, trim;
+	dword64	trig_dfcyc;
+	int	val, paddle_num, scale, trim;
 	int	i;
 
 	for(i = 0; i < 4; i++) {
@@ -162,23 +160,23 @@ paddle_update_trigger_dcycs(double dcycs)
 		if(val >= 255) {
 			val = 280;	/* increase range */
 		}
-		trig_dcycs = dcycs + (val * 11.04);
-		g_paddle_dcycs[i] = trig_dcycs;
+		trig_dfcyc = dfcyc + (dword64)((val * (2816/255.0)) * 65536);
+		g_paddle_dfcyc[i] = trig_dfcyc;
 		if(i < 2) {
-			dbg_log_info(dcycs, (scale << 16) | (val & 0xffff),
+			dbg_log_info(dfcyc, (scale << 16) | (val & 0xffff),
 					(trim << 16) | i, 0x70);
 		}
 	}
 }
 
 int
-read_paddles(double dcycs, int paddle)
+read_paddles(dword64 dfcyc, int paddle)
 {
-	double	trig_dcycs;
+	dword64	trig_dfcyc;
 
-	trig_dcycs = g_paddle_dcycs[paddle & 3];
+	trig_dfcyc = g_paddle_dfcyc[paddle & 3];
 
-	if(dcycs < trig_dcycs) {
+	if(dfcyc < trig_dfcyc) {
 		return 0x80;
 	} else {
 		return 0x00;

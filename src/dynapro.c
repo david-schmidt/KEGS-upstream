@@ -1,4 +1,4 @@
-const char rcsid_dynapro_c[] = "@(#)$KmKId: dynapro.c,v 1.44 2022-06-26 04:14:15+00 kentd Exp $";
+const char rcsid_dynapro_c[] = "@(#)$KmKId: dynapro.c,v 1.48 2023-05-22 20:15:18+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -23,6 +23,8 @@ const char rcsid_dynapro_c[] = "@(#)$KmKId: dynapro.c,v 1.44 2022-06-26 04:14:15
 # include <dirent.h>
 #endif
 #include <time.h>
+
+extern int Verbose;
 
 #define DYNAPRO_PATH_MAX		2048
 char g_dynapro_path_buf[DYNAPRO_PATH_MAX];
@@ -232,7 +234,7 @@ dynapro_find_free_block_internal(Disk *dsk)
 	word32	ui;
 	int	j;
 
-	num_blocks = dsk->raw_dsize >> 9;
+	num_blocks = (word32)(dsk->raw_dsize >> 9);
 	bitmap_size_bytes = (num_blocks + 7) >> 3;
 	bptr = &(dsk->raw_data[6 * 512]);		// Block 6
 	for(ui = 0; ui < bitmap_size_bytes; ui++) {
@@ -278,7 +280,6 @@ byte *
 dynapro_malloc_file(char *path_ptr, dword64 *dsize_ptr, int extra_size)
 {
 	byte	*bptr;
-	long long lret;
 	dword64	dsize, dpos;
 	int	fd;
 	int	i;
@@ -290,7 +291,10 @@ dynapro_malloc_file(char *path_ptr, dword64 *dsize_ptr, int extra_size)
 	}
 	dsize = cfg_get_fd_size(fd);
 
-	bptr = malloc(dsize + extra_size);
+	if((size_t)(dsize + extra_size) != (dsize + extra_size)) {
+		return 0;
+	}
+	bptr = malloc((size_t)(dsize + extra_size));
 	if(bptr == 0) {
 		return bptr;
 	}
@@ -298,17 +302,7 @@ dynapro_malloc_file(char *path_ptr, dword64 *dsize_ptr, int extra_size)
 	for(i = 0; i < extra_size; i++) {
 		bptr[dsize + i] = 0;
 	}
-	dpos = 0;
-	while(1) {
-		if(dpos >= dsize) {
-			break;
-		}
-		lret = read(fd, bptr + dpos, dsize - dpos);
-		if(lret <= 0) {
-			break;
-		}
-		dpos += lret;
-	}
+	dpos = cfg_read_from_fd(fd, bptr, 0, dsize);
 	close(fd);
 	if(dpos != dsize) {
 		free(bptr);
@@ -326,7 +320,7 @@ dynapro_join_path_and_file(char *outstr, const char *unix_path, const char *str,
 
 	// Create "unix_path" + "/" + "str" in outstr (which has size path_max)
 	cfg_strncpy(outstr, unix_path, path_max);
-	len = strlen(outstr);
+	len = (int)strlen(outstr);
 	if((len > 0) && (outstr[len - 1] != '/')) {
 		cfg_strlcat(outstr, "/", path_max);
 	}
@@ -571,7 +565,7 @@ dynapro_try_fix_damage(Disk *dsk, Dynapro_file *fileptr)
 	}
 	while(fileptr) {
 		if(fileptr->damaged) {
-			printf("try_fix_damage %p %s\n", fileptr,
+			dyna_printf("try_fix_damage %p %s\n", fileptr,
 							fileptr->unix_path);
 			dynapro_fix_damaged_entry(dsk, fileptr);
 		}
@@ -593,15 +587,16 @@ dynapro_try_fix_damaged_disk(Disk *dsk)
 		return;
 	}
 
-	printf("************************************\n");
-	printf("try_fix_damaged_dsk called, damaged:%d\n", info_ptr->damaged);
-	printf(" vbl_count:%d, g_iwm_dynapro_last_vbl_count:%d\n",
+	dyna_printf("************************************\n");
+	dyna_printf("try_fix_damaged_dsk called, damaged:%d\n",
+							info_ptr->damaged);
+	dyna_printf(" vbl_count:%d, g_iwm_dynapro_last_vbl_count:%d\n",
 		g_vbl_count, g_iwm_dynapro_last_vbl_count);
 
 	info_ptr->damaged = 0;
 	dynapro_try_fix_damage(dsk, info_ptr->volume_ptr);
 
-	printf("try_fix_damaged_dsk, damaged:%d\n", info_ptr->damaged);
+	dyna_printf("try_fix_damaged_dsk, damaged:%d\n", info_ptr->damaged);
 }
 
 
@@ -655,9 +650,13 @@ dynapro_process_write_dir(Disk *dsk, Dynapro_file *parent_ptr,
 		parent_dir_byte = parent_ptr->dir_byte;
 		if(head_ptr == 0) {
 			// Do mkdir to make sure it exists
+#ifdef _WIN32
+			iret = _mkdir(str);
+#else
 			iret = mkdir(str, 0x1ff);
+#endif
 			error = errno;
-			printf("Did mkdir %s, iret:%d\n", str, iret);
+			dyna_printf("Did mkdir %s, iret:%d\n", str, iret);
 			if(iret < 0) {
 				if((error == EEXIST) || (error == EISDIR)) {
 					error = 0;	// These are OK errors
@@ -727,7 +726,7 @@ dynapro_process_write_dir(Disk *dsk, Dynapro_file *parent_ptr,
 			if((ret == 3) && fileptr) {
 				// This entry was valid and is now deleted.
 				//  Erase it right now and fix links
-				printf("fileptr %p deleted\n", fileptr);
+				dyna_printf("fileptr %p deleted\n", fileptr);
 				prev_ptr->next_ptr = fileptr->next_ptr;
 				dynapro_erase_free_entry(dsk, fileptr);
 			}
@@ -751,7 +750,7 @@ dynapro_process_write_dir(Disk *dsk, Dynapro_file *parent_ptr,
 				return 0;
 			}
 			*fileptr = localfile;		// STRUCT copy!
-			printf("Allocated new fileptr:%p\n", fileptr);
+			dyna_printf("Allocated new fileptr:%p\n", fileptr);
 			fileptr->parent_ptr = parent_ptr;
 			if(head_ptr) {
 				fileptr->parent_ptr = head_ptr;
@@ -771,8 +770,8 @@ dynapro_process_write_dir(Disk *dsk, Dynapro_file *parent_ptr,
 				head_ptr = fileptr;
 				*head_ptr_ptr = head_ptr;
 			} else {
-				printf("Forming new path: %s buf32:%s\n", str,
-								buf32);
+				dyna_printf("Forming new path: %s buf32:%s\n",
+								str, buf32);
 				dynapro_new_unix_path(fileptr, str, buf32);
 			}
 			// If we are a directory entry (fileptr->subdir_ptr!=0)
@@ -803,9 +802,10 @@ dynapro_process_write_dir(Disk *dsk, Dynapro_file *parent_ptr,
 		if(tmp_byte < 0x200) {
 			continue;
 		}
-		tmp_byte = (dir_byte - 0x27) & (-0x200UL);
+		tmp_byte = (dir_byte - 0x27) & (0 - 0x200UL);
 		dir_byte = dynapro_get_word16(&bptr[tmp_byte + 2]) * 0x200UL;
-		printf(" dir link at %07x = %04x\n", tmp_byte + 2, dir_byte);
+		dyna_printf(" dir link at %07x = %04x\n", tmp_byte + 2,
+								dir_byte);
 		if(dir_byte == 0) {
 			if(fileptr) {
 				printf("At dir end, fileptr: %p\n", fileptr);
@@ -828,7 +828,7 @@ dynapro_process_write_dir(Disk *dsk, Dynapro_file *parent_ptr,
 			return 0;		// Bad link, get out
 		}
 	}
-	printf("At end of process_write_dir, returning 0\n");
+	dyna_printf("At end of process_write_dir, returning 0\n");
 	return 0;
 }
 
@@ -839,10 +839,10 @@ dynapro_handle_write_dir(Disk *dsk, Dynapro_file *parent_ptr,
 	Dynapro_file *fileptr;
 
 	//save_headptr = head_ptr;
-	printf("handle_write_dir parent_ptr:%p, head_ptr:%p, dir_byte:%07x\n",
+	dyna_printf("handle_write_dir parent_ptr:%p, head_ptr:%p, dir_b:%07x\n",
 			parent_ptr, head_ptr, dir_byte);
 	if(parent_ptr && head_ptr) {
-		printf(" parent:%s head:%s\n", parent_ptr->unix_path,
+		dyna_printf(" parent:%s head:%s\n", parent_ptr->unix_path,
 							head_ptr->unix_path);
 		if(parent_ptr->subdir_ptr != head_ptr) {
 			printf("parent subdir:%p does not match %p\n",
@@ -872,7 +872,7 @@ dynapro_handle_write_dir(Disk *dsk, Dynapro_file *parent_ptr,
 			parent_ptr->damaged = 1;
 			dsk->dynapro_info_ptr->damaged = 1;
 		}
-		printf("hwd set parent %p %s subdir=%p\n", parent_ptr,
+		dyna_printf("hwd set parent %p %s subdir=%p\n", parent_ptr,
 			parent_ptr->unix_path, head_ptr);
 	}
 }
@@ -947,22 +947,25 @@ dynapro_handle_changed_entry(Disk *dsk, Dynapro_file *fileptr)
 word32
 dynapro_write_to_unix_file(const char *unix_path, byte *data_ptr, word32 size)
 {
-	word32	ret;
+	dword64	dret;
 	int	fd;
 
-	fd = open(unix_path, O_WRONLY | O_CREAT | O_TRUNC, 0x1b6);
+	fd = open(unix_path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0x1b6);
 	if(fd < 0) {
 		printf("Open %s for writing failed\n", unix_path);
 		exit(1);
 		return 0;
 	}
-	ret = cfg_write_to_fd(fd, data_ptr, 0, size);
+	dret = cfg_write_to_fd(fd, data_ptr, 0, size);
 	close(fd);
+	dyna_printf("dynapro_write_to_unix: %s size:%d, dret:%lld\n",
+						unix_path, size, dret);
+
 
 	if(size == 0) {
 		return 1;
 	}
-	return ret;
+	return (word32)dret;
 }
 
 void
@@ -979,7 +982,7 @@ dynapro_unmap_file(Disk *dsk, Dynapro_file *fileptr)
 
 	// Unmap all blocks to this file/dir
 	map_ptr = dsk->dynapro_info_ptr->block_map_ptr;
-	max_blocks = dsk->dimage_size >> 9;
+	max_blocks = (word32)(dsk->dimage_size >> 9);
 	map_block = fileptr->map_first_block;
 	//printf(" map_block:%04x, fileptr:%p %s\n", map_block, fileptr,
 	//					fileptr->unix_path);
@@ -1020,7 +1023,7 @@ dynapro_unlink_file(Dynapro_file *fileptr)
 	int	ret, err;
 
 	// Try to unlink unix_path
-	printf("Unlink %s (%p)\n", fileptr->unix_path, fileptr);
+	dyna_printf("Unlink %s (%p)\n", fileptr->unix_path, fileptr);
 	if(fileptr->unix_path == 0) {
 		printf("unix_path of %p is null!\n", fileptr);
 		exit(1);
@@ -1066,7 +1069,7 @@ dynapro_erase_free_entry(Disk *dsk, Dynapro_file *fileptr)
 	fileptr->next_ptr = 0;
 	if(fileptr != dsk->dynapro_info_ptr->volume_ptr) {
 		// Free everything--except the volume header
-		printf("erase_free_entry erasing %p since it != %p\n",
+		dyna_printf("erase_free_entry erasing %p since it != %p\n",
 			fileptr, dsk->dynapro_info_ptr->volume_ptr);
 		dynapro_free_file(fileptr, 1);
 	}
@@ -1077,11 +1080,11 @@ dynapro_erase_free_dir(Disk *dsk, Dynapro_file *fileptr)
 {
 	Dynapro_file *nextptr, *parent_ptr, *save_fileptr;
 
-	printf("dynapro_erase_free_dir of %p\n", fileptr);
+	dyna_printf("dynapro_erase_free_dir of %p\n", fileptr);
 	if(fileptr == 0) {
 		return;
 	}
-	printf("  dynapro_erase_free_dir of %s\n", fileptr->unix_path);
+	dyna_printf("  dynapro_erase_free_dir of %s\n", fileptr->unix_path);
 	dsk->dynapro_info_ptr->damaged = 1;
 	parent_ptr = fileptr->parent_ptr;
 	if(parent_ptr) {
@@ -1107,7 +1110,7 @@ dynapro_mark_damaged(Disk *dsk, Dynapro_file *fileptr)
 	if(fileptr == 0) {
 		return;
 	}
-	printf("dynapro_mark_damaged: %s is damaged\n", fileptr->unix_path);
+	dyna_printf("dynapro_mark_damaged: %s damaged\n", fileptr->unix_path);
 	fileptr->damaged = 1;
 	dsk->dynapro_info_ptr->damaged = 1;
 	dynapro_unmap_file(dsk, fileptr);
@@ -1138,9 +1141,9 @@ dynapro_write(Disk *dsk, byte *bufptr, dword64 doffset, word32 size)
 
 	// Return 1 if write was done.  Return < 0 if an error occurs
 
-	printf("\n");
-	printf("------------------------------------------------\n");
-	printf("dynapro_write to %08llx, size:%08x\n", doffset, size);
+	dyna_printf("\n");
+	dyna_printf("------------------------------------------------\n");
+	dyna_printf("dynapro_write to %08llx, size:%08x\n", doffset, size);
 	dynapro_debug_update(dsk);
 
 	bptr = dsk->raw_data;
@@ -1166,8 +1169,9 @@ dynapro_write(Disk *dsk, byte *bufptr, dword64 doffset, word32 size)
 	}
 
 	num = (size + 511) >> 9;
-	block = doffset >> 9;
-	printf("Marking blocks %05x-%05x modified\n", block, block + num - 1);
+	block = (word32)(doffset >> 9);
+	dyna_printf("Marking blocks %05x-%05x modified\n", block,
+							block + num - 1);
 	for(i = 0; i < num; i++) {
 		map_ptr = &(info_ptr->block_map_ptr[block + i]);
 		map_ptr->modified = 1;
@@ -1196,10 +1200,13 @@ dynapro_write(Disk *dsk, byte *bufptr, dword64 doffset, word32 size)
 void
 dynapro_debug_update(Disk *dsk)
 {
-	printf("Writing out DYNAPRO_IMAGE, %p\n", dsk);
+	dyna_printf("Writing out DYNAPRO_IMAGE, %p\n", dsk);
 #if 0
+	// This causes the file DYNAPRO_IMAGE to be written out as the raw
+	//  image after any write to the Dynapro volume.  This is for manual
+	//  debugging.
 	dynapro_write_to_unix_file("DYNAPRO_IMAGE", dsk->raw_data,
-							dsk->dimage_size);
+						(word32)dsk->dimage_size);
 #endif
 }
 
@@ -1214,7 +1221,7 @@ dynapro_debug_map(Disk *dsk, const char *str)
 
 	return;			// HACK!
 
-	num_blocks = (dsk->dimage_size + 511) >> 9;
+	num_blocks = (word32)((dsk->dimage_size + 511) >> 9);
 	map_ptr = dsk->dynapro_info_ptr->block_map_ptr;
 	lastfileptr = 0;
 	printf(" Showing map for %s, %05x blocks, %s\n",
@@ -1310,7 +1317,7 @@ dynapro_create_prodos_name(Dynapro_file *newfileptr, Dynapro_file *matchptr,
 	if(!str) {
 		return 0;
 	}
-	inpos = strlen(str);
+	inpos = (int)strlen(str);
 	max_inpos = inpos + 1;
 	while(inpos >= 1) {
 		inpos--;
@@ -1387,7 +1394,7 @@ dynapro_create_prodos_name(Dynapro_file *newfileptr, Dynapro_file *matchptr,
 		return 0;
 	}
 	// Now, it's valid.  Squeeze it to 15 character but saving extension
-	len = strlen(&g_dynapro_path_buf[0]);
+	len = (int)strlen(&g_dynapro_path_buf[0]);
 	if(len > 15) {
 		// Copy last 8 characters to be in positions 7..14
 		for(i = 7; i < 16; i++) {
@@ -1395,7 +1402,7 @@ dynapro_create_prodos_name(Dynapro_file *newfileptr, Dynapro_file *matchptr,
 		}
 	}
 
-	len = strlen(&g_dynapro_path_buf[0]);
+	len = (int)strlen(&g_dynapro_path_buf[0]);
 	if((len > 15) || (len == 0)) {
 		printf("Bad filename handling: %s\n", &g_dynapro_path_buf[0]);
 		return 0;
@@ -1410,11 +1417,11 @@ dynapro_create_prodos_name(Dynapro_file *newfileptr, Dynapro_file *matchptr,
 		}
 		//printf("Comparing %s to %s\n", &g_dynapro_path_buf[0],
 		//			(char *)&(thisptr->prodos_name[1]));
-		len = strlen(&g_dynapro_path_buf[0]);
+		len = (int)strlen(&g_dynapro_path_buf[0]);
 		if((len == (thisptr->prodos_name[0] & 0xf)) &&
 				(cfgcasecmp(&g_dynapro_path_buf[0],
 				(char *)&(thisptr->prodos_name[1])) == 0)) {
-			printf(" that was a match\n");
+			dyna_printf(" that was a match\n");
 			dot_pos = 0;
 			inc_pos = len - 1;
 			for(i = len - 2; i >= 1; i--) {
@@ -1523,7 +1530,7 @@ dynapro_new_unix_file(const char *path, Dynapro_file *parent_ptr,
 	fileptr->modified_flag = 0;
 	fileptr->damaged = 0;
 
-	len = strlen(fileptr->unix_path);
+	len = (int)strlen(fileptr->unix_path);
 	for(i = len - 1; i >= 0; i--) {
 		if(fileptr->unix_path[i] == '/') {
 			fileptr->unix_path[i] = 0;	// Strip trailing /
@@ -1718,7 +1725,8 @@ dynapro_add_file_entry(Disk *dsk, Dynapro_file *fileptr, Dynapro_file *head_ptr,
 		//  Try to step to next block, otherwise allocate a new one
 		new_dir_byte = dir_byte & -0x200L;
 		new_dir_blk = dynapro_get_word16(&bptr[new_dir_byte + 2]);
-		printf(" Entry does not fit, new_dir_blk:%04x\n", new_dir_blk);
+		dyna_printf(" Entry does not fit, new_dir_blk:%04x\n",
+							new_dir_blk);
 		if(new_dir_blk != 0) {
 			// Follow to the next block
 			dir_byte = (new_dir_blk * 0x200) + 4;
@@ -1740,7 +1748,7 @@ dynapro_add_file_entry(Disk *dsk, Dynapro_file *fileptr, Dynapro_file *head_ptr,
 			dynapro_set_word16(&bptr[dir_byte + 2], new_dir_blk);
 			dir_byte = new_dir_byte + 4;
 			if(!head_ptr) {
-				printf("No head: %s\n", fileptr->unix_path);
+				dyna_printf("No head:%s\n", fileptr->unix_path);
 			}
 			parent_ptr = head_ptr->parent_ptr;
 			if(!parent_ptr) {
@@ -1787,7 +1795,8 @@ dynapro_add_file_entry(Disk *dsk, Dynapro_file *fileptr, Dynapro_file *head_ptr,
 		dynapro_set_word16(&bptr[0x11], 0);
 		fileptr->lastmod_time = 0x00060000;
 			// low 16 bits: file_count, upper 16 bits: bitmap_block
-		fileptr->header_pointer = dsk->raw_dsize >> 9;	// Total blocks
+		fileptr->header_pointer = (word32)(dsk->raw_dsize >> 9);
+							// Total blocks
 		dynapro_set_word16(&bptr[0x1c], 0x0005);
 		dynapro_set_word16(&bptr[0x16], fileptr->upper_lower);
 	} else if(storage_type >= 0xe0) {		// Directory header
@@ -1845,7 +1854,7 @@ dynapro_fork_from_unix(Disk *dsk, byte *fptr, word32 *storage_type_ptr,
 	*storage_type_ptr = 0;
 	sap_block = 0;
 	tree_block = 0;
-	num_blocks = (dsize + 511) >> 9;
+	num_blocks = (word32)((dsize + 511) >> 9);
 	if(num_blocks == 0) {			// 0-length file
 		num_blocks = 1;
 	} else if(num_blocks > 0x8000) {	// >= 16MB (32K*512)
@@ -1936,7 +1945,7 @@ dynapro_file_from_unix(Disk *dsk, Dynapro_file *fileptr)
 	word32	storage_type, blocks_out, dir_byte;
 
 	fptr = dynapro_malloc_file(fileptr->unix_path, &dsize, 0x200);
-	fileptr->eof = dsize;
+	fileptr->eof = (word32)dsize;
 #if 0
 	printf("file_from_unix %s, size:%08llx, file_type:%02x, dir_byte:"
 		"%07x, storage:%02x\n", fileptr->unix_path, dsize,
@@ -1961,7 +1970,7 @@ dynapro_file_from_unix(Disk *dsk, Dynapro_file *fileptr)
 	// Update dir_byte information for this file
 	dir_byte = fileptr->dir_byte;
 	if(dir_byte == 0) {
-		printf("dir_byte is 0 for %s\n", fileptr->unix_path);
+		dyna_printf("dir_byte is 0 for %s\n", fileptr->unix_path);
 	}
 	bptr = &(dsk->raw_data[dir_byte]);
 	bptr[0] = fileptr->prodos_name[0];
@@ -2059,12 +2068,12 @@ dynapro_map_one_file_block(Disk *dsk, Dynapro_file *fileptr, word32 block_num,
 	}
 	map_ptr = &(info_ptr->block_map_ptr[block_num]);
 	if((map_ptr->file_ptr != 0) || (map_ptr->next_map_block != 0)) {
-		printf("Mapping %s to block %04x, already has file_ptr:%p, "
-			"next_map:%04x, mod:%d\n", fileptr->unix_path,
+		dyna_printf("Mapping %s to block %04x, already has file_ptr:"
+			"%p, next_map:%04x, mod:%d\n", fileptr->unix_path,
 			block_num, map_ptr->file_ptr, map_ptr->next_map_block,
 			map_ptr->modified);
 		if(map_ptr->file_ptr) {
-			printf(" Existing file: %s\n",
+			dyna_printf(" Existing file: %s\n",
 						map_ptr->file_ptr->unix_path);
 		}
 		return 0;
@@ -2288,7 +2297,9 @@ dynapro_mount(Disk *dsk, char *dir_path, word32 num_blocks)
 		dynapro_free_dynapro_info(dsk);
 		return -1;
 	}
+#ifndef _WIN32
 	setvbuf(stdout, 0, _IOLBF, 0);
+#endif
 	dsk->fd = 0;
 	return 0;
 }

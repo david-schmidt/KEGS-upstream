@@ -1,10 +1,10 @@
 #ifdef INCLUDE_RCSID_C
-const char rcsid_iwm_h[] = "@(#)$KmKId: iwm.h,v 1.43 2022-05-06 21:47:48+00 kentd Exp $";
+const char rcsid_iwm_h[] = "@(#)$KmKId: iwm.h,v 1.45 2023-05-04 19:33:31+00 kentd Exp $";
 #endif
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2022 by Kent Dickey		*/
+/*			Copyright 2002-2023 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -124,7 +124,7 @@ STRUCT(Dynapro_info) {
 };
 
 STRUCT(Disk) {
-	double	dcycs_last_read;
+	dword64	dfcyc_last_read;
 	byte	*raw_data;
 	Woz_info *wozinfo_ptr;
 	Dynapro_info *dynapro_info_ptr;
@@ -147,7 +147,7 @@ STRUCT(Disk) {
 	int	disk_dirty;
 	int	just_ejected;
 	int	last_phases;
-	double	dcycs_last_phases;
+	dword64	dfcyc_last_phases;
 	word32	cur_fbit_pos;
 	word32	fbit_mult;
 	word32	cur_track_bits;
@@ -161,7 +161,7 @@ STRUCT(Iwm) {
 	Disk	drive525[2];
 	Disk	drive35[2];
 	Disk	smartport[MAX_C7_DISKS];
-	double	dcycs_last_fastemul_read;
+	dword64	dfcyc_last_fastemul_read;
 	word32	state;
 	int	motor_off_vbl_count;
 	word32	forced_sync_bit;

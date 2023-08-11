@@ -1,4 +1,4 @@
-# $KmKId: makefile,v 1.45 2022-06-13 13:14:21+00 kentd Exp $
+# $KmKId: makefile,v 1.47 2023-04-01 14:20:47+00 kentd Exp $
 
 XOPTS_WIN = -Wall -fomit-frame-pointer -march=pentium
 
@@ -97,40 +97,13 @@ win32.o: win32.rc
 	$(KMKROOT)/bin/kmkproto $(XOPTS) $*.m > $*.proto
 	echo >> $*.proto
 
-$(PROTO_OUT_base): $(PROTO_FILE_LIST_base) ldvars
-	$(KMKROOT)/bin/kmkproto_head $(PROTO_OUT_base) tmp_protos.h
-	cat /dev/null $(PROTO_FILE_LIST_base) >> tmp_protos.h
-	rm -f $(PROTO_OUT_base)
-	mv tmp_protos.h $(PROTO_OUT_base)
-	cp -f $(PROTO_OUT_base) ..
-
-$(PROTO_OUT_xdriver): $(PROTO_FILE_LIST_xdriver) ldvars
-	$(KMKROOT)/bin/kmkproto_head $(PROTO_OUT_xdriver) tmp_protos.h
-	cat /dev/null $(PROTO_FILE_LIST_xdriver) >> tmp_protos.h
-	rm -f $(PROTO_OUT_xdriver)
-	mv tmp_protos.h $(PROTO_OUT_xdriver)
-	cp -f $(PROTO_OUT_xdriver) ..
-
-$(PROTO_OUT_macsnd_driver): $(PROTO_FILE_LIST_macsnd_driver) ldvars
-	$(KMKROOT)/bin/kmkproto_head $(PROTO_OUT_macsnd_driver) tmp_protos.h
-	cat /dev/null $(PROTO_FILE_LIST_macsnd_driver) >> tmp_protos.h
-	rm -f $(PROTO_OUT_macsnd_driver)
-	mv tmp_protos.h $(PROTO_OUT_macsnd_driver)
-	cp -f $(PROTO_OUT_macsnd_driver) ..
-
-$(PROTO_OUT_pulseaudio_driver): $(PROTO_FILE_LIST_pulseaudio_driver) ldvars
-	$(KMKROOT)/bin/kmkproto_head $(PROTO_OUT_pulseaudio_driver) tmp_protos.h
-	cat /dev/null $(PROTO_FILE_LIST_pulseaudio_driver) >> tmp_protos.h
-	rm -f $(PROTO_OUT_pulseaudio_driver)
-	mv tmp_protos.h $(PROTO_OUT_pulseaudio_driver)
-	cp -f $(PROTO_OUT_pulseaudio_driver) ..
-
-$(PROTO_OUT_windriver): $(PROTO_FILE_LIST_windriver) ldvars
-	$(KMKROOT)/bin/kmkproto_head $(PROTO_OUT_windriver) tmp_protos.h
-	cat /dev/null $(PROTO_FILE_LIST_windriver) >> tmp_protos.h
-	rm -f $(PROTO_OUT_windriver)
-	mv tmp_protos.h $(PROTO_OUT_windriver)
-	cp -f $(PROTO_OUT_windriver) ..
+$(PROTO_OUT): $(PROTO_FILE_LIST) ldvars proto_vars
+	$(KMKROOT)/bin/kmkproto_head $(PROTO_OUT) tmp_protos.h
+	cat /dev/null $(PROTO_FILE_LIST) >> tmp_protos.h
+	rm -f $(PROTO_OUT)
+	mv tmp_protos.h $(PROTO_OUT)
+	kmk_cp_if_diff $(PROTO_OUT) ..
+	rm -f *.proto
 
 
 compile_time.o: $(OBJECTS) $(OBJECTS1)

@@ -1,8 +1,8 @@
-const char rcsid_undeflate_c[] = "@(#)$KmKId: undeflate.c,v 1.13 2022-05-06 21:47:13+00 kentd Exp $";
+const char rcsid_undeflate_c[] = "@(#)$KmKId: undeflate.c,v 1.18 2023-05-21 20:06:24+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
-/*			Copyright 2002-2022 by Kent Dickey		*/
+/*			Copyright 2002-2023 by Kent Dickey		*/
 /*									*/
 /*	This code is covered by the GNU GPL v3				*/
 /*	See the file COPYING.txt or https://www.gnu.org/licenses/	*/
@@ -53,6 +53,24 @@ word32	*g_undeflate_dynamic_tabptr = 0;
 word32	g_undeflate_dynamic_bits = 0;
 word32	*g_undeflate_dynamic_dist_tabptr = 0;
 word32	g_undeflate_dynamic_dist_bits = 0;
+
+void *
+undeflate_realloc(void *ptr, dword64 dsize)
+{
+	if((size_t)dsize != dsize) {
+		return 0;
+	}
+	return realloc(ptr, (size_t)dsize);
+}
+
+void *
+undeflate_malloc(dword64 dsize)
+{
+	if((size_t)dsize != dsize) {
+		return 0;
+	}
+	return malloc((size_t)dsize);
+}
 
 void
 show_bits(unsigned *llptr, int nl)
@@ -230,7 +248,7 @@ undeflate_ensure_dest_len(Disk *dsk, byte *ucptr, word32 len)
 	}
 	if((dimage_size + len) > raw_dsize) {
 		raw_dsize = ((dimage_size + len) * 3ULL) / 2;
-		raw_ptr = realloc(dsk->raw_data, raw_dsize);
+		raw_ptr = undeflate_realloc(dsk->raw_data, raw_dsize);
 		//printf("Did realloc to %08x, new new_data:%p, was %p\n",
 		//			raw_size, raw_ptr, dsk->raw_data);
 		if(raw_ptr == 0) {
@@ -401,7 +419,7 @@ undeflate_check_bit_reverse()
 			checked++;
 		}
 	}
-	// printf("Checked %08x values\n", checked);
+	printf("Checked %08x values\n", checked);
 }
 
 word32 *
@@ -643,7 +661,7 @@ undeflate_dynamic_table(byte *cptr, word32 *bit_pos_ptr, byte *cptr_base)
 	}
 
 	// Update *bit_pos_ptr to skip over the table
-	*bit_pos_ptr = bit_pos + 8*(cptr - cptr_start);
+	*bit_pos_ptr = bit_pos + (int)(8*(cptr - cptr_start));
 	return tabptr;
 }
 
@@ -889,7 +907,7 @@ undeflate_gzip_header(Disk *dsk, byte *cptr, word32 compr_size)
 	printf("gzip header was %02x bytes long\n", (int)(cptr - cptr_base));
 
 	dsk->raw_dsize = 140*1024;		// Just a guess, alloc size
-	dsk->raw_data = malloc(dsk->raw_dsize);
+	dsk->raw_data = undeflate_malloc(dsk->raw_dsize);
 	if(dsk->raw_data == 0) {
 		return 0;
 	}
@@ -937,7 +955,7 @@ undeflate_gzip_header(Disk *dsk, byte *cptr, word32 compr_size)
 				break;
 			}
 			// Real success, set raw_dsize
-			dsk->raw_data = realloc(dsk->raw_data,
+			dsk->raw_data = undeflate_realloc(dsk->raw_data,
 							dsk->dimage_size);
 			dsk->raw_dsize = dsk->dimage_size;
 			return cptr;
@@ -995,16 +1013,16 @@ undeflate_gzip(Disk *dsk, const char *name_str)
 }
 
 byte *
-undeflate_zipfile_blocks(Disk *dsk, byte *cptr, word32 compr_size)
+undeflate_zipfile_blocks(Disk *dsk, byte *cptr, dword64 dcompr_size)
 {
 	word32	*wptr;
 	byte	*cptr_base, *cptr_end;
 	word32	bit_offset;
 
 	cptr_base = cptr;
-	cptr_end = cptr + compr_size;
+	cptr_end = cptr + dcompr_size;
 
-	dsk->raw_data = malloc(dsk->raw_dsize);
+	dsk->raw_data = undeflate_malloc(dsk->raw_dsize);
 	if(dsk->raw_data == 0) {
 		return 0;
 	}
@@ -1033,7 +1051,7 @@ undeflate_zipfile_blocks(Disk *dsk, byte *cptr, word32 compr_size)
 				cptr++;
 			}
 			// Real success, set raw_dsize
-			dsk->raw_data = realloc(dsk->raw_data,
+			dsk->raw_data = undeflate_realloc(dsk->raw_data,
 							dsk->dimage_size);
 			dsk->raw_dsize = dsk->dimage_size;
 			return cptr;
@@ -1107,7 +1125,7 @@ undeflate_zipfile(Disk *dsk, int fd, dword64 dlocal_header_off,
 
 	compr_doffset = dlocal_header_off + 30 + name_len + extra_len;
 
-	cptr = malloc(compr_dsize + 0x1000);
+	cptr = undeflate_malloc(compr_dsize + 0x1000);
 	for(i = 0; i < 0x1000; i++) {
 		cptr[compr_dsize + i] = 0;
 	}
@@ -1271,7 +1289,7 @@ undeflate_zipfile_make_list(int fd)
 		return 0;
 	}
 
-	dirptr = malloc(dir_dsize);
+	dirptr = undeflate_malloc(dir_dsize);
 	dret = cfg_read_from_fd(fd, dirptr, dir_doff, dir_dsize);
 	if(dret != dir_dsize) {
 		printf("Couldn't read central dir\n");

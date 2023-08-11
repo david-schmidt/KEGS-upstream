@@ -1,4 +1,4 @@
-const char rcsid_video_c[] = "@(#)$KmKId: video.c,v 1.190 2023-03-09 22:38:44+00 kentd Exp $";
+const char rcsid_video_c[] = "@(#)$KmKId: video.c,v 1.201 2023-05-19 13:52:30+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -18,7 +18,7 @@ const char rcsid_video_c[] = "@(#)$KmKId: video.c,v 1.190 2023-03-09 22:38:44+00
 
 extern int Verbose;
 
-int g_a2_line_stat[200];
+word32 g_a2_filt_stat[200];
 int g_a2_line_left_edge[200];
 int g_a2_line_right_edge[200];
 
@@ -34,7 +34,7 @@ word32 g_refresh_bytes_xfer = 0;
 extern byte *g_slow_memory_ptr;
 extern int g_fatal_log;
 
-extern double g_cur_dcycs;
+extern dword64 g_cur_dfcyc;
 
 extern int g_line_ref_amt;
 
@@ -43,6 +43,7 @@ extern int g_config_control_panel;
 extern int g_halt_sim;
 
 word32 g_slow_mem_changed[SLOW_MEM_CH_SIZE];
+word32 g_slow_mem_ch2[SLOW_MEM_CH_SIZE];
 
 word32 g_a2font_bits[0x100][8];
 
@@ -54,9 +55,10 @@ int g_debugwin_last_total = 0;
 
 extern int g_debug_lines_total;
 
-extern double g_last_vbl_dcycs;
+extern dword64 g_last_vbl_dfcyc;
+extern dword64 g_video_pixel_dcount;
 
-double	g_video_dcycs_check_input = 0.0;
+dword64	g_video_dfcyc_check_input = 0;
 int	g_video_act_margin_left = BASE_MARGIN_LEFT;
 int	g_video_act_margin_right = BASE_MARGIN_RIGHT;
 int	g_video_act_margin_top = BASE_MARGIN_TOP;
@@ -77,11 +79,8 @@ int	g_border_reparse = 0;
 int	g_use_dhr140 = 0;
 int	g_use_bw_hires = 0;
 
-int	g_a2_new_all_stat[200];
-int	g_a2_cur_all_stat[200];
-word32	g_a2_8line_changes[24];
-int	g_new_a2_stat_cur_line = 0;
 int	g_vid_update_last_line = 0;
+int	g_video_save_all_stat_pos = 0;
 
 int g_cur_a2_stat = ALL_STAT_TEXT | ALL_STAT_ANNUNC3 |
 					(0xf << BIT_ALL_STAT_TEXT_COLOR);
@@ -121,6 +120,28 @@ char	*g_status_ptrs[MAX_STATUS_LINES] = { 0 };
 word16	g_pixels_widened[128];
 
 int	g_video_scale_algorithm = 0;
+
+STRUCT(Video_all_stat) {
+	word32	lines_since_vbl;
+	word32	cur_all_stat;
+};
+
+#define MAX_VIDEO_ALL_STAT	((200*42) + 40)
+int g_video_all_stat_pos = 0;
+Video_all_stat g_video_all_stat[MAX_VIDEO_ALL_STAT];
+
+STRUCT(Video_filt_stat) {
+	word32	line_bytes;
+	word32	filt_stat;
+};
+
+#define MAX_VIDEO_FILT_STAT	10000
+int g_video_filt_stat_pos = 0;
+Video_filt_stat g_video_filt_stat[MAX_VIDEO_FILT_STAT];
+
+int g_video_stat_old_pos = 0;
+Video_filt_stat g_video_filt_stat_old[MAX_VIDEO_FILT_STAT];
+
 
 word16 g_dhires_convert[4096];	/* look up { next4, this4, prev 4 } */
 
@@ -238,7 +259,9 @@ const byte g_hires_lookup[64] = {
 const int g_screen_index[] = {
 		0x000, 0x080, 0x100, 0x180, 0x200, 0x280, 0x300, 0x380,
 		0x028, 0x0a8, 0x128, 0x1a8, 0x228, 0x2a8, 0x328, 0x3a8,
-		0x050, 0x0d0, 0x150, 0x1d0, 0x250, 0x2d0, 0x350, 0x3d0
+		0x050, 0x0d0, 0x150, 0x1d0, 0x250, 0x2d0, 0x350, 0x3d0,
+		0x078, 0x0f8, 0x178, 0x1f8, 0x278, 0x2f8, 0x378, 0x3f8
+			// Last row is for float_bus() during VBL
 };
 
 byte g_font_array[256][8] = {
@@ -393,13 +416,11 @@ video_init(int mdepth)
 /* Initialize video system */
 
 	for(i = 0; i < 200; i++) {
-		g_a2_line_stat[i] = -1;
 		g_a2_line_left_edge[i] = 0;
 		g_a2_line_right_edge[i] = 0;
 	}
 	for(i = 0; i < 200; i++) {
-		g_a2_new_all_stat[i] = 0;
-		g_a2_cur_all_stat[i] = 1;
+		g_a2_filt_stat[i] = -1;
 		for(j = 0; j < 8; j++) {
 			g_saved_line_palettes[0][i][j] = (word32)-1;
 			g_saved_line_palettes[1][i][j] = (word32)-1;
@@ -407,9 +428,6 @@ video_init(int mdepth)
 	}
 	for(i = 0; i < 262; i++) {
 		g_cur_border_colors[i] = -1;
-	}
-	for(i = 0; i < 24; i++) {
-		g_a2_8line_changes[i] = 0;
 	}
 	for(i = 0; i < 128; i++) {
 		val0 = i;
@@ -424,12 +442,11 @@ video_init(int mdepth)
 		g_pixels_widened[i] = val1;
 	}
 
-	g_new_a2_stat_cur_line = 0;
-
 	vid_printf("Zeroing out video memory, mdepth:%d\n", mdepth);
 
 	for(i = 0; i < SLOW_MEM_CH_SIZE; i++) {
 		g_slow_mem_changed[i] = (word32)-1;
+		g_slow_mem_ch2[i] = 0;
 	}
 
 	/* create g_dhires_convert[] array */
@@ -477,8 +494,14 @@ video_init(int mdepth)
 
 	video_init_kimage(&g_debugwin_kimage, 80*8 + 8 + 8, 25*16 + 8 + 8);
 
-	change_display_mode(g_cur_dcycs);
+	change_display_mode(g_cur_dfcyc);
 	video_reset();
+	g_vid_update_last_line = 0;
+	g_video_all_stat_pos = 1;
+	g_video_all_stat[0].cur_all_stat = 0;
+	g_video_all_stat[0].lines_since_vbl = 0;
+	g_video_save_all_stat_pos = 0;
+	g_video_filt_stat_pos = 0;
 	video_update_status_enable(&g_mainwin_kimage);
 	video_update_through_line(262);
 	debugger_init();
@@ -501,6 +524,7 @@ video_init_kimage(Kimage *kimage_ptr, int width, int height)
 	kimage_ptr->x_height = height;
 	kimage_ptr->x_refresh_needed = 1;
 	kimage_ptr->active = 0;
+	kimage_ptr->c025_val = 0;
 
 	kimage_ptr->scale_width_to_a2 = 0x10000;
 	kimage_ptr->scale_width_a2_to_x = 0x10000;
@@ -516,23 +540,31 @@ video_init_kimage(Kimage *kimage_ptr, int width, int height)
 void
 show_a2_line_stuff()
 {
+	int	num, num_filt;
 	int	i;
 
 	for(i = 0; i < 200; i++) {
-		printf("line: %d: stat: %04x, "
+		printf("line: %d: stat: %07x, "
 			"left_edge:%d, right_edge:%d\n",
-			i, g_a2_line_stat[i],
+			i, g_a2_filt_stat[i],
 			g_a2_line_left_edge[i],
 			g_a2_line_right_edge[i]);
 	}
 
-	printf("new_a2_stat_cur_line: %d, cur_a2_stat:%04x\n",
-		g_new_a2_stat_cur_line, g_cur_a2_stat);
-	for(i = 0; i < 200; i++) {
-		printf("cur_all[%d]: %03x new_all: %03x\n", i,
-			g_a2_cur_all_stat[i], g_a2_new_all_stat[i]);
+	num = g_video_all_stat_pos;
+	num_filt = g_video_stat_old_pos;
+	printf("cur_a2_stat:%04x, all_stat_pos:%d, num_filt:%d\n",
+			g_cur_a2_stat, num, num_filt);
+	for(i = 0; i < num; i++) {
+		printf("all_stat[%3d]=%08x stat:%08x\n", i,
+			g_video_all_stat[i].lines_since_vbl,
+			g_video_all_stat[i].cur_all_stat);
 	}
-
+	for(i = 0; i < num_filt; i++) {
+		printf("filt[%3d]=%08x filt_stat:%08x\n", i,
+			g_video_filt_stat_old[i].line_bytes,
+			g_video_filt_stat_old[i].filt_stat);
+	}
 }
 
 int	g_flash_count = 0;
@@ -589,6 +621,7 @@ video_update()
 	did_video = 0;
 	if(g_screen_redraw_skip_count < 0) {
 		did_video = 1;
+		video_copy_changed2();
 		video_update_event_line(262);
 		update_border_info();
 		g_screen_redraw_skip_count = g_screen_redraw_skip_amt;
@@ -596,132 +629,112 @@ video_update()
 
 	/* update flash */
 	g_flash_count++;
-	if(g_flash_count >= 30) {
+	if(g_flash_count >= 16) {
 		g_flash_count = 0;
 		g_cur_a2_stat ^= ALL_STAT_FLASH_STATE;
-		change_display_mode(g_cur_dcycs);
+		change_display_mode(g_cur_dfcyc);
 	}
 
 	if(did_video) {
-		g_new_a2_stat_cur_line = 0;
-		g_a2_new_all_stat[0] = g_cur_a2_stat;
 		g_vid_update_last_line = 0;
-		video_update_through_line(0);
+		g_video_all_stat_pos = 1;
+		g_video_all_stat[0].cur_all_stat = g_cur_a2_stat;
+		g_video_all_stat[0].lines_since_vbl = 0;
+		g_video_save_all_stat_pos = 0;
+		g_video_filt_stat_pos = 0;
 	}
 }
 
-int
-video_all_stat_to_line_stat(int line, int new_all_stat)
+word32
+video_all_stat_to_filt_stat(int line, word32 new_all_stat)
 {
-	int	page, color, dbl, voc_interlace;
-	int	st80, hires, annunc3, mix_t_gr;
-	int	altchar, text_color, bg_color, flash_state;
-	int	mode;
+	word32	filt_stat, merge_mask, mix_t_gr;
 
-	st80 = new_all_stat & ALL_STAT_ST80;
-	hires = new_all_stat & ALL_STAT_HIRES;
-	annunc3 = new_all_stat & ALL_STAT_ANNUNC3;
+	filt_stat = new_all_stat & ALL_STAT_TEXT;
+	merge_mask = 0;
+	if((new_all_stat & ALL_STAT_ST80) == 0) {
+		merge_mask = ALL_STAT_PAGE2;
+	}
 	mix_t_gr = new_all_stat & ALL_STAT_MIX_T_GR;
-
-	page = ((new_all_stat >> BIT_ALL_STAT_PAGE2) & 1) && !st80;
-	color = (new_all_stat >> BIT_ALL_STAT_COLOR_C021) & 1;
-	dbl = (new_all_stat >> BIT_ALL_STAT_VID80) & 1;
-
-	altchar = 0; text_color = 0; bg_color = 0; flash_state = 0;
-
-	voc_interlace = (new_all_stat >> BIT_ALL_STAT_VOC_INTERLACE) & 1;
 	if(new_all_stat & ALL_STAT_SUPER_HIRES) {
-		mode = MODE_SUPER_HIRES;
-		page = 0; dbl = 0; color = 0;
+		filt_stat = ALL_STAT_SUPER_HIRES;
+		merge_mask = ALL_STAT_VOC_INTERLACE | ALL_STAT_VOC_MAIN;
+	} else if(line >= 192) {
+		filt_stat = ALL_STAT_BORDER;
+	} else if(filt_stat || (line >= 160 && mix_t_gr)) {
+		// text mode
+		filt_stat |= ALL_STAT_TEXT;
+		merge_mask |= ALL_STAT_ALTCHARSET | ALL_STAT_BG_COLOR |
+					ALL_STAT_TEXT_COLOR | ALL_STAT_VID80;
+		if((new_all_stat & ALL_STAT_ALTCHARSET) == 0) {
+			merge_mask |= ALL_STAT_FLASH_STATE;
+		}
 	} else {
-		voc_interlace = 0;
-		if(line >= 192) {
-			mode = MODE_BORDER;
-			page = 0; dbl = 0; color = 0;
-		} else if((new_all_stat & ALL_STAT_TEXT) ||
-						(line >= 160 && mix_t_gr)) {
-			mode = MODE_TEXT;
-			color = 0;
-			altchar = EXTRU(new_all_stat,
-					31 - BIT_ALL_STAT_ALTCHARSET, 1);
-			text_color = EXTRU(new_all_stat,
-					31 - BIT_ALL_STAT_TEXT_COLOR, 4);
-			bg_color = EXTRU(new_all_stat,
-					31 - BIT_ALL_STAT_BG_COLOR, 4);
-			flash_state = EXTRU(new_all_stat,
-					31 - BIT_ALL_STAT_FLASH_STATE, 1);
-			if(altchar) {
-				/* don't bother flashing if altchar on */
-				flash_state = 0;
-			}
-		} else {
-			/* obey the graphics mode */
-			dbl = dbl && !annunc3;
-			if(hires) {
-				color = color | EXTRU(new_all_stat,
-					31 - BIT_ALL_STAT_DIS_COLOR_DHIRES, 1);
-				mode = MODE_HGR;
-			} else {
-				mode = MODE_GR;
-			}
+		// GR or Hires
+		merge_mask |= ALL_STAT_ANNUNC3 | ALL_STAT_HIRES;
+		if((new_all_stat & ALL_STAT_ANNUNC3) == 0) {
+			// AN3 must be 0 to enable dbl-lores or dbl-hires
+			merge_mask |= ALL_STAT_VID80;
+		}
+		if(new_all_stat & ALL_STAT_HIRES) {
+			merge_mask |= ALL_STAT_COLOR_C021 |
+						ALL_STAT_DIS_COLOR_DHIRES;
 		}
 	}
-
-	return((voc_interlace << 16) + (text_color << 12) + (bg_color << 8) +
-		(altchar << 7) + (mode << 4) + (flash_state << 3) +
-		(page << 2) + (color << 1) + dbl);
+	filt_stat = filt_stat | (new_all_stat & merge_mask);
+	return filt_stat;
 }
 
 void
-change_display_mode(double dcycs)
+change_display_mode(dword64 dfcyc)
 {
-	int	line, tmp_line;
+	word32	lines_since_vbl;
 
-	line = ((get_lines_since_vbl(dcycs) + 0xff) >> 8);
-	if(line < 0) {
-		line = 0;
-		halt_printf("Line < 0!\n");
+	lines_since_vbl = get_lines_since_vbl(dfcyc);
+	video_add_new_all_stat(dfcyc, lines_since_vbl);
+
+}
+
+void
+video_add_new_all_stat(dword64 dfcyc, word32 lines_since_vbl)
+{
+	word32	my_start, first_start, prev_lines_since_vbl;
+	int	pos, prev;
+
+	pos = g_video_all_stat_pos;
+	my_start = lines_since_vbl & 0x1ff00;
+	first_start = my_start + 24;
+	if(lines_since_vbl >= (200 << 8)) {
+		return;			// In VBL, don't log this
 	}
-	tmp_line = MY_MIN(199, line);
-
+	if(pos && (lines_since_vbl < first_start)) {
+		prev = pos - 1;
+		prev_lines_since_vbl = g_video_all_stat[prev].lines_since_vbl;
+		// If the previous toggle has the same line, and it is before
+		//  offset 24, then ignore it and overwrite it
+		if((my_start <= prev_lines_since_vbl) &&
+					(prev_lines_since_vbl < first_start)) {
+			// needless toggling during HBL, just toss earlier
+			pos = prev;
+		}
+	}
+	g_video_all_stat[pos].lines_since_vbl = lines_since_vbl;
+	g_video_all_stat[pos].cur_all_stat = g_cur_a2_stat;
 	if(!g_halt_sim || g_config_control_panel) {
-		dbg_log_info(dcycs,
-			((word32)g_cur_a2_stat << 12) | (line & 0xfff), 0,
-									0x102);
+		dbg_log_info(dfcyc, g_cur_a2_stat, lines_since_vbl,
+							(pos << 16) | 0x102);
 	}
-
-	video_update_all_stat_through_line(tmp_line);
-
-	if(line < 200) {
-		g_a2_new_all_stat[line] = g_cur_a2_stat;
+	pos++;
+	if(pos >= MAX_VIDEO_ALL_STAT) {
+		pos--;
 	}
-	/* otherwise, g_cur_a2_stat is covered at the end of vbl */
+	g_video_all_stat_pos = pos;
 }
-
-void
-video_update_all_stat_through_line(int line)
-{
-	int	start_line;
-	int	prev_stat;
-	int	max_line;
-	int	i;
-
-	start_line = g_new_a2_stat_cur_line;
-	prev_stat = g_a2_new_all_stat[start_line];
-
-	max_line = MY_MIN(199, line);
-
-	for(i = start_line + 1; i <= max_line; i++) {
-		g_a2_new_all_stat[i] = prev_stat;
-	}
-	g_new_a2_stat_cur_line = max_line;
-}
-
 
 #define MAX_BORDER_CHANGES	16384
 
 STRUCT(Border_changes) {
-	float	fcycs;
+	word32	usec;
 	int	val;
 };
 
@@ -729,12 +742,12 @@ Border_changes g_border_changes[MAX_BORDER_CHANGES];
 int	g_num_border_changes = 0;
 
 void
-change_border_color(double dcycs, int val)
+change_border_color(dword64 dfcyc, int val)
 {
 	int	pos;
 
 	pos = g_num_border_changes;
-	g_border_changes[pos].fcycs = dcycs - g_last_vbl_dcycs;
+	g_border_changes[pos].usec = (word32)((dfcyc - g_last_vbl_dfcyc) >> 16);
 	g_border_changes[pos].val = val;
 
 	pos++;
@@ -749,14 +762,10 @@ change_border_color(double dcycs, int val)
 void
 update_border_info()
 {
-	double	dlines_per_dcyc;
-	double	dcycs, dline, dcyc_line_start;
-	int	offset;
-	int	new_line_offset, last_line_offset;
-	int	new_line;
-	int	new_val;
-	int	limit;
-	int	color_now;
+	dword64	drecip_usec, dline;
+	word32	usec;
+	int	offset, new_line_offset, last_line_offset, new_line, new_val;
+	int	limit, color_now;
 	int	i;
 
 	/* to get this routine to redraw the border, change */
@@ -765,21 +774,20 @@ update_border_info()
 
 	color_now = g_vbl_border_color;
 
-	dlines_per_dcyc = (double)(1.0 / 65.0);
+	drecip_usec = (65536LL * 65536LL) / 65;
 	limit = g_num_border_changes;
 	if(g_border_last_vbl_changes || limit || g_border_reparse) {
 		/* add a dummy entry */
-		g_border_changes[limit].fcycs = DCYCS_IN_16MS + 21.0;
+		g_border_changes[limit].usec = CYCLES_IN_16MS_RAW + 21;
 		g_border_changes[limit].val = (g_c034_val & 0xf);
 		limit++;
 	}
-	last_line_offset = ((word32)-1 << 8) + 44;
+	last_line_offset = (((word32)-1L) << 8) + 44;
 	for(i = 0; i < limit; i++) {
-		dcycs = g_border_changes[i].fcycs;
-		dline = dcycs * dlines_per_dcyc;
-		new_line = (int)dline;
-		dcyc_line_start = (double)new_line * 65.0;
-		offset = ((int)(dcycs - dcyc_line_start)) & 0xff;
+		usec = g_border_changes[i].usec;
+		dline = usec * drecip_usec;
+		new_line = dline >> 32;
+		offset = ((dword64)(word32)dline * 65ULL) >> 32;
 
 		/* here comes the tricky part */
 		/* offset is from 0 to 65, where 0-3 is the right border of */
@@ -840,7 +848,8 @@ update_border_info()
 void
 update_border_line(int st_line_offset, int end_line_offset, int color)
 {
-	int	st_offset, end_offset, left, right, width, mode, line;
+	word32	filt_stat;
+	int	st_offset, end_offset, left, right, width, line;
 
 	line = st_line_offset >> 8;
 	if(line != (end_line_offset >> 8)) {
@@ -888,9 +897,9 @@ update_border_line(int st_line_offset, int end_line_offset, int color)
 		}
 		if((st_offset < 48) && (end_offset >= 44)) {
 			/* right side */
-			mode = (g_a2_line_stat[line] >> 4) & 7;
+			filt_stat = g_a2_filt_stat[line];
 			width = BORDER_WIDTH;
-			if(mode != MODE_SUPER_HIRES) {
+			if((filt_stat & ALL_STAT_SUPER_HIRES) == 0) {
 				width += 80;
 			}
 			left = MY_MAX(0, st_offset - 44);
@@ -906,8 +915,8 @@ update_border_line(int st_line_offset, int end_line_offset, int color)
 	}
 
 	if((line >= 192) && (line < 200)) {
-		mode = (g_a2_line_stat[line] >> 4) & 7;
-		if((mode == MODE_BORDER) && (st_offset < 44) &&
+		filt_stat = g_a2_filt_stat[line];
+		if((filt_stat & ALL_STAT_BORDER) && (st_offset < 44) &&
 							(end_offset > 4)) {
 			left = MY_MAX(0, st_offset - 4);
 			right = MY_MIN(40, end_offset - 4);
@@ -984,72 +993,73 @@ video_border_pixel_write(Kimage *kimage_ptr, int starty, int num_lines,
 	}
 }
 
+word32
+video_get_ch_mask(word32 mem_ptr, word32 filt_stat, int reparse)
+{
+	word32	ch_mask, mask;
+	int	shift;
 
-#define CH_SETUP_A2_VID(mem_ptr, ch_mask, reparse, do_clear, is_dbl)	\
-	ch_ptr = &(g_slow_mem_changed[mem_ptr >> CHANGE_SHIFT]);	\
-	bits_per_line = 40 >> SHIFT_PER_CHANGE;				\
-	ch_shift_amount = (mem_ptr >> SHIFT_PER_CHANGE) & 0x1f;		\
-	mask_per_line = (1U << bits_per_line) - 1;			\
-	mask_per_line = mask_per_line << ch_shift_amount;		\
-	ch_mask = *ch_ptr & mask_per_line;				\
-	if(do_clear) {							\
-		*ch_ptr = *ch_ptr & (~ch_mask);				\
-	}								\
-	if(is_dbl) {							\
-		ch_mask |= (ch_ptr[0x10000 >> CHANGE_SHIFT] & mask_per_line); \
-		if(do_clear) {						\
-			ch_ptr[0x10000 >> CHANGE_SHIFT] &= (~ch_mask);	\
-		}							\
-	}								\
-	ch_mask = ch_mask >> ch_shift_amount;				\
-									\
-	if(reparse) {							\
-		ch_mask = (1U << bits_per_line) - 1;			\
+	if(reparse) {
+		return (word32)-1;
 	}
+	shift = (mem_ptr >> SHIFT_PER_CHANGE) & 0x1f;
+	mask = (1 << (40 >> SHIFT_PER_CHANGE)) - 1;
+	ch_mask = g_slow_mem_changed[mem_ptr >> CHANGE_SHIFT] |
+			g_slow_mem_ch2[mem_ptr >> CHANGE_SHIFT];
+	if(filt_stat & ALL_STAT_VID80) {
+		mem_ptr += 0x10000;
+		ch_mask |= (g_slow_mem_changed[mem_ptr >> CHANGE_SHIFT]);
+		ch_mask |= (g_slow_mem_ch2[mem_ptr >> CHANGE_SHIFT]);
+	}
+	ch_mask = (ch_mask >> shift) & mask;
 
-#define CH_LOOP_A2_VID(ch_mask, ch_tmp)					\
-		ch_tmp = ch_mask & 1;					\
-		ch_mask = ch_mask >> 1;					\
-		if(!ch_tmp) {						\
-			continue;					\
-		}
+	return ch_mask;
+}
 
 void
-redraw_changed_text(int start_offset, int start_line, int reparse,
-	word32 *in_wptr, int altcharset, word32 bg_pixel,
-	word32 fg_pixel, int pixels_per_line, int dbl)
+video_update_edges(int line, int left, int right, const char *str)
+{
+	g_a2_line_left_edge[line] = MY_MIN(left, g_a2_line_left_edge[line]);
+	g_a2_line_right_edge[line] = MY_MAX(right, g_a2_line_right_edge[line]);
+
+	if((left < 0) || (right < 0) || (left > 640) || (right > 640)) {
+		printf("video_update_edges: %s: line %d: %d (left) >= %d "
+			"(right)\n", str, line, left, right);
+	}
+}
+
+void
+redraw_changed_text(word32 line_bytes, int reparse, word32 *in_wptr,
+				int pixels_per_line, word32 filt_stat)
 {
 	byte	str_buf[81];
-	word32	*ch_ptr;
 	byte	*slow_mem_ptr;
-	word32	ch_mask, line_mask, mask_per_line, mem_ptr, val0, val1;
-	int	flash_state, y, bits_per_line, ch_shift_amount, st_line_mod8;
+	word32	ch_mask, line_mask, mem_ptr, val0, val1, bg_pixel, fg_pixel;
+	int	flash_state, y, bg_color, fg_color, start_line;
 	int	x1, x2;
 
-	// Redraws a single line, will be called 8 lines to finish one byte.
-	//  To handle g_slow_mem_changed[], clear it on line 0, and then use
-	//  g_a2_8line_changes[y] to remember changes to draw on lines 1-7
-	// This handles the case where the data changed when line 1 was drawn,
-	//  we need to leave slow_mem_changed[] set so we re-parse line 0 on
-	//  the next screen redraw
+	// Redraws a single line, will be called over 8 lines to finish a byte.
 
-	st_line_mod8 = start_line & 7;
+	start_line = line_bytes >> 16;
+	bg_color = (filt_stat >> BIT_ALL_STAT_BG_COLOR) & 0xf;
+	fg_color = (filt_stat >> BIT_ALL_STAT_TEXT_COLOR) & 0xf;
+	bg_pixel = g_a2palette_1624[bg_color];
+	fg_pixel = g_a2palette_1624[fg_color];
 
 	y = start_line >> 3;
 	line_mask = 1 << y;
-	mem_ptr = 0x400 + g_screen_index[y] + start_offset;
+	mem_ptr = 0x400 + g_screen_index[y];
+	if(filt_stat & ALL_STAT_PAGE2) {
+		mem_ptr += 0x400;
+	}
 	if((mem_ptr < 0x400) || (mem_ptr >= 0xc00)) {
-		halt_printf("redraw_changed_text: mem_ptr: %08x, y:%d, "
-			"start_offset:%04x\n", mem_ptr, y, start_offset);
+		halt_printf("redraw_changed_text: mem_ptr: %08x, y:%d\n",
+								mem_ptr, y);
 		return;
 	}
 
-	CH_SETUP_A2_VID(mem_ptr, ch_mask, reparse, (st_line_mod8 == 0), dbl);
-	/* avoid clearing changed bits unless we are line 0 (mod 8) */
-
-	ch_mask |= g_a2_8line_changes[y];
-	g_a2_8line_changes[y] |= ch_mask;
-	if(ch_mask == 0) {
+	ch_mask = video_get_ch_mask(mem_ptr, filt_stat, reparse);
+	if(!ch_mask) {
 		return;
 	}
 
@@ -1064,7 +1074,7 @@ redraw_changed_text(int start_offset, int start_line, int reparse,
 	for(x1 = 0; x1 < 40; x1++) {
 		val0 = slow_mem_ptr[0x10000];
 		val1 = *slow_mem_ptr++;
-		if(!altcharset) {
+		if(!(filt_stat & ALL_STAT_ALTCHARSET)) {
 			if((val0 >= 0x40) && (val0 < 0x80)) {
 				val0 += flash_state;
 			}
@@ -1072,42 +1082,48 @@ redraw_changed_text(int start_offset, int start_line, int reparse,
 				val1 += flash_state;
 			}
 		}
-		if(dbl) {
+		if(filt_stat & ALL_STAT_VID80) {
 			str_buf[x2++] = val0;		// aux mem
 		}
 		str_buf[x2++] = val1;			// main mem
 	}
 	str_buf[x2] = 0;				// null terminate
 
-	redraw_changed_string(&str_buf[0], start_line, ch_mask, in_wptr,
-		bg_pixel, fg_pixel, pixels_per_line, dbl);
+	redraw_changed_string(&str_buf[0], line_bytes, ch_mask, in_wptr,
+		bg_pixel, fg_pixel, pixels_per_line,
+		(filt_stat & ALL_STAT_VID80));
 }
 
 void
-redraw_changed_string(const byte *bptr, int start_line, word32 ch_mask,
+redraw_changed_string(const byte *bptr, word32 line_bytes, word32 ch_mask,
 	word32 *in_wptr, word32 bg_pixel,
 	word32 fg_pixel, int pixels_per_line, int dbl)
 {
 	register word32 start_time, end_time;
 	word32	*wptr;
-	word32	val0, val1, val2, val3, pixel, ch_tmp;
-	int	shift_per, left, right, st_line_mod8, offset, pos;
-	int	x1, x2, j;
+	word32	val0, val1, val2, val3, pixel;
+	int	left, right, st_line_mod8, offset, pos, shift, start_line;
+	int	start_byte, end_byte;
+	int	x1, j;
 
 	left = 40;
 	right = 0;
 
 	GET_ITIMER(start_time);
 
-	shift_per = (1 << SHIFT_PER_CHANGE);
+	start_line = line_bytes >> 16;
+	start_byte = line_bytes & 0x3f;
+	end_byte = (line_bytes >> 8) & 0x3f;
 	st_line_mod8 = start_line & 7;
 
-	for(x1 = 0; x1 < 40; x1 += shift_per) {
-
-		CH_LOOP_A2_VID(ch_mask, ch_tmp);
+	for(x1 = start_byte; x1 < end_byte; x1++) {
+		shift = x1 >> SHIFT_PER_CHANGE;
+		if(((ch_mask >> shift) & 1) == 0) {
+			continue;
+		}
 
 		left = MY_MIN(x1, left);
-		right = MY_MAX(x1 + shift_per, right);
+		right = MY_MAX(x1 + 1, right);
 		offset = (start_line * 2 * pixels_per_line) + x1*14;
 		pos = x1;
 		if(dbl) {
@@ -1116,162 +1132,189 @@ redraw_changed_string(const byte *bptr, int start_line, word32 ch_mask,
 
 		wptr = in_wptr + offset;
 
-		for(x2 = 0; x2 < shift_per; x2++) {
-			val0 = bptr[pos];
-			if(dbl) {
-				pos++;
-			}
-			val1 = bptr[pos++];
-			val2 = g_a2font_bits[val0][st_line_mod8];
-			val3 = g_a2font_bits[val1][st_line_mod8];
+		val0 = bptr[pos];
+		if(dbl) {
+			pos++;
+		}
+		val1 = bptr[pos++];
+		val2 = g_a2font_bits[val0][st_line_mod8];
+		val3 = g_a2font_bits[val1][st_line_mod8];
 			// val2, [6:0] is 80-column character bits, and
 			//  [21:8] are the 40-column char bits (double-wide)
-			if(dbl) {
-				val2 = (val3 << 7) | (val2 & 0x7f);
-			} else {
-				val2 = val3 >> 8;	// 40-column format
+		if(dbl) {
+			val2 = (val3 << 7) | (val2 & 0x7f);
+		} else {
+			val2 = val3 >> 8;	// 40-column format
+		}
+		for(j = 0; j < 14; j++) {
+			pixel = bg_pixel;
+			if(val2 & 1) {		// LSB is first pixel
+				pixel = fg_pixel;
 			}
-			for(j = 0; j < 14; j++) {
-				pixel = bg_pixel;
-				if(val2 & 1) {		// LSB is first pixel
-					pixel = fg_pixel;
-				}
-				wptr[pixels_per_line] = pixel;
-				*wptr++ = pixel;
-				val2 = val2 >> 1;
-			}
+			wptr[pixels_per_line] = pixel;
+			*wptr++ = pixel;
+			val2 = val2 >> 1;
 		}
 	}
 	GET_ITIMER(end_time);
 	if(start_line < 200) {
-		g_a2_line_left_edge[start_line] = (left*14);
-		g_a2_line_right_edge[start_line] = (right*14);
+		video_update_edges(start_line, left * 14, right * 14, "text");
 	}
 
 	if((left >= right) || (left < 0) || (right < 0)) {
-		printf("line %d, 40: left >= right: %d >= %d\n",
+		printf("str line %d, 40: left >= right: %d >= %d\n",
 			start_line, left, right);
+		printf(" line_bytes:%08x ch_mask:%08x\n", line_bytes, ch_mask);
 	}
 
 	g_cycs_in_40col += (end_time - start_time);
 }
 
-void
-redraw_changed_gr(int start_offset, int start_line, int reparse,
-	word32 *in_wptr, int pixels_per_line, int dbl)
-{
-	word32	*ch_ptr, *wptr;
-	byte	*slow_mem_ptr;
-	word32	ch_mask, ch_tmp, line_mask, mask_per_line, mem_ptr, val0, val1;
-	word32	pixel0, pixel1;
-	int	y, bits_per_line, shift_per, ch_shift_amount;
-	int	left, right, st_line_mod8, st_line, offset;
-	int	x1, x2, i, j;
+// gr with an3=0:
+// 0=0
+// 1,0=3 (purple). 1,1=0
+// 2,0=c (green). 2,1=0
+// 3,0=f (white). 3,1=0
+// 4,0=0. 4,1=c (green)
+// 5,0=3 (purple). 5,1=c (green)
+// 6,0=c (green). 6,1=c (green)
+// 7,0=f (white). 7,1=c (green)
+// 8,0=0 (black). 7,1=3 (purple)
+// 9,0=3 (purple). 9,1=3 (purple)
+// a,0=c (green). a,1=3 (purple)
+// b,0=f (white). b,1=3 (purple)
+// c,0=0 (black). c,1=f (white)
+// d,0=3 (purple). d,1=f (white)
+// e,0=c (green). e,1=f (white)
+// f,0=f (white). e,1=f (white)
 
+void
+redraw_changed_gr(word32 line_bytes, int reparse, word32 *in_wptr,
+				int pixels_per_line, word32 filt_stat)
+{
+	word32	*wptr;
+	byte	*slow_mem_ptr;
+	word32	line_mask, mem_ptr, val0, val1, pixel0, pixel1, ch_mask;
+	int	y, shift, left, right, st_line_mod8, start_line, offset;
+	int	start_byte, end_byte;
+	int	x1, i;
+
+	start_line = line_bytes >> 16;
 	st_line_mod8 = start_line & 7;
-	st_line = start_line;
 
 	y = start_line >> 3;
 	line_mask = 1 << (y);
-	mem_ptr = 0x400 + g_screen_index[y] + start_offset;
+	mem_ptr = 0x400 + g_screen_index[y];
+	if(filt_stat & ALL_STAT_PAGE2) {
+		mem_ptr += 0x400;
+	}
 	if((mem_ptr < 0x400) || (mem_ptr >= 0xc00)) {
-		halt_printf("redraw_changed_gr: mem_ptr: %08x, y:%d, "
-			"start_offset:%04x\n", mem_ptr, y, start_offset);
+		halt_printf("redraw_changed_gr: mem_ptr: %08x, y:%d\n",
+							mem_ptr, y);
 		return;
 	}
 
-	CH_SETUP_A2_VID(mem_ptr, ch_mask, reparse, (st_line_mod8 == 0), dbl);
-	/* avoid clearing changed bits unless we are line 0 (mod 8) */
-
-	ch_mask |= g_a2_8line_changes[y];
-	g_a2_8line_changes[y] |= ch_mask;
-	if(ch_mask == 0) {
+	ch_mask = video_get_ch_mask(mem_ptr, filt_stat, reparse);
+	if(!ch_mask) {
 		return;
 	}
-
-	shift_per = (1 << SHIFT_PER_CHANGE);
 
 	g_a2_screen_buffer_changed |= line_mask;
 
 	left = 40;
 	right = 0;
 
-	for(x1 = 0; x1 < 40; x1 += shift_per) {
-
-		CH_LOOP_A2_VID(ch_mask, ch_tmp);
+	slow_mem_ptr = &(g_slow_memory_ptr[mem_ptr]);
+	offset = (start_line * 2 * pixels_per_line);
+	start_byte = line_bytes & 0x3f;
+	end_byte = (line_bytes >> 8) & 0x3f;
+	for(x1 = start_byte; x1 < end_byte; x1++) {
+		shift = x1 >> SHIFT_PER_CHANGE;
+		if(((ch_mask >> shift) & 1) == 0) {
+			continue;
+		}
 
 		left = MY_MIN(x1, left);
-		right = MY_MAX(x1 + shift_per, right);
-		slow_mem_ptr = &(g_slow_memory_ptr[mem_ptr + x1]);
-		offset = (st_line * 2 * pixels_per_line) + x1*14;
+		right = MY_MAX(x1 + 1, right);
 
-		wptr = in_wptr + offset;
+		wptr = in_wptr + offset + x1*14;
 
-		for(x2 = 0; x2 < shift_per; x2++) {
-			val0 = slow_mem_ptr[0x10000];
-			val1 = *slow_mem_ptr++;
+		val0 = slow_mem_ptr[0x10000 + x1];
+		val1 = slow_mem_ptr[x1];
 
-			if(st_line_mod8 >= 4) {
-				val0 = val0 >> 4;
-				val1 = val1 >> 4;
-			}
-			if(dbl) {	// aux pixel is { [2:0],[3] }
-				val0 = (val0 << 1) | ((val0 >> 3) & 1);
+		if(st_line_mod8 >= 4) {
+			val0 = val0 >> 4;
+			val1 = val1 >> 4;
+		}
+		if(filt_stat & ALL_STAT_VID80) {
+			// aux pixel is { [2:0],[3] }
+			val0 = (val0 << 1) | ((val0 >> 3) & 1);
+		} else if((filt_stat & ALL_STAT_ANNUNC3) == 0) {
+			if(x1 & 1) {			// odd cols
+				val0 = ((val1 >> 1) & 2) | ((val1 >> 3) & 1);
 			} else {
-				val0 = val1;
+				val0 = val1 & 3;	// even cols
 			}
-			pixel0 = g_a2palette_1624[val0 & 0xf];
-			pixel1 = g_a2palette_1624[val1 & 0xf];
-			for(i = 0; i < 2; i++) {
-				if(i) {
-					pixel0 = pixel1;
-				}
-				for(j = 0; j < 7; j++) {
-					wptr[pixels_per_line] = pixel0;
-					*wptr++ = pixel0;
-				}
+			// map val0: 0->0, 1->3, 2->c, 3->f
+			val1 = 0;
+			if(val0 & 1) {
+				val1 |= 3;
 			}
+			if(val0 & 2) {
+				val1 |= 0xc;
+			}
+			val0 = val1;
+		} else {
+			val0 = val1;
+		}
+		pixel0 = g_a2palette_1624[val0 & 0xf];
+		pixel1 = g_a2palette_1624[val1 & 0xf];
+		for(i = 0; i < 7; i++) {
+			wptr[pixels_per_line] = pixel0;
+			wptr[pixels_per_line + 7] = pixel1;
+			wptr[0] = pixel0;
+			wptr[7] = pixel1;
+			wptr++;
 		}
 	}
-	g_a2_line_left_edge[st_line] = (left*14);
-	g_a2_line_right_edge[st_line] = (right*14);
 
-	if((left >= right) || (left < 0) || (right < 0)) {
-		printf("line %d, 40: left >= right: %d >= %d\n",
-			start_line, left, right);
-	}
+	video_update_edges(start_line, left * 14, right * 14, "gr");
 }
 
 void
-video_hgr_line_segment(byte *slow_mem_ptr, word32 *wptr, int x1,
-		int monochrome, int dbl, int pixels_per_line)
+video_hgr_line_segment(byte *slow_mem_ptr, word32 *wptr, int start_byte,
+		int end_byte, int pixels_per_line, word32 filt_stat)
 {
 	word32	val0, val1, val2, prev_bits, val1_hi, dbl_step, pixel, color;
-	int	shift_per, shift;
+	word32	monochrome;
+	int	shift;
 	int	x2, i;
 
-	shift_per = (1 << SHIFT_PER_CHANGE);
+	monochrome = filt_stat & (ALL_STAT_COLOR_C021 |
+						ALL_STAT_DIS_COLOR_DHIRES);
 
 	prev_bits = 0;
-	if(x1) {
+	if(start_byte) {
 		prev_bits = (slow_mem_ptr[-1] >> 3) & 0xf;
-		if(!dbl) {		// prev_bits is 4 bits, widen to 8
+		if(!(filt_stat & ALL_STAT_VID80)) {
+			// prev_bits is 4 bits, widen to 8 for std HGR
 			prev_bits = g_pixels_widened[prev_bits] >> 4;
 		}
 		prev_bits = prev_bits & 0xf;
 	}
-	for(x2 = 0; x2 < shift_per; x2++) {
+	for(x2 = start_byte; x2 < end_byte; x2++) {
 		val0 = slow_mem_ptr[0x10000];
 		val1 = *slow_mem_ptr++;
 		val2 = slow_mem_ptr[0x10000];	// next pixel, aux mem
-		if((x1 + x2) >= 39) {
+		if(x2 >= 39) {
 			val2 = 0;
 		}
 		val1_hi = ((val1 >> 5) & 4) | ((x2 & 1) << 1);
 			// Hi-order bit in bit 2, odd pixel is in bit 0
 
 		dbl_step = 3;
-		if(dbl) { // aux+1[6:0], main[6:0], aux[6:0], prev[3:0]
+		if(filt_stat & ALL_STAT_VID80) {
+			// aux+1[6:0], main[6:0], aux[6:0], prev[3:0]
 			val0 = (val2 << 18) | ((val1 & 0x7f) << 11) |
 							((val0 & 0x7f) << 4);
 			if(!monochrome && (x2 & 1)) {	// Get 6 bits from prev
@@ -1283,7 +1326,13 @@ video_hgr_line_segment(byte *slow_mem_ptr, word32 *wptr, int x1,
 			val0 = g_pixels_widened[val1 & 0x7f] << 4;
 		} else {			// color, normal hgr
 			val2 = g_pixels_widened[*slow_mem_ptr & 0x7f];
+			if(x2 >= 39) {
+				val2 = 0;
+			}
 			val0 = ((val1 & 0x7f) << 4) | prev_bits | (val2 << 11);
+			if((filt_stat & ALL_STAT_ANNUNC3) == 0) {
+				val1_hi = val1_hi & 3;
+			}
 		}
 #if 0
 		if(st_line < 8) {
@@ -1299,7 +1348,7 @@ video_hgr_line_segment(byte *slow_mem_ptr, word32 *wptr, int x1,
 				}
 				val0 = val0 >> 1;
 			} else {			// color
-				if(dbl) {
+				if(filt_stat & ALL_STAT_VID80) {
 					color = g_dhires_convert[val0 & 0xfff];
 					shift = (x2 + x2 + i) & 3;
 					color = color >> (4 * shift);
@@ -1318,7 +1367,7 @@ video_hgr_line_segment(byte *slow_mem_ptr, word32 *wptr, int x1,
 			wptr[pixels_per_line] = pixel;
 			*wptr++ = pixel;
 		}
-		if(dbl && ((x2 & 1) == 0)) {
+		if((filt_stat & ALL_STAT_VID80) && ((x2 & 1) == 0)) {
 			prev_bits = val0 & 0x3f;
 		} else {
 			prev_bits = val0 & 0xf;
@@ -1327,68 +1376,59 @@ video_hgr_line_segment(byte *slow_mem_ptr, word32 *wptr, int x1,
 }
 
 void
-redraw_changed_hgr(int start_offset, int start_line, int reparse,
-	word32 *in_wptr, int pixels_per_line, int monochrome,
-	int dbl)
+redraw_changed_hgr(word32 line_bytes, int reparse,
+	word32 *in_wptr, int pixels_per_line, word32 filt_stat)
 {
-	word32	*ch_ptr, *wptr;
+	word32	*wptr;
 	byte	*slow_mem_ptr;
-	word32	ch_mask, ch_tmp, line_mask, mask_per_line, mem_ptr;
-	int	y, bits_per_line, shift_per, ch_shift_amount;
-	int	left, right, st_line_mod8, st_line, offset;
+	word32	ch_mask, line_mask, mem_ptr;
+	int	y, shift, st_line_mod8, start_line, offset, start_byte;
+	int	end_byte;
 	int	x1;
 
-	st_line_mod8 = start_line & 7;
-	st_line = start_line;
+	start_line = line_bytes >> 16;
+	start_byte = line_bytes & 0x3f;
+	end_byte = (line_bytes >> 8) & 0x3f;	// Usually '40'
 
 	y = start_line >> 3;
-	line_mask = 1 << (y);
-	mem_ptr = 0x2000 + g_screen_index[y] + start_offset +
-						(st_line_mod8 * 0x400);
+	st_line_mod8 = start_line & 7;
+	line_mask = 1 << y;
+	mem_ptr = 0x2000 + g_screen_index[y] + (st_line_mod8 * 0x400);
+	if(filt_stat & ALL_STAT_PAGE2) {
+		mem_ptr += 0x2000;
+	}
 	if((mem_ptr < 0x2000) || (mem_ptr >= 0x6000)) {
-		halt_printf("redraw_changed_hgr: mem_ptr: %08x, y:%d, "
-			"start_offset:%04x\n", mem_ptr, y, start_offset);
+		halt_printf("redraw_changed_hgr: mem_ptr: %08x, y:%d\n",
+								mem_ptr, y);
 		return;
 	}
 
-	CH_SETUP_A2_VID(mem_ptr, ch_mask, reparse, 1, dbl);
-	/* avoid clearing changed bits unless we are line 0 (mod 8) */
-
-	ch_mask |= g_a2_8line_changes[y];
-	g_a2_8line_changes[y] |= ch_mask;
+	ch_mask = video_get_ch_mask(mem_ptr, filt_stat, reparse);
 	if(ch_mask == 0) {
 		return;
 	}
+
 	// Hires depends on adjacent bits, so also reparse adjacent regions
 	//  to handle redrawing of pixels on the boundaries
 	ch_mask = ch_mask | (ch_mask >> 1) | (ch_mask << 1);
 
-	shift_per = (1 << SHIFT_PER_CHANGE);
-
 	g_a2_screen_buffer_changed |= line_mask;
 
-	left = 40;
-	right = 0;
+	for(x1 = start_byte; x1 < end_byte; x1++) {
+		shift = x1 >> SHIFT_PER_CHANGE;
+		if(((ch_mask >> shift) & 1) == 0) {
+			continue;
+		}
 
-	for(x1 = 0; x1 < 40; x1 += shift_per) {
-
-		CH_LOOP_A2_VID(ch_mask, ch_tmp);
-
-		left = MY_MIN(x1, left);
-		right = MY_MAX(x1 + shift_per, right);
 		slow_mem_ptr = &(g_slow_memory_ptr[mem_ptr + x1]);
-		offset = (st_line * 2 * pixels_per_line) + x1*14;
+		offset = (start_line * 2 * pixels_per_line) + x1*14;
 
 		wptr = in_wptr + offset;
-		video_hgr_line_segment(slow_mem_ptr, wptr, x1, monochrome,
-							dbl, pixels_per_line);
-	}
-	g_a2_line_left_edge[st_line] = (left*14);
-	g_a2_line_right_edge[st_line] = (right*14);
+		video_hgr_line_segment(slow_mem_ptr, wptr, x1, end_byte,
+				pixels_per_line, filt_stat);
 
-	if((left >= right) || (left < 0) || (right < 0)) {
-		printf("line %d, 40: left >= right: %d >= %d\n",
-			start_line, left, right);
+		video_update_edges(start_line, x1 * 14, end_byte * 14, "hgr");
+		break;
 	}
 }
 
@@ -1396,24 +1436,16 @@ int
 video_rebuild_super_hires_palette(int bank, word32 scan_info, int line,
 								int reparse)
 {
-	word32	*word_ptr, *ch_ptr;
+	word32	*word_ptr;
 	byte	*byte_ptr;
-	word32	ch_mask, mask_per_line, scan, old_scan, val0, val1;
-	int	bits_per_line, diffs, ch_bit_offset, ch_word_offset, palette;
+	word32	ch_mask, mem_ptr, scan, old_scan, val0, val1;
+	int	diffs, palette;
 	int	j;
 
 	palette = scan_info & 0xf;
 
-	ch_ptr = &(g_slow_mem_changed[((bank << 16) + 0x9e00) >> CHANGE_SHIFT]);
-	ch_bit_offset = (palette << 5) >> SHIFT_PER_CHANGE;
-	ch_word_offset = ch_bit_offset >> 5;
-	ch_bit_offset = ch_bit_offset & 0x1f;
-	bits_per_line = (0x20 >> SHIFT_PER_CHANGE);
-	mask_per_line = (1 << bits_per_line) - 1;
-	mask_per_line = mask_per_line << ch_bit_offset;
-
-	ch_mask = ch_ptr[ch_word_offset] & mask_per_line;
-	ch_ptr[ch_word_offset] &= (~mask_per_line);	/* clear the bits */
+	mem_ptr = (bank << 16) + 0x9e00 + (palette * 0x20);
+	ch_mask = video_get_ch_mask(mem_ptr, 0, 0);
 
 	old_scan = g_superhires_scan_save[bank][line];
 	scan = (scan_info & 0xfaf) +
@@ -1446,7 +1478,8 @@ video_rebuild_super_hires_palette(int bank, word32 scan_info, int line,
 		g_palette_change_cnt[bank][palette]++;
 	}
 
-	word_ptr = (word32 *)&(g_slow_memory_ptr[0x19e00 + palette*0x20]);
+	word_ptr = (word32 *)&(g_slow_memory_ptr[(bank << 16) + 0x9e00 +
+							palette*0x20]);
 	for(j = 0; j < 8; j++) {
 		if(word_ptr[j] != g_saved_line_palettes[bank][line][j]) {
 			diffs = 1;
@@ -1481,8 +1514,8 @@ redraw_changed_super_hires_oneline(int bank, word32 *in_wptr,
 {
 	word32	*palptr, *wptr;
 	byte	*slow_mem_ptr;
-	word32	mem_ptr, val0, ch_tmp, pal, pix0, pix1, pix2, pix3, save_pix;
-	int	offset, shift_per, left, right;
+	word32	mem_ptr, val0, pal, pix0, pix1, pix2, pix3, save_pix;
+	int	offset, shift_per, left, right, shift;
 	int	x1, x2;
 
 	mem_ptr = (bank << 16) + 0x2000 + (0xa0 * y);
@@ -1500,8 +1533,10 @@ redraw_changed_super_hires_oneline(int bank, word32 *in_wptr,
 	right = 0;
 
 	for(x1 = 0; x1 < 0xa0; x1 += shift_per) {
-
-		CH_LOOP_A2_VID(ch_mask, ch_tmp);
+		shift = x1 >> SHIFT_PER_CHANGE;
+		if(((ch_mask >> shift) & 1) == 0) {
+			continue;
+		}
 
 		left = MY_MIN(x1, left);
 		right = MY_MAX(x1 + shift_per, right);
@@ -1558,49 +1593,25 @@ void
 redraw_changed_super_hires_bank(int bank, int start_line, int reparse,
 					word32 *wptr, int pixels_per_line)
 {
-	word32	*ch_ptr;
-	word32	mask_per_line, check0, check1, mask0, mask1;
-	word32	this_check, tmp, scan, old_scan;
-	int	y, bits_per_line, left, right, st_line, check_bit_pos;
-	int	check_word_off, ret, over_bits;
+	dword64	dval, dval1;
+	word32	this_check, mask, tmp, scan, old_scan, mem_ptr;
+	int	left, right, ret, shift;
 
-	st_line = start_line;
+	mem_ptr = (bank << 16) + 0x2000 + (160 * start_line);
+	dval1 = g_slow_mem_changed[(mem_ptr >> CHANGE_SHIFT) + 1] |
+			g_slow_mem_ch2[(mem_ptr >> CHANGE_SHIFT) + 1];
+	dval = g_slow_mem_changed[mem_ptr >> CHANGE_SHIFT] |
+		g_slow_mem_ch2[mem_ptr >> CHANGE_SHIFT] | (dval1 << 32);
+	shift = (mem_ptr >> SHIFT_PER_CHANGE) & 0x1f;
+	mask = (1 << (160 >> SHIFT_PER_CHANGE)) - 1;
+	this_check = (dval >> shift) & mask;
 
-	ch_ptr = &(g_slow_mem_changed[((bank << 16) + 0x2000) >> CHANGE_SHIFT]);
-	bits_per_line = 160 >> SHIFT_PER_CHANGE;
-	mask_per_line = (1 << bits_per_line) - 1;
+	scan = g_slow_memory_ptr[(bank << 16) + 0x9d00 + start_line];
 
-	if(SHIFT_PER_CHANGE != 3) {
-		halt_printf("SHIFT_PER_CHANGE must be 3!\n");
-		return;
-	}
+	old_scan = g_superhires_scan_save[bank][start_line];
 
-	check0 = 0;
-	check1 = 0;
-	y = st_line;
-	scan = g_slow_memory_ptr[(bank << 16) + 0x9d00 + y];
-	check_bit_pos = bits_per_line * y;
-	check_word_off = check_bit_pos >> 5;	/* 32 bits per word */
-	check_bit_pos = check_bit_pos & 0x1f;	/* 5-bit bit_pos */
-	check0 = ch_ptr[check_word_off];
-	check1 = ch_ptr[check_word_off+1];
-	mask0 = mask_per_line << check_bit_pos;
-	mask1 = 0;
-	this_check = check0 >> check_bit_pos;
-				/* move indicated bit to LSbit position */
-	over_bits = check_bit_pos + bits_per_line - 32;
-	if(over_bits > 0) {
-		mask1 = (1U << over_bits) - 1;
-		this_check |= (check1 << (bits_per_line - over_bits));
-	}
-
-	ch_ptr[check_word_off] = check0 & ~mask0;
-	ch_ptr[check_word_off+1] = check1 & ~mask1;
-
-	this_check = this_check & mask_per_line;
-	old_scan = g_superhires_scan_save[bank][y];
-
-	ret = video_rebuild_super_hires_palette(bank, scan, y, reparse);
+	ret = video_rebuild_super_hires_palette(bank, scan, start_line,
+								reparse);
 	if(ret || reparse || ((scan ^ old_scan) & 0xa0)) {
 					/* 0x80 == mode640, 0x20 = fill */
 		this_check = (word32)-1;
@@ -1619,44 +1630,56 @@ redraw_changed_super_hires_bank(int bank, int start_line, int reparse,
 	}
 
 	g_a2_screen_buffer_changed |= (1 << (start_line >> 3));
-	tmp = redraw_changed_super_hires_oneline(bank, wptr, pixels_per_line, y,
-							scan, this_check);
+	tmp = redraw_changed_super_hires_oneline(bank, wptr, pixels_per_line,
+						start_line, scan, this_check);
 	left = tmp >> 16;
 	right = tmp & 0xffff;
 
-	g_a2_line_left_edge[st_line] = 4*left;
-	g_a2_line_right_edge[st_line] = 4*right;
+	video_update_edges(start_line, left * 4, right * 4, "shr");
+}
 
-	if((left >= right) || (left > 160) || (right > 160)) {
-		printf("line %d, shr left:%d right:%d\n", start_line, left,
-								right);
+void
+redraw_changed_super_hires(word32 line_bytes, int reparse, word32 *wptr,
+				int pixels_per_line, word32 filt_stat)
+{
+	int	bank, start_line;
+
+	start_line = line_bytes >> 16;
+	wptr += start_line * 2 * pixels_per_line;
+
+	if(filt_stat & ALL_STAT_VOC_INTERLACE) {
+		// Do 400 interlaced lines.  Do aux first, then main mem
+		redraw_changed_super_hires_bank(1, start_line, reparse, wptr,
+									0);
+		redraw_changed_super_hires_bank(0, start_line, reparse,
+						wptr + pixels_per_line, 0);
+	} else {
+		bank = 1;
+		if(filt_stat & ALL_STAT_VOC_MAIN) {
+			bank = 0;		// VOC SHR in main memory
+		}
+		redraw_changed_super_hires_bank(bank, start_line, reparse, wptr,
+							pixels_per_line);
 	}
 }
 
 void
-redraw_changed_super_hires(int voc_interlace, int start_line, int reparse,
-					word32 *wptr, int pixels_per_line)
+video_copy_changed2()
 {
-	int	left, right;
+	word32	*ch_ptr, *ch2_ptr;
+	int	bank1_off;
+	int	i;
 
-	wptr += start_line*2*pixels_per_line;
-	if(voc_interlace) {
-		// Do 400 interlaced lines.  Do aux first, then main mem
-		redraw_changed_super_hires_bank(1, start_line, reparse, wptr,
-									0);
-		left = g_a2_line_left_edge[start_line];
-		right = g_a2_line_right_edge[start_line];
-		redraw_changed_super_hires_bank(0, start_line, reparse,
-						wptr + pixels_per_line, 0);
-		if(left < g_a2_line_left_edge[start_line]) {
-			g_a2_line_left_edge[start_line] = left;
-		}
-		if(right > g_a2_line_right_edge[start_line]) {
-			g_a2_line_right_edge[start_line] = right;
-		}
-	} else {
-		redraw_changed_super_hires_bank(1, start_line, reparse, wptr,
-							pixels_per_line);
+	// Copy entries from g_slow_mem_changed[] to g_slow_mem_ch2[] and
+	//  clear g_slow_mem_changed[]
+	ch_ptr = &g_slow_mem_changed[0];
+	ch2_ptr = &g_slow_mem_ch2[0];
+	bank1_off = 0x10000 >> CHANGE_SHIFT;
+	for(i = 4; i < 0xa0; i++) {		// Pages 0x0400 through 0x9fff
+		ch2_ptr[i] = ch_ptr[i];
+		ch2_ptr[i + bank1_off] = ch_ptr[i + bank1_off];
+		ch_ptr[i] = 0;
+		ch_ptr[i + bank1_off] = 0;
 	}
 }
 
@@ -1673,9 +1696,8 @@ video_update_event_line(int line)
 			add_event_vid_upd(new_line);
 		}
 	} else if(line >= 262) {
-		video_update_through_line(0);
 		if(!g_config_control_panel && !g_halt_sim) {
-			add_event_vid_upd(1);	/* add event for new screen */
+			add_event_vid_upd(0);	/* add event for new screen */
 		}
 	}
 }
@@ -1687,10 +1709,8 @@ video_force_reparse()
 	int	height, width_full;
 	int	i, j;
 
-	for(i = 0; i < 200; i++) {
-		g_a2_cur_all_stat[i] = -1;
-		g_a2_line_stat[i] = -1;
-	}
+	g_video_stat_old_pos = 1;
+	g_video_filt_stat_old[0].filt_stat = (word32)-1;
 	height = g_video_act_margin_top + A2_WINDOW_HEIGHT +
 						g_video_act_margin_bottom;
 	height = MY_MIN(height, g_mainwin_kimage.a2_height);
@@ -1709,68 +1729,76 @@ video_update_through_line(int line)
 {
 	register word32 start_time;
 	register word32 end_time;
-	word32	mask, xor_stat;
-	int	last_line, must_reparse, new_all_stat, prev_all_stat, new_stat;
-	int	prev_stat;
+	word32	my_start_lines, my_end_lines, prev_all_stat, next_all_stat;
+	word32	prev_lines_since_vbl, next_lines_since_vbl;
+	int	last_line, pos, last_pos, end, num;
 	int	i;
 
 #if 0
 	vid_printf("\nvideo_upd for line %d, lines: %06x\n", line,
-				get_lines_since_vbl(g_cur_dcycs));
+				get_lines_since_vbl(g_cur_dfcyc));
 #endif
 
 	GET_ITIMER(start_time);
 
-	video_update_all_stat_through_line(line);
-
 	last_line = MY_MIN(200, line+1); /* go through line, but not past 200 */
 
-	new_stat = -2;
-	new_all_stat = -2;
-	must_reparse = 0;
+	pos = g_video_save_all_stat_pos;
+	last_pos = g_video_all_stat_pos;
+	prev_all_stat = g_video_all_stat[pos].cur_all_stat;
+	prev_lines_since_vbl = g_video_all_stat[pos].lines_since_vbl;
+	g_video_all_stat[last_pos].cur_all_stat = g_cur_a2_stat;
+	g_video_all_stat[last_pos].lines_since_vbl = (line + 1) << 8;
+	next_all_stat = g_video_all_stat[pos+1].cur_all_stat;
+	next_lines_since_vbl = g_video_all_stat[pos+1].lines_since_vbl;
 	for(i = g_vid_update_last_line; i < last_line; i++) {
-		prev_all_stat = new_all_stat;
-		prev_stat = new_stat;
-		new_all_stat = g_a2_new_all_stat[i];
-		new_stat = g_a2_line_stat[i];
-		xor_stat = new_all_stat ^ g_a2_cur_all_stat[i];
-		mask = 0;
-		if(xor_stat) {
-			/* regen line_stat for this line */
-			if((xor_stat & ALL_STAT_SUPER_HIRES) &&
-				!(new_all_stat & ALL_STAT_SUPER_HIRES)) {
-				g_border_reparse = 1;	// Redraw right border
-			}
-			g_a2_cur_all_stat[i] = new_all_stat;
-			if((new_all_stat == prev_all_stat) && (i & 31)) {
-				/* save a lookup, not line 160, 192 */
-				new_stat = prev_stat;
-			} else {
-				new_stat = video_all_stat_to_line_stat(i,
-								new_all_stat);
-			}
-			if(new_stat != g_a2_line_stat[i]) {
-				/* status changed */
-				g_a2_line_stat[i] = new_stat;
-				must_reparse = 1;
-				mask = 1 << (i >> 3);
-				g_full_refresh_needed |= mask;
-				g_a2_screen_buffer_changed |= mask;
-			}
+		// We need to step through pos in g_video_all_stat[] and find
+		//  the start/end pairs for each line
+		g_a2_line_left_edge[i] = 640;
+		g_a2_line_right_edge[i] = 0;
+		my_start_lines = (i << 8) + 25;
+		my_end_lines = (i << 8) + 65;
+		if(prev_lines_since_vbl > my_start_lines) {
+			printf("prev:%08x > %08x start at i:%d\n",
+				prev_lines_since_vbl, my_start_lines, i);
 		}
-
-#if 0
-		if(i == 10) {
-			printf("Refresh line 10 new_stat:%08x prev_stat:%08x, "
-				"must_reparse:%d\n", new_stat, prev_stat,
-				must_reparse);
+		while(my_start_lines < my_end_lines) {
+			while(next_lines_since_vbl <= my_start_lines) {
+				// Step into next entry
+				prev_all_stat = next_all_stat;
+				prev_lines_since_vbl = next_lines_since_vbl;
+				pos++;
+				g_video_save_all_stat_pos = pos;
+				next_all_stat =
+					g_video_all_stat[pos+1].cur_all_stat;
+				next_lines_since_vbl =
+					g_video_all_stat[pos+1].lines_since_vbl;
+				if(pos >= last_pos) {
+					printf("FELL OFF %d %d!\n", pos,
+								last_pos);
+					pos--;
+					break;
+				}
+			}
+			end = 65;
+			if(next_lines_since_vbl < my_end_lines) {
+				end = (next_lines_since_vbl & 0xff);
+				if(end < 25) {
+					printf("i:%d next_lines_since_vbl:"
+						"%08x!\n", i,
+						next_lines_since_vbl);
+					end = 25;
+				}
+			}
+			video_do_partial_line(my_start_lines, end,
+							prev_all_stat);
+			my_start_lines = (i << 8) + end;
 		}
-#endif
-		video_refresh_line(i, must_reparse);
-		must_reparse = 0;
 	}
 
+
 	g_vid_update_last_line = last_line;
+	g_video_save_all_stat_pos = pos;
 
 	/* deal with border and forming rects for xdriver.c to use */
 	if(line >= 262) {
@@ -1784,67 +1812,88 @@ video_update_through_line(int line)
 		g_num_lines_prev_superhires640 = g_num_lines_superhires640;
 		g_num_lines_superhires = 0;
 		g_num_lines_superhires640 = 0;
-		for(i = 0; i < 24; i++) {
-			g_a2_8line_changes[i] = 0;
+
+		num = g_video_filt_stat_pos;
+		g_video_stat_old_pos = num;
+		for(i = 0; i < num; i++) {
+			g_video_filt_stat_old[i] = g_video_filt_stat[i];
 		}
+		g_video_filt_stat_pos = 0;
 	}
 	GET_ITIMER(end_time);
 	g_cycs_in_refresh_line += (end_time - start_time);
 }
 
+extern word32 g_vbl_count;
+
 void
-video_refresh_line(int line, int must_reparse)
+video_do_partial_line(word32 lines_since_vbl, int end, word32 cur_all_stat)
+{
+	word32	filt_stat, old_filt_stat, line_bytes, old_line_bytes;
+	int	pos, old_pos, reparse, line;
+
+	pos = g_video_filt_stat_pos;
+	old_pos = g_video_stat_old_pos;
+	filt_stat = video_all_stat_to_filt_stat(lines_since_vbl >> 8,
+								cur_all_stat);
+	line_bytes = ((lines_since_vbl & 0x1ff00) << 8) |
+			((end - 25) << 8) | ((lines_since_vbl - 25) & 0x3f);
+	g_video_filt_stat[pos].line_bytes = line_bytes;
+	g_video_filt_stat[pos].filt_stat = filt_stat;
+	reparse = 1;
+	old_filt_stat = (word32)-1;
+	old_line_bytes = (word32)-1;
+	if(pos < old_pos) {
+		old_filt_stat = g_video_filt_stat_old[pos].filt_stat;
+		old_line_bytes = g_video_filt_stat_old[pos].line_bytes;
+	}
+	if((old_filt_stat == filt_stat) && (line_bytes == old_line_bytes)) {
+		reparse = 0;
+	} else if((old_filt_stat ^ filt_stat) & ALL_STAT_SUPER_HIRES) {
+		g_border_reparse = 1;
+	}
+	video_refresh_line(line_bytes, reparse, filt_stat);
+	line = lines_since_vbl >> 8;
+	if(line < 200) {
+		g_a2_filt_stat[line] = filt_stat;
+	} else {
+		printf("partial_line %08x %d %08x out of range!\n",
+					lines_since_vbl, end, cur_all_stat);
+	}
+	if((end <= 25) || (end < (int)(lines_since_vbl & 0xff))) {
+		printf("Bad lsv:%08x, end:%d, stat:%08x\n", lines_since_vbl,
+						end, filt_stat);
+	}
+	pos++;
+	if(pos >= MAX_VIDEO_FILT_STAT) {
+		pos--;
+	}
+	g_video_filt_stat_pos = pos;
+}
+
+void
+video_refresh_line(word32 line_bytes, int must_reparse, word32 filt_stat)
 {
 	word32	*wptr;
-	word32	fg_pixel, bg_pixel;
-	int	stat, mode, dbl, page, monochrome, altchar, bg_color;
-	int	fg_color, pixels_per_line, offset;
+	int	pixels_per_line, offset, line;
 
-	stat = g_a2_line_stat[line];
+	line = line_bytes >> 16;
+	if((word32)line >= 200) {
+		printf("video_refresh %08x %d %08x!\n", line_bytes,
+						must_reparse, filt_stat);
+		return;
+	}
 	wptr = g_mainwin_kimage.wptr;
 	pixels_per_line = g_mainwin_kimage.a2_width_full;
 	offset = (pixels_per_line * g_video_act_margin_top) +
 						g_video_act_margin_left;
 	wptr = wptr + offset;
 
-	g_a2_line_left_edge[line] = 640;
-	g_a2_line_right_edge[line] = 0;
-	/* all routs force in new left/right when there are screen changes */
-
-	dbl = stat & 1;
-	monochrome = (stat >> 1) & 1;
-	page = (stat >> 2) & 1;
-	mode = (stat >> 4) & 7;
-
-#if 0
-	printf("refresh line: %d, stat: %04x, mode:%d\n", line, stat, mode);
-#endif
-
-	switch(mode) {
-	case MODE_TEXT:
-		altchar = (stat >> 7) & 1;
-		bg_color = (stat >> 8) & 0xf;
-		fg_color = (stat >> 12) & 0xf;
-		bg_pixel = g_a2palette_1624[bg_color];
-		fg_pixel = g_a2palette_1624[fg_color];
-		redraw_changed_text(0x000 + page*0x400, line, must_reparse,
-			wptr, altchar, bg_pixel, fg_pixel,
-			pixels_per_line, dbl);
-		break;
-	case MODE_GR:
-		redraw_changed_gr(0x000 + page*0x400, line, must_reparse,
-			wptr, pixels_per_line, dbl);
-		break;
-	case MODE_HGR:
-		redraw_changed_hgr(0x000 + page*0x2000, line, must_reparse,
-			wptr, pixels_per_line, monochrome, dbl);
-		break;
-	case MODE_SUPER_HIRES:
+	if(filt_stat & ALL_STAT_SUPER_HIRES) {
 		g_num_lines_superhires++;
-		redraw_changed_super_hires((stat >> 16) & 1, line, must_reparse,
-							wptr, pixels_per_line);
-		break;
-	case MODE_BORDER:
+		redraw_changed_super_hires(line_bytes, must_reparse, wptr,
+						pixels_per_line, filt_stat);
+	} else if(filt_stat & ALL_STAT_BORDER) {
 		if(line < 192) {
 			halt_printf("Border line not 192: %d\n", line);
 		}
@@ -1854,10 +1903,15 @@ video_refresh_line(int line, int must_reparse)
 			g_border_line24_refresh_needed = 0;
 			g_a2_screen_buffer_changed |= (1 << 24);
 		}
-		break;
-	default:
-		halt_printf("refresh screen: mode: 0x%02x unknown!\n", mode);
-		exit(7);
+	} else if(filt_stat & ALL_STAT_TEXT) {
+		redraw_changed_text(line_bytes, must_reparse, wptr,
+						pixels_per_line, filt_stat);
+	} else if(filt_stat & ALL_STAT_HIRES) {
+		redraw_changed_hgr(line_bytes, must_reparse, wptr,
+						pixels_per_line, filt_stat);
+	} else {
+		redraw_changed_gr(line_bytes, must_reparse, wptr,
+						pixels_per_line, filt_stat);
 	}
 }
 
@@ -1931,6 +1985,8 @@ video_add_rect(Kimage *kimage_ptr, int x, int y, int width, int height)
 	kimage_ptr->change_rect[pos].y = y;
 	kimage_ptr->change_rect[pos].width = width;
 	kimage_ptr->change_rect[pos].height = height;
+
+	g_video_pixel_dcount += (width * height);
 #if 0
 	printf("Add rect %d, x:%d y:%d, w:%d h:%d\n", pos, x, y, width, height);
 #endif
@@ -1962,6 +2018,7 @@ video_form_change_rects()
 	Kimage	*kimage_ptr;
 	register word32 start_time;
 	register word32 end_time;
+	dword64	save_pixel_dcount;
 	word32	mask;
 	int	start, line, left_pix, right_pix, left, right, line_div8;
 	int	x, y, width, height;
@@ -2000,7 +2057,9 @@ video_form_change_rects()
 						g_video_act_margin_bottom;
 		height = kimage_ptr->a2_height - y;
 		if(height > 0) {
+			save_pixel_dcount = g_video_pixel_dcount;
 			video_add_rect(kimage_ptr, 0, y, width, height);
+			g_video_pixel_dcount = save_pixel_dcount;
 		}
 	}
 
@@ -2566,6 +2625,7 @@ video_update_status_line(int line, const char *string)
 	word32	*wptr;
 	char	*buf;
 	const char *ptr;
+	word32	line_bytes;
 	int	start_line, c, pixels_per_line, offset;
 	int	i;
 
@@ -2595,11 +2655,12 @@ video_update_status_line(int line, const char *string)
 	wptr = g_mainwin_kimage.wptr;
 	wptr += offset;
 	for(i = 0; i < 8; i++) {
-		redraw_changed_string(&(a2_str_buf[0]), start_line + i, -1L,
+		line_bytes = ((start_line + i) << 16) | (40 << 8) | 0;
+		redraw_changed_string(&(a2_str_buf[0]), line_bytes, -1L,
 			wptr, 0, 0x00ffffff, pixels_per_line, 1);
 	}
 
-	// Don't add rectangle here, video_from_change_rects will do it
+	// Don't add rectangle here, video_form_change_rects will do it
 	//video_add_a2_rect(start_line, start_line + 8, 0, 640);
 }
 
@@ -2607,6 +2668,7 @@ void
 video_draw_a2_string(int line, const byte *bptr)
 {
 	word32	*wptr;
+	word32	line_bytes;
 	int	start_line, pixels_per_line, offset;
 	int	i;
 
@@ -2617,7 +2679,8 @@ video_draw_a2_string(int line, const byte *bptr)
 	wptr = g_mainwin_kimage.wptr;
 	wptr += offset;
 	for(i = 0; i < 8; i++) {
-		redraw_changed_string(bptr, start_line + i, -1L,
+		line_bytes = ((start_line + i) << 16) | (40 << 8) | 0;
+		redraw_changed_string(bptr, line_bytes, -1L,
 			wptr, 0, 0x00ffffff, pixels_per_line, 1);
 	}
 	g_mainwin_kimage.x_refresh_needed = 1;
@@ -2628,27 +2691,27 @@ video_show_debug_info()
 {
 	word32	tmp1;
 
-	printf("g_cur_dcycs: %f, last_vbl: %f\n", g_cur_dcycs,
-							g_last_vbl_dcycs);
-	tmp1 = get_lines_since_vbl(g_cur_dcycs);
+	printf("g_cur_dfcyc: %016llx, last_vbl: %016llx\n", g_cur_dfcyc,
+							g_last_vbl_dfcyc);
+	tmp1 = get_lines_since_vbl(g_cur_dfcyc);
 	printf("lines since vbl: %06x\n", tmp1);
 	printf("Last line updated: %d\n", g_vid_update_last_line);
 }
 
 word32
-read_video_data(double dcycs)
+read_video_data(dword64 dfcyc)
 {
 	word32	val, val2;
 	int	lines_since_vbl, line;
 
 	// Return Charrom data at $C02C for SuperConvert 4 TDM mode
-	val = float_bus(dcycs);
-	lines_since_vbl = get_lines_since_vbl(dcycs);	// Sigh, get it again
+	lines_since_vbl = get_lines_since_vbl(dfcyc);
+	val = float_bus_lines(dfcyc, lines_since_vbl);
 	line = lines_since_vbl >> 8;
 	if(line < 192) {
 		// Always do the character ROM
 		val2 = g_a2font_bits[val & 0xff][line & 7];
-		dbg_log_info(dcycs, val,
+		dbg_log_info(dfcyc, val,
 			(lines_since_vbl << 8) | (val2 & 0xff), 0xc02c);
 		val = ~val2;		// Invert it, maybe
 	}
@@ -2656,13 +2719,20 @@ read_video_data(double dcycs)
 }
 
 word32
-float_bus(double dcycs)
+float_bus(dword64 dfcyc)
+{
+	word32	lines_since_vbl;
+
+	lines_since_vbl = get_lines_since_vbl(dfcyc);
+	return float_bus_lines(dfcyc, lines_since_vbl);
+}
+
+word32
+float_bus_lines(dword64 dfcyc, word32 lines_since_vbl)
 {
 	word32	val;
-	int	lines_since_vbl, line, eff_line, line24, all_stat, byte_offset;
+	int	line, eff_line, line24, all_stat, byte_offset;
 	int	hires, page2, addr;
-
-	lines_since_vbl = get_lines_since_vbl(dcycs);
 
 /* For floating bus, model hires style: Visible lines 0-191 are simply the */
 /* data being displayed at that time.  Lines 192-255 are lines 0 - 63 again */
@@ -2680,11 +2750,14 @@ float_bus(double dcycs)
 	//  from 25 through 64
 
 	eff_line = line;
-	if((line >= 192) || (byte_offset < 25)) {
-		return 0;		// Don't do anything during blanking
+	if(eff_line >= 0x100) {
+		eff_line = (eff_line - 6) & 0xff;
+	}
+	if(byte_offset == 0) {
+		byte_offset = 1;
 	}
 	all_stat = g_cur_a2_stat;
-	hires = all_stat & ALL_STAT_HIRES;
+	hires = (all_stat & ALL_STAT_HIRES) && !(all_stat & ALL_STAT_TEXT);
 	if((all_stat & ALL_STAT_MIX_T_GR) && (line >= 160)) {
 		hires = 0;
 	}
@@ -2704,8 +2777,11 @@ float_bus(double dcycs)
 
 	val = g_slow_memory_ptr[addr];
 #if 0
-	printf("For %04x (%d) addr=%04x, val=%02x, dcycs:%9.2f\n",
-		lines_since_vbl, eff_line, addr, val, dcycs - g_last_vbl_dcycs);
+	printf("For %04x (%d) addr=%04x, val=%02x, dfcyc:%016llx\n",
+		lines_since_vbl, eff_line, addr, val, dfcyc - g_last_vbl_dfcyc);
 #endif
+	dbg_log_info(dfcyc, ((lines_since_vbl >> 11) << 24) |
+			(lines_since_vbl - 25), (addr << 8) | val, 0xff);
+
 	return val;
 }
