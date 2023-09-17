@@ -1,4 +1,19 @@
 
+Changes in KEGS v1.29 since v1.28 (09/05/23)
+- Improved disk arm emulation for 5.25" disks
+- Enable use of a real serial port on Linux, and improve real serial port
+	emulation on Mac.
+- Add serial "outgoing IP" to allow slot 1 serial to be sent directly to
+	a real printer (often port 9100).
+- When mounting an image from a .zip file, you can press Cmd-A and all
+	subsequent images will also be mounted in consecutive drives.
+	This is useful for the new wita2gs_0_70.zip.
+- Allow "unlocking" locked images from .zip files, to allow code to write to
+	them (but it's all in memory, so all changes are lost when KEGS
+	exits).
+- Fix DiskCopy4.2 image detection, to handle images of sizes other than 800KB.
+
+
 Changes in KEGS v1.28 since v1.27 (06/21/23)
 - Reduce status lines under the window from 7 lines of text to 4.
 - Fix Windows10 crash when KEGS was minimized (Windows set the window size to
@@ -23,9 +38,9 @@ Changes in KEGS v1.27 since v1.26 (06/13/23)
 - Allow 140K .SDK images to be selected in the image file selection screen.
 - Fix $C030 speaker toggle emulation to eliminate a 60-Hertz buzz caused by
 	the code being organized around 60Hz screen refresh and not counting
-	on the last toggle correctly in all cases.  The $C030 speaker output
-	ramps down to 0 after about 60msec to avoid the annoying "click"
-	4 seconds later when KEGS pauses sound output.
+	on the last toggle correctly in each video frame in all cases.  The
+	$C030 speaker output ramps down to 0 after about 60msec to avoid the
+	annoying "click" 4 seconds later when KEGS pauses sound output.
 
 
 Changes in KEGS v1.26 since v1.25 (05/22/23)

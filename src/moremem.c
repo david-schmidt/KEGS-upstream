@@ -1,4 +1,4 @@
-const char rcsid_moremem_c[] = "@(#)$KmKId: moremem.c,v 1.293 2023-06-12 21:10:34+00 kentd Exp $";
+const char rcsid_moremem_c[] = "@(#)$KmKId: moremem.c,v 1.294 2023-08-28 02:00:48+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -1220,13 +1220,13 @@ io_read(word32 loc, dword64 *cyc_ptr)
 		case 0x37: /* 0xc037 */
 			return 0;
 		case 0x38: /* 0xc038 */
-			return scc_read_reg(1, dfcyc);
+			return scc_read_reg(dfcyc, 1);
 		case 0x39: /* 0xc039 */
-			return scc_read_reg(0, dfcyc);
+			return scc_read_reg(dfcyc, 0);
 		case 0x3a: /* 0xc03a */
-			return scc_read_data(1, dfcyc);
+			return scc_read_data(dfcyc, 1);
 		case 0x3b: /* 0xc03b */
-			return scc_read_data(0, dfcyc);
+			return scc_read_data(dfcyc, 0);
 		case 0x3c: /* 0xc03c */
 			/* doc control */
 			return doc_read_c03c();
@@ -1819,16 +1819,16 @@ io_write(word32 loc, int val, dword64 *cyc_ptr)
 			/* just ignore, probably someone writing c036 m=0 */
 			return;
 		case 0x38: /* 0xc038 */
-			scc_write_reg(1, val, dfcyc);
+			scc_write_reg(dfcyc, 1, val);
 			return;
 		case 0x39: /* 0xc039 */
-			scc_write_reg(0, val, dfcyc);
+			scc_write_reg(dfcyc, 0, val);
 			return;
 		case 0x3a: /* 0xc03a */
-			scc_write_data(1, val, dfcyc);
+			scc_write_data(dfcyc, 1, val);
 			return;
 		case 0x3b: /* 0xc03b */
-			scc_write_data(0, val, dfcyc);
+			scc_write_data(dfcyc, 0, val);
 			return;
 		case 0x3c: /* 0xc03c */
 			/* doc ctl */
