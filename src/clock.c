@@ -1,4 +1,4 @@
-const char rcsid_clock_c[] = "@(#)$KmKId: clock.c,v 1.39 2023-08-28 18:11:50+00 kentd Exp $";
+const char rcsid_clock_c[] = "@(#)$KmKId: clock.c,v 1.40 2023-09-23 17:51:22+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -22,7 +22,7 @@ const char rcsid_clock_c[] = "@(#)$KmKId: clock.c,v 1.39 2023-08-28 18:11:50+00 
 #endif
 
 extern int Verbose;
-extern int g_vbl_count;
+extern word32 g_vbl_count;
 extern int g_rom_version;
 extern int g_config_kegs_update_needed;
 
@@ -36,8 +36,8 @@ int	g_clk_mode = CLK_IDLE;
 int	g_clk_read = 0;
 int	g_clk_reg1 = 0;
 
-extern int g_c033_data;
-extern int g_c034_val;
+extern word32 g_c033_data;
+extern word32 g_c034_val;
 
 byte	g_bram[2][256];
 byte	*g_bram_ptr = &(g_bram[0][0]);
@@ -254,9 +254,7 @@ clock_write_c034(word32 val)
 void
 do_clock_data()
 {
-	word32	mask;
-	int	read;
-	int	op;
+	word32	mask, read, op;
 
 	clk_printf("In do_clock_data, g_clk_mode: %02x\n", g_clk_mode);
 

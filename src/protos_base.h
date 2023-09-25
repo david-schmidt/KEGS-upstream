@@ -11,7 +11,7 @@
 /************************************************************************/
 
 #ifdef INCLUDE_RCSID_C
-const char rcsid_protos_base_h[] = "@(#)$KmKId: protos_base.h,v 1.149 2023-09-05 21:58:03+00 kentd Exp $";
+const char rcsid_protos_base_h[] = "@(#)$KmKId: protos_base.h,v 1.154 2023-09-23 17:53:03+00 kentd Exp $";
 #endif
 
 #ifdef __GNUC__
@@ -316,6 +316,7 @@ word32 scc_read_reg(dword64 dfcyc, int port);
 void scc_write_reg(dword64 dfcyc, int port, word32 val);
 word32 scc_read_data(dword64 dfcyc, int port);
 void scc_write_data(dword64 dfcyc, int port, word32 val);
+word32 scc_do_read_rr2b(void);
 void scc_maybe_br_event(dword64 dfcyc, int port);
 void scc_evaluate_ints(int port);
 void scc_maybe_rx_event(dword64 dfcyc, int port);
@@ -336,7 +337,7 @@ void scc_add_to_writebuf(dword64 dfcyc, int port, word32 val);
 /* scc_socket_driver.c */
 void scc_socket_open(dword64 dfcyc, int port, int cfg);
 void scc_socket_close(int port);
-void scc_socket_close_extended(dword64 dfcyc, int port);
+void scc_socket_close_extended(dword64 dfcyc, int port, int allow_retry);
 void scc_socket_maybe_open(dword64 dfcyc, int port, int must);
 void scc_socket_open_incoming(dword64 dfcyc, int port);
 void scc_socket_open_outgoing(dword64 dfcyc, int port, const char *remote_ip_str, int remote_port);
@@ -443,32 +444,31 @@ void fixup_brks(void);
 void fixup_hires_on(void);
 void fixup_bank0_2000_4000(void);
 void fixup_bank0_0400_0800(void);
-void fixup_any_bank_any_page(int start_page, int num_pages, byte *mem0rd, byte *mem0wr);
+void fixup_any_bank_any_page(word32 start_page, int num_pages, byte *mem0rd, byte *mem0wr);
 void fixup_intcx(void);
-void fixup_wrdefram(int new_wrdefram);
 void fixup_st80col(dword64 dfcyc);
 void fixup_altzp(void);
 void fixup_page2(dword64 dfcyc);
 void fixup_ramrd(void);
 void fixup_ramwrt(void);
-void fixup_lcbank2(void);
-void fixup_rdrom(void);
-void set_statereg(dword64 dfcyc, int val);
+void fixup_lc(void);
+void set_statereg(dword64 dfcyc, word32 val);
 void fixup_shadow_txt1(void);
 void fixup_shadow_txt2(void);
 void fixup_shadow_hires1(void);
 void fixup_shadow_hires2(void);
 void fixup_shadow_shr(void);
 void fixup_shadow_iolc(void);
-void update_shadow_reg(int val);
+void update_shadow_reg(dword64 dfcyc, word32 val);
 void fixup_shadow_all_banks(void);
 void setup_pageinfo(void);
 void show_bankptrs_bank0rdwr(void);
 void show_bankptrs(int bnk);
 void show_addr(byte *ptr);
 word32 moremem_fix_vector_pull(word32 addr);
-int io_read(word32 loc, dword64 *cyc_ptr);
-void io_write(word32 loc, int val, dword64 *cyc_ptr);
+word32 io_read(word32 loc, dword64 *cyc_ptr);
+void io_write(word32 loc, word32 val, dword64 *cyc_ptr);
+word32 c3xx_read(dword64 dfcyc, word32 loc);
 word32 get_lines_since_vbl(dword64 dfcyc);
 int in_vblank(dword64 dfcyc);
 int read_vid_counters(int loc, dword64 dfcyc);

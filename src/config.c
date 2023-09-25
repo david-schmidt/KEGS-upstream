@@ -1,4 +1,4 @@
-const char rcsid_config_c[] = "@(#)$KmKId: config.c,v 1.148 2023-09-05 21:57:52+00 kentd Exp $";
+const char rcsid_config_c[] = "@(#)$KmKId: config.c,v 1.150 2023-09-16 20:51:44+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -47,9 +47,10 @@ extern int g_force_depth;
 int g_serial_cfg[2] = { 0, 1 };		// Slot 1=0=Real serial (printer?)
 					// Slot 2=1=Virt Modem
 int g_serial_mask[2] = { 0, 0 };
-char *g_serial_remote_ip[2] = { "", "" };
+char *g_serial_remote_ip[2] = { "", "" };	// cfg_init_menus will malloc()
 int g_serial_remote_port[2] = { 9100, 9100 };
 char *g_serial_device[2] = { "/dev/tty.USB.0", "/dev/tty.USB.1" };
+				// cfg_init_menus() will malloc() the above
 int g_serial_win_device[2] = { 0, 0 };		// Disabled
 extern word32 g_mem_size_base;
 extern word32 g_mem_size_exp;
@@ -123,8 +124,8 @@ char g_cfg_opts_str[CFG_PATH_MAX];
 char g_cfg_opt_buf[CFG_OPT_MAXSTR];
 char g_cfg_edit_buf[CFG_OPT_MAXSTR];
 
-char *g_cfg_rom_path = "ROM";
-char *g_cfg_charrom_path = "Undefined";
+char *g_cfg_rom_path = "ROM";			// config_init_menus will malloc
+char *g_cfg_charrom_path = "Undefined";		// config_init_menus will malloc
 int g_cfg_charrom_pos = 0;
 char *g_cfg_file_def_name = "Undefined";
 char **g_cfg_file_strptr = 0;
@@ -1145,8 +1146,8 @@ config_load_roms()
 	/*  Apple II compatibility without distributing ROMs */
 	if(g_rom_version == 0) {			// Apple //e
 		for(i = 0; i < 256; i++) {
+			// Place Disk II PROM in slot 6
 			g_rom_cards_ptr[0x600 + i] = g_rom_fc_ff_ptr[0x38600+i];
-			g_rom_cards_ptr[0x300 + i] = g_rom_fc_ff_ptr[0x3c300+i];
 		}
 	} else {
 		for(i = 0; i < 256; i++) {

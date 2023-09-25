@@ -1,4 +1,4 @@
-const char rcsid_iwm_c[] = "@(#)$KmKId: iwm.c,v 1.205 2023-09-05 03:06:46+00 kentd Exp $";
+const char rcsid_iwm_c[] = "@(#)$KmKId: iwm.c,v 1.206 2023-09-23 17:51:46+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -39,8 +39,8 @@ const char rcsid_iwm_c[] = "@(#)$KmKId: iwm.c,v 1.205 2023-09-05 03:06:46+00 ken
 int g_halt_arm_move = 0;
 
 extern int Verbose;
-extern int g_vbl_count;
-extern int g_c036_val_speed;
+extern word32 g_vbl_count;
+extern word32 g_c036_val_speed;
 extern int g_config_kegs_update_needed;
 extern Engine_reg engine;
 
@@ -316,7 +316,7 @@ iwm_flush_disk_to_unix(Disk *dsk)
 
 /* Check for dirty disk 3 times a second */
 
-int	g_iwm_dynapro_last_vbl_count = 0;
+word32	g_iwm_dynapro_last_vbl_count = 0;
 
 void
 iwm_vbl_update()

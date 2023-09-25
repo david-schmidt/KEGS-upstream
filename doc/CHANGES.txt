@@ -1,4 +1,15 @@
 
+Changes in KEGS v1.30 since v1.29 (09/23/23)
+- Proper emulation of the $C080-$C08F language card soft switches.
+- Improved INTC8ROM emulation, so a2audit passes (with Apple //e ROMs)
+- Fix SCC RR2B register emulation for Colin Leroy-Mira's telnet.system.
+- Fix SCC remote IP mode to restart the connection if the remote side ended
+	it due to idleness, to better handle connecting to printers.
+- RAMRD/RAMWRT/ST80COL/etc. apply to bank $E0 as well as to bank $00.  This
+	was not emulated properly before.  This fixes the AppleLink Terminal
+	application.
+
+
 Changes in KEGS v1.29 since v1.28 (09/05/23)
 - Improved disk arm emulation for 5.25" disks
 - Enable use of a real serial port on Linux, and improve real serial port

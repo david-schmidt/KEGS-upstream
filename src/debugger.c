@@ -1,4 +1,4 @@
-const char rcsid_debugger_c[] = "@(#)$KmKId: debugger.c,v 1.59 2023-06-23 13:07:51+00 kentd Exp $";
+const char rcsid_debugger_c[] = "@(#)$KmKId: debugger.c,v 1.60 2023-09-11 12:55:28+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -44,7 +44,7 @@ int	g_debug_to_stdout = 1;
 extern byte *g_memory_ptr;
 extern byte *g_slow_memory_ptr;
 extern int g_halt_sim;
-extern int g_c068_statereg;
+extern word32 g_c068_statereg;
 extern word32 stop_run_at;
 extern int Verbose;
 extern int Halt_on;

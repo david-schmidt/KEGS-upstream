@@ -1,4 +1,4 @@
-const char rcsid_scc_c[] = "@(#)$KmKId: scc.c,v 1.62 2023-09-01 03:42:29+00 kentd Exp $";
+const char rcsid_scc_c[] = "@(#)$KmKId: scc.c,v 1.63 2023-09-12 19:41:17+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -11,6 +11,9 @@ const char rcsid_scc_c[] = "@(#)$KmKId: scc.c,v 1.62 2023-09-01 03:42:29+00 kent
 /*	The KEGS web page is kegs.sourceforge.net			*/
 /*	You may contact the author at: kadickey@alumni.princeton.edu	*/
 /************************************************************************/
+
+// Driver for the Zilog SCC Z8530, which implements two channels (A,B) of
+//  serial ports, controlled by $C038-$C03B
 
 #include "defc.h"
 
@@ -649,20 +652,15 @@ scc_read_reg(dword64 dfcyc, int port)
 	case 6:
 		if(port == 0) {
 			ret = scc_ptr->reg[2];
-		} else {
-
-			halt_printf("Read of RR2B...stopping\n");
-			ret = 0;
-#if 0
-			ret = g_scc[0].reg[2];
-			wr9 = g_scc[0].reg[9];
-			for(i = 0; i < 8; i++) {
-				if(ZZZ){};
+		} else {			// Port B, read RR2B int stat
+			// The TELNET.SYSTEM by Colin Leroy-Mira uses RR2B
+			ret = scc_do_read_rr2b() << 1;
+			if(g_scc[0].reg[9] & 0x10) {	// wr9 status high
+				// Map bit 3->4, 2->5, 1->6
+				ret = ((ret << 1) & 0x10) |
+					((ret << 3) & 0x20) |
+					((ret << 5) & 0x40);
 			}
-			if(wr9 & 0x10) {
-				/* wr9 status high */
-			}
-#endif
 		}
 		break;
 	case 3:
@@ -842,12 +840,10 @@ scc_write_reg(dword64 dfcyc, int port, word32 val)
 				scc_hard_reset_port(1);
 			}
 		}
-		if((val & 0x35) != 0x00) {
-			printf("Write c03%x to wr9 of %02x!\n", 8+port, val);
-			halt_printf("val & 0x35: %02x\n", (val & 0x35));
-		}
+		// Bit 5 is software interrupt ack, which does not exist on NMOS
+		// Bit 2 sets IEO pin low, which doesn't exist either
 		old_val = g_scc[0].reg[9];
-		g_scc[0].reg[regnum] = val;
+		g_scc[0].reg[9] = val;
 		scc_evaluate_ints(0);
 		scc_evaluate_ints(1);
 		return;
@@ -974,6 +970,37 @@ scc_write_data(dword64 dfcyc, int port, word32 val)
 	scc_maybe_tx_event(dfcyc, port);
 }
 
+word32
+scc_do_read_rr2b()
+{
+	word32	val;
+
+	val = g_irq_pending & 0x3f;
+	if(val == 0) {
+		return 3;	// 011 if no interrupts pending
+	}
+	// Do Channel A first.  Priority order from SCC documentation
+	if(val & IRQ_PENDING_SCC0_RX) {
+		return 6;	// 110 Ch A Rx char available
+	}
+	if(val & IRQ_PENDING_SCC0_TX) {
+		return 4;	// 100 Ch A Tx buffer empty
+	}
+	if(val & IRQ_PENDING_SCC0_ZEROCNT) {
+		return 5;	// 101 Ch A External/Status change
+	}
+	if(val & IRQ_PENDING_SCC1_RX) {
+		return 2;	// 010 Ch B Rx char available
+	}
+	if(val & IRQ_PENDING_SCC1_TX) {
+		return 0;	// 000 Ch B Tx buffer empty
+	}
+	if(val & IRQ_PENDING_SCC1_ZEROCNT) {
+		return 1;	// 001 Ch B External/Status change
+	}
+
+	return 3;
+}
 
 void
 scc_maybe_br_event(dword64 dfcyc, int port)

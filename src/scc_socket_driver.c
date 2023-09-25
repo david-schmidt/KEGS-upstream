@@ -1,4 +1,4 @@
-const char rcsid_scc_socket_driver_c[] = "@(#)$KmKId: scc_socket_driver.c,v 1.28 2023-08-28 02:08:26+00 kentd Exp $";
+const char rcsid_scc_socket_driver_c[] = "@(#)$KmKId: scc_socket_driver.c,v 1.29 2023-09-21 00:12:49+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -115,7 +115,7 @@ scc_socket_close(int port)
 		closesocket(rdwrfd);
 	}
 	sockfd = scc_ptr->sockfd;
-	if(sockfd != INVALID_SOCKET) {
+	if((sockfd != INVALID_SOCKET) && (rdwrfd != sockfd)) {
 		printf("socket_close: sockfd=%llx, closing\n", (dword64)sockfd);
 		closesocket(sockfd);
 	}
@@ -143,7 +143,7 @@ scc_socket_close(int port)
 }
 
 void
-scc_socket_close_extended(dword64 dfcyc, int port)
+scc_socket_close_extended(dword64 dfcyc, int port, int allow_retry)
 {
 #ifdef SCC_SOCKETS
 	Scc	*scc_ptr;
@@ -155,7 +155,7 @@ scc_socket_close_extended(dword64 dfcyc, int port)
 	if(scc_ptr->cur_state == 1) {		// Virtual modem mode
 		scc_socket_send_modem_code(dfcyc, port, 3);
 		scc_ptr->modem_state = 1;	// and go back to modem mode
-	} else if(scc_ptr->cur_state == 2) {	// Remote IP
+	} else if((scc_ptr->cur_state == 2) && !allow_retry) {	// Remote IP
 		scc_ptr->cur_state = -2;	// Error, give up
 	}
 #endif
@@ -284,7 +284,7 @@ scc_socket_open_outgoing(dword64 dfcyc, int port, const char *remote_ip_str,
 	// printf("outgoing sockfd ret: %llx\n", (dword64)sockfd);
 	if(sockfd == INVALID_SOCKET) {
 		printf("socket ret: %llx, errno: %d\n", (dword64)sockfd, errno);
-		scc_socket_close_extended(dfcyc, port);
+		scc_socket_close_extended(dfcyc, port, 0);
 		return;
 	}
 	/* printf("socket ret: %d\n", sockfd); */
@@ -295,7 +295,7 @@ scc_socket_open_outgoing(dword64 dfcyc, int port, const char *remote_ip_str,
 	if(ret < 0) {
 		printf("setsockopt REUSEADDR ret: %d, err:%d\n",
 			ret, errno);
-		scc_socket_close_extended(dfcyc, port);
+		scc_socket_close_extended(dfcyc, port, 0);
 		return;
 	}
 
@@ -313,7 +313,7 @@ scc_socket_open_outgoing(dword64 dfcyc, int port, const char *remote_ip_str,
 					&scc_ptr->modem_cmd_str[0], h_errno);
 #endif
 		closesocket(sockfd);
-		scc_socket_close_extended(dfcyc, port);
+		scc_socket_close_extended(dfcyc, port, 0);
 		return;
 	}
 	memcpy(&sa_in.sin_addr.s_addr, hostentptr->h_addr,
@@ -325,7 +325,7 @@ scc_socket_open_outgoing(dword64 dfcyc, int port, const char *remote_ip_str,
 	if(ret < 0) {
 		printf("connect ret: %d, errno: %d\n", ret, errno);
 		closesocket(sockfd);
-		scc_socket_close_extended(dfcyc, port);
+		scc_socket_close_extended(dfcyc, port, 0);
 		return;
 	}
 	scc_socket_modem_connect(dfcyc, port);
@@ -333,8 +333,8 @@ scc_socket_open_outgoing(dword64 dfcyc, int port, const char *remote_ip_str,
 	scc_ptr->modem_state = 0;	/* talk to socket */
 	scc_ptr->socket_num_rings = 0;
 
-	printf("SCC port %d is now outgoing to %s\n", port,
-						&scc_ptr->modem_cmd_str[0]);
+	printf("SCC port %d is now outgoing to %s:%d\n", port, remote_ip_str,
+							remote_port);
 
 	scc_ptr->sockfd = sockfd;
 
@@ -369,13 +369,13 @@ scc_socket_make_nonblock(dword64 dfcyc, int port)
 	flags = fcntl(sockfd, F_GETFL, 0);
 	if(flags == -1) {
 		printf("fcntl GETFL ret: %d, errno: %d\n", flags, errno);
-		scc_socket_close_extended(dfcyc, port);
+		scc_socket_close_extended(dfcyc, port, 0);
 		return;
 	}
 	ret = fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
 	if(ret == -1) {
 		printf("fcntl SETFL ret: %d, errno: %d\n", ret, errno);
-		scc_socket_close_extended(dfcyc, port);
+		scc_socket_close_extended(dfcyc, port, 0);
 		return;
 	}
 # endif
@@ -523,7 +523,7 @@ scc_socket_fill_readbuf(dword64 dfcyc, int port, int space_left)
 		/* assume socket close */
 		printf("recv got 0 from rdwrfd=%llx, closing\n",
 							(dword64)rdwrfd);
-		scc_socket_close_extended(dfcyc, port);
+		scc_socket_close_extended(dfcyc, port, 1);
 	}
 #endif
 }
@@ -812,7 +812,7 @@ scc_socket_empty_writebuf(dword64 dfcyc, int port)
 		} else if(ret < 0) {
 			/* assume socket is dead */
 			printf("socket write failed, resuming modem mode\n");
-			scc_socket_close_extended(dfcyc, port);
+			scc_socket_close_extended(dfcyc, port, 1);
 			done = 1;
 			break;
 		} else {
@@ -977,7 +977,7 @@ scc_socket_do_cmd_str(dword64 dfcyc, int port)
 			printf("ath, hanging up\n");
 			scc_socket_close(port);
 			if(scc_ptr->rdwrfd != INVALID_SOCKET) {
-				scc_socket_close_extended(dfcyc, port);
+				scc_socket_close_extended(dfcyc, port, 0);
 			}
 			/* scc_socket_maybe_open_incoming(dfcyc, port); */
 							/* reopen listen */
@@ -1176,7 +1176,7 @@ scc_socket_do_answer(dword64 dfcyc, int port)
 	scc_accept_socket(dfcyc, port);
 	if(scc_ptr->rdwrfd == INVALID_SOCKET) {
 		printf("Answer when rdwrfd=-1, closing\n");
-		scc_socket_close_extended(dfcyc, port);
+		scc_socket_close_extended(dfcyc, port, 0);
 		/* send NO CARRIER message */
 	} else {
 		scc_socket_telnet_reqs(dfcyc, port);

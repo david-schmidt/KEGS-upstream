@@ -1,4 +1,4 @@
-const char rcsid_sim65816_c[] = "@(#)$KmKId: sim65816.c,v 1.468 2023-08-28 18:09:51+00 kentd Exp $";
+const char rcsid_sim65816_c[] = "@(#)$KmKId: sim65816.c,v 1.471 2023-09-23 17:52:12+00 kentd Exp $";
 
 /************************************************************************/
 /*			KEGS: Apple //gs Emulator			*/
@@ -37,22 +37,21 @@ extern char *g_argv0_path;
 
 extern int g_stepping;
 
-extern int g_c068_statereg;
+extern word32 g_c068_statereg;
 extern int g_cur_a2_stat;
 
-extern int g_c08x_wrdefram;
-extern int g_c02d_int_crom;
+extern word32 g_c02d_int_crom;
 
-extern int g_c035_shadow_reg;
-extern int g_c036_val_speed;
+extern word32 g_c035_shadow_reg;
+extern word32 g_c036_val_speed;
 
-extern int g_c023_val;
-extern int g_c041_val;
-extern int g_c046_val;
-extern int g_zipgs_reg_c059;
-extern int g_zipgs_reg_c05a;
-extern int g_zipgs_reg_c05b;
-extern int g_zipgs_unlock;
+extern word32 g_c023_val;
+extern word32 g_c041_val;
+extern word32 g_c046_val;
+extern word32 g_zipgs_reg_c059;
+extern word32 g_zipgs_reg_c05a;
+extern word32 g_zipgs_reg_c05b;
+extern word32 g_zipgs_unlock;
 extern Iwm g_iwm;
 
 Engine_reg engine;
@@ -83,7 +82,7 @@ int	g_code_yellow = 0;
 int	g_emul_6502_ind_page_cross_bug = 0;
 
 int	g_config_iwm_vbl_count = 0;
-const char g_kegs_version_str[] = "1.29";
+const char g_kegs_version_str[] = "1.30";
 
 dword64	g_last_vbl_dfcyc = 0;
 dword64	g_cur_dfcyc = 1;
@@ -388,15 +387,12 @@ my_exit(int ret)
 void
 do_reset()
 {
-
 	g_c035_shadow_reg = 0;
 
-	g_c08x_wrdefram = 1;
-	if(g_rom_version == 0) {
-		g_c068_statereg = 0x08 + 0x04;	/* rdrom, lcbank2 */
-		g_c02d_int_crom = 0xff;
-	} else {
-		g_c068_statereg = 0x08 + 0x04 + 0x01; /* rdrom, lcbank2, intcx*/
+	g_c068_statereg = 0x200 | 0x08 | 0x04;	// Set wrdefram, rdrom, lcbank2
+	g_c02d_int_crom = 0xff;
+	if(g_rom_version != 0) {		// IIgs ROM01 or ROM03
+		g_c068_statereg |= 0x01;	// also set intcx
 		g_c02d_int_crom = 0;
 	}
 	g_c023_val = 0;
@@ -411,7 +407,6 @@ do_reset()
 	g_wait_pending = 0;
 	g_stp_pending = 0;
 
-
 	video_reset();
 	adb_reset();
 	iwm_reset();
@@ -425,7 +420,6 @@ do_reset()
 	engine.kpc = get_memory16_c(0x00fffc);
 
 	g_stepping = 0;
-
 }
 
 #define CHECK(start, var, value, var1, var2)				\
